@@ -39,6 +39,20 @@ export const brunoCard = EntityCardBlueprint.make({
 });
 
 /**
+ * Right-column entity card rendering a compact, read-only tree of the linked
+ * Bruno collection. Same `isApiEntity` filter as `brunoCard`; the component
+ * renders nothing when the entity has no linked collection.
+ */
+export const brunoCollectionTreeCard = EntityCardBlueprint.make({
+  name: 'collection-tree',
+  params: {
+    filter: isApiEntity,
+    loader: () =>
+      import('./components/CollectionTree').then((m) => <m.CollectionTreeCard />)
+  }
+});
+
+/**
  * Entity content tab ("API Docs"). Signature verified against
  * @backstage/plugin-catalog-react@3.2.0 (mirrors `apiDocsApisEntityContent`).
  *

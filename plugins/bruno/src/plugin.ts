@@ -1,6 +1,10 @@
 import { createFrontendPlugin } from '@backstage/frontend-plugin-api';
 import { brunoApi } from './api/extension';
-import { brunoCard, brunoDocsContent } from './extensions';
+import {
+  brunoCard,
+  brunoCollectionTreeCard,
+  brunoDocsContent
+} from './extensions';
 
 /**
  * The Bruno frontend plugin (new frontend system).
@@ -12,12 +16,13 @@ import { brunoCard, brunoDocsContent } from './extensions';
  *
  * Extensions:
  *  - brunoApi         -> registers brunoApiRef (ApiBlueprint)
- *  - brunoCard        -> entity card on kind:api + spec.type:bruno-collection
- *  - brunoDocsContent -> "API Docs" tab at /bruno-docs on the same filter
+ *  - brunoCard             -> entity card on kind:api + spec.type:bruno-collection
+ *  - brunoCollectionTreeCard -> read-only collection tree card on kind:api
+ *  - brunoDocsContent      -> "API Docs" tab at /bruno-docs on the same filter
  */
 export const brunoPlugin = createFrontendPlugin({
   pluginId: 'bruno',
-  extensions: [brunoApi, brunoCard, brunoDocsContent]
+  extensions: [brunoApi, brunoCard, brunoCollectionTreeCard, brunoDocsContent]
 });
 
 export default brunoPlugin;
