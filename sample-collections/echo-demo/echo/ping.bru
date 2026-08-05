@@ -1,0 +1,21 @@
+meta {
+  name: ping
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{host}}/ping
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("should respond with pong", function() {
+    expect(res.getBody()).to.eql("pong");
+  });
+}

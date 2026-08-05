@@ -1,0 +1,33 @@
+meta {
+  name: echo json
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{host}}/api/echo/json
+  body: json
+  auth: none
+}
+
+headers {
+  foo: bar
+}
+
+body:json {
+  {
+    "hello": "bruno"
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("should return json", function() {
+    expect(res.getBody()).to.eql({
+      "hello": "bruno"
+    });
+  });
+}

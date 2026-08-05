@@ -1,0 +1,54 @@
+export interface Config {
+  /**
+   * Configuration for the Bruno-for-Backstage backend plugin.
+   * @visibility backend
+   */
+  bruno?: {
+    /**
+     * The Bruno collection sources to load.
+     * @visibility backend
+     */
+    sources?: Array<{
+      /**
+       * A unique, url-safe id for the collection (used as the collection id
+       * and the catalog entity name).
+       * @visibility backend
+       */
+      id: string;
+      /**
+       * Human-readable display name (falls back to the name in bruno.json).
+       * @visibility backend
+       */
+      name: string;
+      /**
+       * The source type: read from the local filesystem, or fetch from a URL
+       * (e.g. a GitHub tree/blob URL) via Backstage's UrlReader.
+       * @visibility backend
+       */
+      type: 'local' | 'url';
+      /**
+       * For `local`: a path to the collection directory (relative to the
+       * Backstage working dir / packages/backend / repo root). For `url`: a
+       * GitHub tree or blob URL.
+       * @visibility backend
+       */
+      target: string;
+    }>;
+    /**
+     * Optional provider refresh schedule.
+     * @visibility backend
+     */
+    schedule?: {
+      /**
+       * How often the entity provider re-reads sources, in seconds.
+       * @visibility backend
+       */
+      frequencySeconds?: number;
+      /**
+       * Per-run timeout, in seconds.
+       * @visibility backend
+       */
+      timeoutSeconds?: number;
+    };
+  };
+}

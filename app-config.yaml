@@ -65,6 +65,55 @@ proxy:
   #   '/test':
   #     target: 'https://example.com'
   #     changeOrigin: true
+  #
+  ### Bruno for Backstage — CORS pass-through for the Collection Docs "Try it out".
+  ### The browser calls /api/proxy/<endpoint>/... and Backstage proxies server-side,
+  ### avoiding CORS. Host -> endpoint mapping is mirrored in
+  ### plugins/bruno/src/lib/proxy.ts (PROXY_HOST_MAP). See docs/POC-DECISIONS.md D4/§6.
+  endpoints:
+    '/bruno-echo':
+      target: 'https://echo.usebruno.com'
+      changeOrigin: true
+      allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD']
+      allowedHeaders: ['Authorization', 'Content-Type', 'Accept']
+    '/bruno-testbench':
+      target: 'https://testbench-sanity.usebruno.com'
+      changeOrigin: true
+      allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD']
+      allowedHeaders: ['Authorization', 'Content-Type', 'Accept']
+    '/bruno-example':
+      target: 'https://www.example.com'
+      changeOrigin: true
+      allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD']
+      allowedHeaders: ['Authorization', 'Content-Type', 'Accept']
+
+# Bruno for Backstage — collection sources scanned by BrunoEntityProvider and
+# served by the backend plugin at /api/bruno/*. See docs/POC-DECISIONS.md.
+bruno:
+  sources:
+    # Local sample collections committed into this repo (self-contained demo, D1).
+    - id: echo-demo
+      name: Echo Demo Collection
+      type: local
+      target: sample-collections/echo-demo
+    - id: sandwich-exec
+      name: Sandwich Exec
+      type: local
+      target: sample-collections/sandwich-exec
+    - id: sequential-exec
+      name: Sequential Exec
+      type: local
+      target: sample-collections/sequential-exec
+    # RISK #1 / Q4 — the private-repo path. Fetched server-side via Backstage's
+    # UrlReader using integrations.github creds; the token never reaches the
+    # browser. Uncomment and set GITHUB_TOKEN to demo a (public or private) repo:
+    # - id: bruno-tests-remote
+    #   name: Bruno Tests (GitHub)
+    #   type: url
+    #   target: https://github.com/usebruno/bruno/tree/main/packages/bruno-tests/collection/echo
+  schedule:
+    frequencySeconds: 60
+    timeoutSeconds: 30
 
 # Reference documentation http://backstage.io/docs/features/techdocs/configuration
 # Note: After experimenting with basic setup, use CI/CD to generate docs
@@ -79,9 +128,32 @@ techdocs:
 
 auth:
   # see https://backstage.io/docs/auth/ to learn about auth providers
+  environment: development
   providers:
     # See https://backstage.io/docs/auth/guest/provider
     guest: {}
+    # User login providers for the auth test harness (docs/NEXT-STEPS.md §4).
+    # NOTE: `integrations.github` (the ${GITHUB_TOKEN} service PAT above) is a
+    # SEPARATE thing from this user-login provider — different jobs.
+    github:
+      development:
+        clientId: ${AUTH_GITHUB_CLIENT_ID}
+        clientSecret: ${AUTH_GITHUB_CLIENT_SECRET}
+        # Requested so the plugin can reuse the user's token for private repos.
+        additionalScopes:
+          - repo
+        signIn:
+          resolvers:
+            - resolver: usernameMatchingUserEntityName
+              dangerouslyAllowSignInWithoutUserInCatalog: true
+    google:
+      development:
+        clientId: ${AUTH_GOOGLE_CLIENT_ID}
+        clientSecret: ${AUTH_GOOGLE_CLIENT_SECRET}
+        signIn:
+          resolvers:
+            - resolver: emailLocalPartMatchingUserEntityName
+              dangerouslyAllowSignInWithoutUserInCatalog: true
   # see https://backstage.io/docs/ai/mcp-actions#client-id-metadata-documents
   # to learn more about client id metadata documents
   clientIdMetadataDocuments:
