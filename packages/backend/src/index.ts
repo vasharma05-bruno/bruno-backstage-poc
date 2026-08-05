@@ -6,6 +6,9 @@
  * Happy hacking!
  */
 
+// Load local dev secrets from .env into process.env before anything reads
+// config. MUST stay the first import.
+import './loadEnv';
 import { createBackend } from '@backstage/backend-defaults';
 // Bruno for Backstage — catalog module that emits kind: API entities for
 // discovered Bruno collections (BrunoEntityProvider).
