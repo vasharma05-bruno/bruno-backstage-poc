@@ -1,6 +1,6 @@
 import type { LoggerService, SchedulerServiceTaskRunner } from '@backstage/backend-plugin-api';
 import type { Config } from '@backstage/config';
-import type { ApiEntity } from '@backstage/catalog-model';
+import type { ApiEntity, EntityLink } from '@backstage/catalog-model';
 import type {
   EntityProvider,
   EntityProviderConnection
@@ -92,8 +92,19 @@ export class BrunoEntityProvider implements EntityProvider {
       'bruno.dev/collection-id': source.id,
       'bruno.dev/collection-path': source.target
     };
+    const links: EntityLink[] = [];
     if (source.type === 'url') {
       annotations['bruno.dev/source-url'] = source.target;
+      links.push({
+        url: brunoDeepLink(source.target),
+        title: 'Open in Bruno',
+        icon: 'code'
+      });
+      links.push({
+        url: source.target,
+        title: 'Bruno collection (source)',
+        icon: 'github'
+      });
     }
 
     return {
@@ -106,7 +117,8 @@ export class BrunoEntityProvider implements EntityProvider {
           requestCount === 1 ? '' : 's'
         }.`,
         annotations,
-        tags: ['bruno']
+        tags: ['bruno'],
+        links
       },
       spec: {
         type: 'bruno-collection',
@@ -117,6 +129,12 @@ export class BrunoEntityProvider implements EntityProvider {
       }
     };
   }
+}
+
+// Mirrors buildBrunoDeepLink in plugins/bruno/src/lib/brunoLink.ts — keep the
+// format (scheme `bruno`, verb `open`, encoded `url` param) in sync.
+function brunoDeepLink(sourceUrl: string): string {
+  return `bruno://open?url=${encodeURIComponent(sourceUrl)}`;
 }
 
 /** Sanitizes a source id into a valid Backstage entity name. */
