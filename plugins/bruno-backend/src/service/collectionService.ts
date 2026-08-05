@@ -12,6 +12,14 @@ import {
   collectionBruToJson,
   bruToEnvJsonV2 as bruToEnvJson
 } from '@usebruno/lang';
+// OpenCollection (yml) parsers. Aliased so `parseCollection` does not collide
+// with the local function of the same name. Only the SYNC exports are used.
+import {
+  parseRequest,
+  parseCollection as parseYmlCollection,
+  parseFolder as parseYmlFolder,
+  parseEnvironment as parseYmlEnvironment
+} from '@usebruno/filestore';
 import type {
   Assertion,
   BrunoSourceConfig,
@@ -350,8 +358,12 @@ async function walkLocal(
       }
       await walkLocal(full, root, files);
     } else if (entry.isFile()) {
-      // Keep .bru files and bruno.json.
-      if (entry.name.endsWith('.bru') || entry.name === 'bruno.json') {
+      // Keep .bru files, bruno.json, and OpenCollection .yml files.
+      if (
+        entry.name.endsWith('.bru')
+        || entry.name === 'bruno.json'
+        || entry.name.endsWith('.yml')
+      ) {
         const rel = toPosix(path.relative(root, full));
         files.set(rel, await fs.readFile(full, 'utf8'));
       }
@@ -380,7 +392,7 @@ async function readUrlTree(
   for (const file of treeFiles) {
     // `file.path` is relative to the tree root.
     const rel = toPosix(file.path);
-    if (rel.endsWith('.bru') || rel.endsWith('bruno.json')) {
+    if (rel.endsWith('.bru') || rel.endsWith('bruno.json') || rel.endsWith('.yml')) {
       const buffer = await file.content();
       files.set(rel, buffer.toString('utf8'));
     }
@@ -488,7 +500,11 @@ async function readUrlTreeViaOctokit(
       continue;
     }
     const rel = entry.path.slice(prefix.length);
-    if (!rel.endsWith('.bru') && !rel.endsWith('bruno.json')) {
+    if (
+      !rel.endsWith('.bru')
+      && !rel.endsWith('bruno.json')
+      && !rel.endsWith('.yml')
+    ) {
       continue;
     }
     const { data: blob } = await octokit.git.getBlob({
@@ -512,6 +528,12 @@ function parseCollection(
   tree: FileTree,
   logger: LoggerService
 ): NormalizedCollection {
+  // OpenCollection (yml) collections are handled by a self-contained parallel
+  // path. `opencollection.yml` wins over `bruno.json` if both are present.
+  if (detectFormat(tree) === 'yml') {
+    return parseCollectionYml(source, tree, logger);
+  }
+
   // Determine the collection root within the tree. A UrlReader tree may be
   // nested under one top-level directory; the local reader is already rooted at
   // the collection. We locate `bruno.json` and treat its directory as the root.
@@ -554,6 +576,28 @@ function findBrunoJson(tree: FileTree): string | undefined {
   let best: string | undefined;
   for (const key of tree.files.keys()) {
     if (key === 'bruno.json' || key.endsWith('/bruno.json')) {
+      if (best === undefined || key.length < best.length) {
+        best = key;
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * Detects the collection format. A tree is treated as OpenCollection (`yml`)
+ * when it contains an `opencollection.yml` manifest anywhere; otherwise the
+ * classic `.bru`/`bruno.json` path is used. `opencollection.yml` wins over
+ * `bruno.json`, matching Bruno's `getCollectionFormat`.
+ */
+function detectFormat(tree: FileTree): 'bru' | 'yml' {
+  return findOpenCollectionYml(tree) ? 'yml' : 'bru';
+}
+
+function findOpenCollectionYml(tree: FileTree): string | undefined {
+  let best: string | undefined;
+  for (const key of tree.files.keys()) {
+    if (key === 'opencollection.yml' || key.endsWith('/opencollection.yml')) {
       if (best === undefined || key.length < best.length) {
         best = key;
       }
@@ -910,6 +954,372 @@ function mapAssertions(raw: RawRequest): Assertion[] | undefined {
       enabled: a.enabled !== false
     };
   });
+}
+
+/* -------------------------------------------------------------------------- */
+/*  OpenCollection (yml) parsing                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Builds the NormalizedCollection from an OpenCollection (yml) file tree.
+ * Mirrors `parseCollection` but delegates to `@usebruno/filestore` parsers.
+ */
+function parseCollectionYml(
+  source: BrunoSourceConfig,
+  tree: FileTree,
+  logger: LoggerService
+): NormalizedCollection {
+  const manifestPath = findOpenCollectionYml(tree);
+  const rootPrefix = manifestPath
+    ? posixDirname(manifestPath)
+    : commonRootPrefix(tree);
+
+  let name = source.name;
+  let version: string | undefined;
+  if (manifestPath) {
+    try {
+      const parsed = parseYmlCollection(tree.files.get(manifestPath)!, {
+        format: 'yml'
+      });
+      const brunoConfig = (parsed?.brunoConfig ?? {}) as {
+        name?: string;
+        version?: unknown;
+      };
+      if (typeof brunoConfig.name === 'string' && brunoConfig.name) {
+        name = brunoConfig.name;
+      }
+      if (brunoConfig.version !== undefined && brunoConfig.version !== null) {
+        version = String(brunoConfig.version);
+      }
+    } catch (e) {
+      logger.warn(
+        `Could not parse opencollection.yml for "${source.id}": ${
+          (e as Error).message
+        }`
+      );
+    }
+  }
+
+  const environments = parseEnvironmentsYml(tree, rootPrefix, logger);
+  const items = buildTreeYml(tree, rootPrefix, logger);
+
+  return {
+    id: source.id,
+    name,
+    version,
+    environments,
+    items
+  };
+}
+
+/** Parses `environments/*.yml` files into Environment[]. */
+function parseEnvironmentsYml(
+  tree: FileTree,
+  rootPrefix: string,
+  logger: LoggerService
+): Environment[] {
+  const envDir = joinPosix(rootPrefix, 'environments');
+  const environments: Environment[] = [];
+
+  for (const [key, contents] of tree.files.entries()) {
+    if (!key.endsWith('.yml')) {
+      continue;
+    }
+    const inEnvDir
+      = key === envDir + '.yml'
+        || key.startsWith(envDir + '/')
+        || (rootPrefix === '' && key.startsWith('environments/'));
+    if (!inEnvDir) {
+      continue;
+    }
+
+    try {
+      const parsed = parseYmlEnvironment(contents, { format: 'yml' }) as {
+        name?: string;
+        variables?: Array<{ name: string; value?: string; enabled?: boolean }>;
+      };
+      const name = parsed.name || baseName(key).replace(/\.yml$/, '');
+      const variables: KeyValue[] = (parsed.variables ?? []).map((v) => ({
+        name: v.name,
+        value: v.value ?? '',
+        enabled: v.enabled !== false
+      }));
+      environments.push({ name, variables });
+    } catch (e) {
+      logger.warn(
+        `Failed to parse environment file ${key}: ${(e as Error).message}`
+      );
+    }
+  }
+
+  environments.sort((a, b) => a.name.localeCompare(b.name));
+  return environments;
+}
+
+function buildTreeYml(
+  tree: FileTree,
+  rootPrefix: string,
+  logger: LoggerService
+): Item[] {
+  return buildTreeForDirYml(tree, rootPrefix, rootPrefix, logger);
+}
+
+function buildTreeForDirYml(
+  tree: FileTree,
+  rootPrefix: string,
+  dir: string,
+  logger: LoggerService
+): Item[] {
+  const relDir = dir === '' ? '' : dir + '/';
+  const childFiles = new Set<string>();
+  const childDirs = new Set<string>();
+
+  for (const key of tree.files.keys()) {
+    if (!key.startsWith(relDir)) {
+      continue;
+    }
+    const rest = key.slice(relDir.length);
+    if (rest.length === 0) {
+      continue;
+    }
+    const slash = rest.indexOf('/');
+    if (slash === -1) {
+      childFiles.add(rest);
+    } else {
+      childDirs.add(rest.slice(0, slash));
+    }
+  }
+
+  const items: Item[] = [];
+
+  // Requests directly in this directory (skip manifests and the envs dir).
+  for (const file of childFiles) {
+    if (!file.endsWith('.yml')) {
+      continue;
+    }
+    if (
+      file === 'opencollection.yml'
+      || file === 'folder.yml'
+      || dir === joinPosix(rootPrefix, 'environments')
+    ) {
+      continue;
+    }
+    const key = relDir + file;
+    const req = parseRequestFileYml(tree.files.get(key)!, key, logger);
+    if (req) {
+      items.push(req);
+    }
+  }
+
+  // Sub-folders (skip the environments directory at the collection root).
+  const envDir = joinPosix(rootPrefix, 'environments');
+  for (const sub of childDirs) {
+    const subDir = joinPosix(dir, sub);
+    if (subDir === envDir) {
+      continue;
+    }
+    const folder = buildFolderYml(tree, rootPrefix, subDir, sub, logger);
+    items.push(folder);
+  }
+
+  return sortItems(items);
+}
+
+function buildFolderYml(
+  tree: FileTree,
+  rootPrefix: string,
+  dir: string,
+  fallbackName: string,
+  logger: LoggerService
+): Item {
+  const folderYmlKey = joinPosix(dir, 'folder.yml');
+  let name = fallbackName;
+  let docs: string | undefined;
+  let seq: number | undefined;
+
+  const folderYml = tree.files.get(folderYmlKey);
+  if (folderYml) {
+    try {
+      const parsed = parseYmlFolder(folderYml, { format: 'yml' }) as {
+        meta?: { name?: string; seq?: number };
+        docs?: string;
+      };
+      if (parsed.meta?.name) {
+        name = parsed.meta.name;
+      }
+      if (typeof parsed.meta?.seq === 'number') {
+        seq = parsed.meta.seq;
+      }
+      if (parsed.docs) {
+        docs = parsed.docs;
+      }
+    } catch (e) {
+      logger.warn(`Failed to parse ${folderYmlKey}: ${(e as Error).message}`);
+    }
+  }
+
+  const item: Item = {
+    type: 'folder',
+    name,
+    docs,
+    items: buildTreeForDirYml(tree, rootPrefix, dir, logger)
+  };
+  (item as Item & { seq?: number }).seq = seq;
+  return item;
+}
+
+/** Parses a single request .yml file into a RequestItem. */
+function parseRequestFileYml(
+  contents: string,
+  key: string,
+  logger: LoggerService
+): Item | undefined {
+  let item: FilestoreItem;
+  try {
+    // `parseRequest` THROWS for folder / unknown item types and re-throws
+    // parse errors, so it must be guarded and skipped on failure.
+    item = parseRequest(contents, { format: 'yml' }) as FilestoreItem;
+  } catch (e) {
+    logger.warn(`Failed to parse ${key}: ${(e as Error).message}`);
+    return undefined;
+  }
+  return adaptFilestoreItem(item, key);
+}
+
+/** Shape of a request as produced by `@usebruno/filestore`'s `parseRequest`. */
+type FilestoreItem = {
+  type?: string;
+  name?: string;
+  seq?: number;
+  request?: {
+    method?: string;
+    url?: string;
+    headers?: Array<{ name: string; value?: string; enabled?: boolean }>;
+    params?: Array<{
+      name: string;
+      value?: string;
+      enabled?: boolean;
+      type?: 'query' | 'path';
+    }>;
+    body?: Record<string, unknown> & { mode?: string };
+    auth?: (Record<string, unknown> & { mode?: string }) | null;
+    script?: { req?: string | null; res?: string | null };
+    tests?: string | null;
+    assertions?: Array<{ name: string; value: string; enabled?: boolean }>;
+    docs?: string | null;
+  };
+};
+
+/**
+ * Adapts a filestore request item into our `Item`. Returns `undefined` for
+ * non-request item types (grpc / websocket / script / app) so they are skipped.
+ */
+function adaptFilestoreItem(
+  item: FilestoreItem,
+  key: string
+): Item | undefined {
+  let type: 'http' | 'graphql';
+  if (item.type === 'graphql-request') {
+    type = 'graphql';
+  } else if (item.type === 'http-request') {
+    type = 'http';
+  } else {
+    return undefined;
+  }
+
+  const name = item.name || baseName(key).replace(/\.yml$/, '');
+  const seq = typeof item.seq === 'number' ? item.seq : undefined;
+  const req = item.request ?? {};
+
+  const headers: KeyValue[] = (req.headers ?? []).map((h) => ({
+    name: h.name,
+    value: h.value ?? '',
+    enabled: h.enabled !== false
+  }));
+
+  const params: Param[] = (req.params ?? []).map((p) => ({
+    name: p.name,
+    value: p.value ?? '',
+    type: p.type === 'path' ? 'path' : 'query',
+    enabled: p.enabled !== false
+  }));
+
+  const script = mapScript({ script: req.script } as RawRequest);
+
+  const result: RequestItemInternal = {
+    type,
+    name,
+    seq,
+    docs: req.docs || undefined,
+    method: (req.method ?? 'get').toUpperCase(),
+    url: req.url ?? '',
+    headers,
+    params,
+    body: adaptBodyYml(req.body),
+    auth: adaptAuthYml(req.auth),
+    script,
+    tests: req.tests || undefined,
+    assertions: mapAssertions({
+      assertions: req.assertions
+    } as RawRequest)
+  };
+
+  return result;
+}
+
+/** Maps a filestore body block to our RequestBody, keyed by `body.mode`. */
+function adaptBodyYml(
+  body: (Record<string, unknown> & { mode?: string }) | undefined
+): RequestBody | undefined {
+  const mode = body?.mode;
+  if (!body || !mode || mode === 'none') {
+    return { mode: 'none' };
+  }
+
+  switch (mode) {
+    case 'json':
+      return { mode: 'json', raw: strOrUndefined(body.json) };
+    case 'text':
+      return { mode: 'text', raw: strOrUndefined(body.text) };
+    case 'xml':
+      return { mode: 'xml', raw: strOrUndefined(body.xml) };
+    case 'graphql': {
+      const gql = body.graphql as { query?: string } | undefined;
+      return { mode: 'graphql', raw: gql?.query ?? '' };
+    }
+    case 'formUrlEncoded':
+      return { mode: 'formUrlEncoded', form: mapForm(body.formUrlEncoded) };
+    case 'multipartForm':
+      return { mode: 'multipartForm', form: mapForm(body.multipartForm) };
+    default:
+      // sparql / file / unknown modes are not representable — treat as none.
+      return { mode: 'none' };
+  }
+}
+
+/**
+ * Maps a filestore auth block to our RequestAuth. The block is `{ mode, ... }`
+ * where the mode-specific fields live under `auth[mode]`.
+ */
+function adaptAuthYml(
+  auth: (Record<string, unknown> & { mode?: string }) | null | undefined
+): RequestAuth | undefined {
+  if (!auth) {
+    return undefined;
+  }
+  const mode = auth.mode;
+  if (!mode) {
+    return undefined;
+  }
+  if (mode === 'none' || mode === 'inherit') {
+    return { mode: mode as RequestAuth['mode'] };
+  }
+  if (AUTH_MODES.includes(mode as RequestAuth['mode'])) {
+    const fields = (auth[mode] as Record<string, unknown>) ?? {};
+    return { mode: mode as RequestAuth['mode'], ...fields };
+  }
+  // Unsupported auth mode (oauth2, awsv4, ntlm, ...) — surface the mode only.
+  return { mode: 'none', unsupportedMode: mode };
 }
 
 /* -------------------------------------------------------------------------- */

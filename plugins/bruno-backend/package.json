@@ -31,6 +31,7 @@
     "@octokit/rest": "^19.0.3",
     "@opencollection/types": "^0.12.0",
     "@usebruno/converters": "^0.22.0",
+    "@usebruno/filestore": "^0.11.0",
     "@usebruno/lang": "^0.38.0",
     "express": "^4.22.0",
     "express-promise-router": "^4.1.0"
