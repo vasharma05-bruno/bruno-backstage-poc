@@ -2,7 +2,28 @@
 
 > Companion to [`POC-PLAN.md`](./POC-PLAN.md), [`POC-DECISIONS.md`](./POC-DECISIONS.md), and [`POC-GAPS.md`](./POC-GAPS.md). This doc scopes the **next phase of the POC** — moving collections from static `app-config.yaml` sources to a **runtime, user-driven** connect flow, on top of real authentication. It records the approach, the locked decisions, the exact wiring, and the risks/blockers, *before* anyone builds it.
 
-**Status:** 🟠 Scoped, not yet built — awaiting go-ahead to implement · **Last updated:** 2026-08-05
+**Status:** 🟢 Built (P1–P5 committed on `feat/next-steps-runtime-connect`) · security-reviewed · **Last updated:** 2026-08-05
+
+---
+
+## 0. Implementation status
+
+The phased plan (§10) was implemented via an orchestrated plan → execute → review pipeline (per-phase plans in [`docs/execution/`](./execution)), each phase committed after its review:
+
+| Phase | What landed | Commit |
+|-------|-------------|--------|
+| P1 | Auth test harness (GitHub + Google providers, `SignInPage` + OAuth client APIs) | baseline `a1a192a` |
+| P2 | Backend connect + store (`bruno_connections`, `readUrlTreeWithCreds` w/ Octokit user-token fallback, `/connections` routes) | `e8c8c8b` |
+| P3 | Card connect UX (broadened filter, connect/disconnect client, `BrunoCard` state machine w/ gesture-safe GitHub OAuth) | `bdd9a87` |
+| P4 | Docs-column `CollectionTreeCard` (compact read-only tree, gated on a linked collection) | `31cc5ba` |
+| P5 | Bruno `metadata.links` on provider-materialized entities (Open-in-Bruno + source) | `c05acfe` |
+| P6 | This doc + [`README.md`](./README.md) cross-links; security review → [`execution/P6-security-review.md`](./execution/P6-security-review.md) | (this commit) |
+
+All plugin packages typecheck/build clean. **Still open / not done in this pass:**
+- **Runtime end-to-end verification** — the flows build and are wired, but a live browser run (GitHub/Google login, public + private connect against the provided test repos) is **pending**: `@backstage/cli` doesn't auto-load `.env`, so the OAuth env vars still need a loading mechanism before `yarn start` picks them up.
+- **Runtime-connected `metadata.links`** (P5 for non-provider entities) — depends on the [`NEXT-STEPS-2.md §4`](./NEXT-STEPS-2.md) annotation-injection processor (out of scope this pass).
+- **Security hardening** — the review found no POC blockers but several **pre-Beta** must-fixes (IDOR on `/connections`, broad `repo` scope, `mapAuth` secret exposure + cross-user cache, server-side URL validation). See [`execution/P6-security-review.md`](./execution/P6-security-review.md). **Not implemented — Beta work, not authorized.**
+- **`parseGithubUrl` edge cases** — the user-token fallback mishandles slashed branch names and `/blob/` URLs (the provided test repos are unaffected).
 
 ---
 

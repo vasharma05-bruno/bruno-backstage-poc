@@ -2,7 +2,7 @@
 
 > Entry point for the **Bruno for Backstage** feasibility POC. This page narrates what has happened so far and links every companion doc and the key code it refers to. Start here.
 
-**Status:** 🟢 POC active — spine runs end-to-end (local + public sources); verdict = **GO** for a future Beta, but **Beta is not authorized yet — the POC is still ongoing.** · **Last updated:** 2026-08-05
+**Status:** 🟢 POC active — spine runs end-to-end (local + public sources); the **runtime-connect next phase (NEXT-STEPS.md P1–P5) is now built + committed** on `feat/next-steps-runtime-connect` and security-reviewed. Verdict = **GO** for a future Beta, but **Beta is not authorized yet — the POC is still ongoing.** · **Last updated:** 2026-08-05
 
 ---
 
@@ -27,6 +27,7 @@ Both came back positive. Details and evidence are in the docs below.
 | **[NEXT-STEPS.md](./NEXT-STEPS.md)** | The next-phase scoping: app-side auth test-harness, runtime URL→API connect flow (public + private), and the docs-column card. Locked decisions, exact wiring, risks/blockers, phased plan. | To understand *what's planned next* and how it's designed before it's built. |
 | **[NEXT-STEPS-2.md](./NEXT-STEPS-2.md)** | Second-iteration plan (mockup-informed): the dedicated **Bruno page** — Collections dashboard + Link API console — and the **catalog-processor annotation-injection** linking model. Excludes north-star items (org-crawl, match-ranking, request-search) and the Test Runs / Setup tabs. | To understand the Bruno-page design and the improved linking mechanism. |
 | **[DASHBOARD.md](./DASHBOARD.md)** | A *separate* plan: a top-level Bruno dashboard page listing all collections for the user/org — what's buildable today vs. what depends on NEXT-STEPS. **Largely absorbed into NEXT-STEPS-2.** | To see the original standalone dashboard exploration. |
+| **[execution/](./execution)** | Per-phase execution plans (P2–P6) that drove the runtime-connect build via a plan → execute → review pipeline, plus **[P6-security-review.md](./execution/P6-security-review.md)** (the credential-surface audit). | To see how each NEXT-STEPS phase was planned/reviewed, and the security findings. |
 | **[screenshots/](./screenshots)** | Evidence captures from the running app (entity + BrunoCard, docs viewer, try-it-out via proxy). | Referenced from `POC-DECISIONS.md §Screenshots`. |
 
 ---
