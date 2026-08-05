@@ -13,6 +13,7 @@ import {
 } from '@backstage/core-components';
 import { useApi } from '@backstage/core-plugin-api';
 import { useEntity } from '@backstage/plugin-catalog-react';
+import { stringifyEntityRef } from '@backstage/catalog-model';
 import { brunoApiRef } from '../../api/BrunoApi';
 import type { CollectionDetail, RequestItem } from '../../api/types';
 import { getCollectionId } from '../../lib/annotations';
@@ -42,27 +43,41 @@ export function CollectionDocs() {
   const classes = useStyles();
   const { entity } = useEntity();
   const brunoApi = useApi(brunoApiRef);
-  const collectionId = getCollectionId(entity);
+
+  const entityRef = stringifyEntityRef(entity);
+  const annotationCollectionId = getCollectionId(entity);
 
   const [detail, setDetail] = useState<CollectionDetail | undefined>();
   const [error, setError] = useState<Error | undefined>();
   const [loading, setLoading] = useState(true);
+  const [notConnected, setNotConnected] = useState(false);
   const [selectedId, setSelectedId] = useState<string | undefined>();
 
   useEffect(() => {
     let cancelled = false;
-    if (!collectionId) {
-      setLoading(false);
-      return undefined;
-    }
     setLoading(true);
-    brunoApi
-      .getCollection(collectionId)
-      .then((d) => {
-        if (cancelled) return;
-        setDetail(d);
-        setError(undefined);
-        setSelectedId(firstRequestId(d.collection.items));
+    setNotConnected(false);
+
+    // Resolve the collection id: annotation (provider-materialized) first,
+    // else a stored runtime connection (`getConnection` returns undefined on
+    // 404 → not connected), then fetch the collection for the viewer.
+    const resolveId = annotationCollectionId
+      ? Promise.resolve(annotationCollectionId)
+      : brunoApi.getConnection(entityRef).then((record) => record?.collectionId);
+
+    resolveId
+      .then((collectionId) => {
+        if (cancelled) return undefined;
+        if (!collectionId) {
+          setNotConnected(true);
+          return undefined;
+        }
+        return brunoApi.getCollection(collectionId).then((d) => {
+          if (cancelled) return;
+          setDetail(d);
+          setError(undefined);
+          setSelectedId(firstRequestId(d.collection.items));
+        });
       })
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e : new Error(String(e)));
@@ -73,23 +88,23 @@ export function CollectionDocs() {
     return () => {
       cancelled = true;
     };
-  }, [brunoApi, collectionId]);
+  }, [brunoApi, entityRef, annotationCollectionId]);
 
-  if (!collectionId) {
-    return (
-      <Content>
-        <EmptyState
-          missing="info"
-          title="Not a Bruno collection"
-          description="This entity has no bruno.dev/collection-id annotation."
-        />
-      </Content>
-    );
-  }
   if (loading) {
     return (
       <Content>
         <Progress />
+      </Content>
+    );
+  }
+  if (notConnected) {
+    return (
+      <Content>
+        <EmptyState
+          missing="content"
+          title="No Bruno collection connected"
+          description="Use the Bruno card on the Overview tab to connect a collection."
+        />
       </Content>
     );
   }

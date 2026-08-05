@@ -5,19 +5,12 @@ import {
 } from '@backstage/plugin-catalog-react/alpha';
 
 /**
- * Filter selecting Bruno collection entities (kind: API, spec.type:
- * bruno-collection). We use a predicate function form (the blueprint filter
+ * Filter selecting any API entity. Used as the card/content filter so
+ * runtime-connected (non-annotated) API entities also get the Bruno card and
+ * docs tab; the components themselves render a connect prompt when no
+ * collection is linked. We use a predicate function form (the blueprint filter
  * accepts `string | FilterPredicate | ((entity: Entity) => boolean)`) to avoid
  * coupling to the exact FilterPredicate object shape across versions.
- */
-const isBrunoCollection = (entity: Entity): boolean =>
-  entity.kind.toLocaleLowerCase('en-US') === 'api'
-  && (entity.spec?.type as string | undefined) === 'bruno-collection';
-
-/**
- * Filter selecting any API entity. Used as the card filter so runtime-connected
- * (non-annotated) API entities also get the Bruno card; the card itself renders
- * a connect prompt when no collection is linked.
  */
 const isApiEntity = (entity: Entity): boolean =>
   entity.kind.toLocaleLowerCase('en-US') === 'api';
@@ -65,7 +58,7 @@ export const brunoDocsContent = EntityContentBlueprint.make({
   params: {
     path: '/bruno-docs',
     title: 'API Docs',
-    filter: isBrunoCollection,
+    filter: isApiEntity,
     loader: () =>
       import('./components/CollectionDocs').then((m) => <m.CollectionDocs />)
   }
