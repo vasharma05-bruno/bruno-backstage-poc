@@ -1,6 +1,11 @@
 import type { DiscoveryApi, FetchApi } from '@backstage/core-plugin-api';
 import type { BrunoApi } from './BrunoApi';
-import type { CollectionDetail, CollectionSummary } from './types';
+import type {
+  CollectionDetail,
+  CollectionSummary,
+  ConnectionRecord,
+  ConnectResult
+} from './types';
 
 /**
  * Default {@link BrunoApi} implementation. Talks to the `bruno` backend plugin
@@ -44,5 +49,55 @@ export class BrunoClient implements BrunoApi {
   async getDocsUrl(id: string): Promise<string> {
     const base = await this.baseUrl();
     return `${base}/collections/${encodeURIComponent(id)}/docs`;
+  }
+
+  async connect(
+    entityRef: string,
+    url: string,
+    token?: string
+  ): Promise<ConnectResult> {
+    const base = await this.baseUrl();
+    const res = await this.fetchApi.fetch(`${base}/connections`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entityRef, url, userGithubToken: token })
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(
+        `Bruno backend request to /connections failed (${res.status}): ${text}`
+      );
+    }
+    return (await res.json()) as ConnectResult;
+  }
+
+  async getConnection(entityRef: string): Promise<ConnectionRecord | undefined> {
+    const base = await this.baseUrl();
+    const path = `/connections/${encodeURIComponent(entityRef)}`;
+    const res = await this.fetchApi.fetch(`${base}${path}`);
+    if (res.status === 404) {
+      return undefined;
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(
+        `Bruno backend request to ${path} failed (${res.status}): ${text}`
+      );
+    }
+    return (await res.json()) as ConnectionRecord;
+  }
+
+  async disconnect(entityRef: string): Promise<void> {
+    const base = await this.baseUrl();
+    const path = `/connections/${encodeURIComponent(entityRef)}`;
+    const res = await this.fetchApi.fetch(`${base}${path}`, {
+      method: 'DELETE'
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(
+        `Bruno backend request to ${path} failed (${res.status}): ${text}`
+      );
+    }
   }
 }

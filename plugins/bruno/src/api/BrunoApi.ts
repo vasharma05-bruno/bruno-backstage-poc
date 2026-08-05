@@ -1,5 +1,10 @@
 import { createApiRef } from '@backstage/core-plugin-api';
-import type { CollectionDetail, CollectionSummary } from './types';
+import type {
+  CollectionDetail,
+  CollectionSummary,
+  ConnectionRecord,
+  ConnectResult
+} from './types';
 
 /**
  * Client for the `bruno` backend plugin.
@@ -14,6 +19,12 @@ export interface BrunoApi {
   getCollection(id: string): Promise<CollectionDetail>;
   /** Absolute URL of the self-contained docs HTML for a collection. */
   getDocsUrl(id: string): Promise<string>;
+  /** POST /connections — link an entity to a GitHub collection URL. */
+  connect(entityRef: string, url: string, token?: string): Promise<ConnectResult>;
+  /** GET /connections/:entityRef — resolves to undefined on 404. */
+  getConnection(entityRef: string): Promise<ConnectionRecord | undefined>;
+  /** DELETE /connections/:entityRef */
+  disconnect(entityRef: string): Promise<void>;
 }
 
 export const brunoApiRef = createApiRef<BrunoApi>({

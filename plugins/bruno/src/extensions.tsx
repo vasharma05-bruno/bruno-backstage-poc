@@ -15,6 +15,14 @@ const isBrunoCollection = (entity: Entity): boolean =>
   && (entity.spec?.type as string | undefined) === 'bruno-collection';
 
 /**
+ * Filter selecting any API entity. Used as the card filter so runtime-connected
+ * (non-annotated) API entities also get the Bruno card; the card itself renders
+ * a connect prompt when no collection is linked.
+ */
+const isApiEntity = (entity: Entity): boolean =>
+  entity.kind.toLocaleLowerCase('en-US') === 'api';
+
+/**
  * Entity card. Signature verified against
  * @backstage/plugin-catalog-react@3.2.0 (mirrors `apiDocsDefinitionEntityCard`
  * in node_modules/@backstage/plugin-api-docs/dist/alpha.esm.js):
@@ -24,7 +32,7 @@ const isBrunoCollection = (entity: Entity): boolean =>
 export const brunoCard = EntityCardBlueprint.make({
   name: 'collection',
   params: {
-    filter: isBrunoCollection,
+    filter: isApiEntity,
     loader: () =>
       import('./components/BrunoCard').then((m) => <m.BrunoCard />)
   }

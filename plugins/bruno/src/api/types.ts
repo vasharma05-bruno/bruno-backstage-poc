@@ -126,6 +126,22 @@ export interface CollectionDetail {
   collection: NormalizedCollection;
 }
 
+/** POST /connections response. */
+export interface ConnectResult {
+  collectionId: string;
+  name: string;
+  requestCount: number;
+}
+
+/** GET /connections/:entityRef response. */
+export interface ConnectionRecord {
+  entityRef: string;
+  collectionId: string;
+  githubUrl: string;
+  connectedBy: string;
+  updatedAt: string;
+}
+
 /** Type guard: narrow an Item to a request. */
 export function isRequestItem(item: Item): item is RequestItem {
   return item.type === 'http' || item.type === 'graphql';
