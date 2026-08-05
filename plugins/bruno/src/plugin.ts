@@ -3,6 +3,7 @@ import { brunoApi } from './api/extension';
 import {
   brunoCard,
   brunoCollectionTreeCard,
+  brunoCollectionOverviewCard,
   brunoDocsContent
 } from './extensions';
 
@@ -18,11 +19,18 @@ import {
  *  - brunoApi         -> registers brunoApiRef (ApiBlueprint)
  *  - brunoCard             -> entity card on kind:api + spec.type:bruno-collection
  *  - brunoCollectionTreeCard -> read-only collection tree card on kind:api
+ *  - brunoCollectionOverviewCard -> collection-root README card on kind:api
  *  - brunoDocsContent      -> "API Docs" tab at /bruno-docs on the same filter
  */
 export const brunoPlugin = createFrontendPlugin({
   pluginId: 'bruno',
-  extensions: [brunoApi, brunoCard, brunoCollectionTreeCard, brunoDocsContent]
+  extensions: [
+    brunoApi,
+    brunoCard,
+    brunoCollectionTreeCard,
+    brunoCollectionOverviewCard,
+    brunoDocsContent
+  ]
 });
 
 export default brunoPlugin;

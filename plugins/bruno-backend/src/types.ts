@@ -110,6 +110,8 @@ export interface NormalizedCollection {
   environments: Environment[];
   /** Ordered by `meta.seq`. */
   items: Item[];
+  /** Collection-root README markdown, if present. */
+  readme?: string;
 }
 
 /** Source configuration for a single collection (`bruno.sources[]`). */

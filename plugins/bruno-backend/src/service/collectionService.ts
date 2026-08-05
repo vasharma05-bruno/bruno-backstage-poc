@@ -358,11 +358,13 @@ async function walkLocal(
       }
       await walkLocal(full, root, files);
     } else if (entry.isFile()) {
-      // Keep .bru files, bruno.json, and OpenCollection .yml files.
+      // Keep .bru files, bruno.json, OpenCollection .yml files, and the
+      // collection README.
       if (
         entry.name.endsWith('.bru')
         || entry.name === 'bruno.json'
         || entry.name.endsWith('.yml')
+        || /^readme\.md$/i.test(entry.name)
       ) {
         const rel = toPosix(path.relative(root, full));
         files.set(rel, await fs.readFile(full, 'utf8'));
@@ -392,7 +394,12 @@ async function readUrlTree(
   for (const file of treeFiles) {
     // `file.path` is relative to the tree root.
     const rel = toPosix(file.path);
-    if (rel.endsWith('.bru') || rel.endsWith('bruno.json') || rel.endsWith('.yml')) {
+    if (
+      rel.endsWith('.bru')
+      || rel.endsWith('bruno.json')
+      || rel.endsWith('.yml')
+      || /(^|\/)readme\.md$/i.test(rel)
+    ) {
       const buffer = await file.content();
       files.set(rel, buffer.toString('utf8'));
     }
@@ -504,6 +511,7 @@ async function readUrlTreeViaOctokit(
       !rel.endsWith('.bru')
       && !rel.endsWith('bruno.json')
       && !rel.endsWith('.yml')
+      && !/(^|\/)readme\.md$/i.test(rel)
     ) {
       continue;
     }
@@ -562,13 +570,15 @@ function parseCollection(
 
   const environments = parseEnvironments(tree, rootPrefix, logger);
   const items = buildTree(tree, rootPrefix, logger);
+  const readme = findReadme(tree, rootPrefix);
 
   return {
     id: source.id,
     name: collectionName,
     version,
     environments,
-    items
+    items,
+    readme
   };
 }
 
@@ -604,6 +614,17 @@ function findOpenCollectionYml(tree: FileTree): string | undefined {
     }
   }
   return best;
+}
+
+/** Finds the collection-root README (case-insensitive) at `rootPrefix`. */
+function findReadme(tree: FileTree, rootPrefix: string): string | undefined {
+  const prefix = rootPrefix ? `${rootPrefix}/` : '';
+  for (const [key, value] of tree.files) {
+    if (key.toLowerCase() === `${prefix}readme.md`) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 /** Fallback: the shortest common leading directory of all files. */
@@ -1002,13 +1023,15 @@ function parseCollectionYml(
 
   const environments = parseEnvironmentsYml(tree, rootPrefix, logger);
   const items = buildTreeYml(tree, rootPrefix, logger);
+  const readme = findReadme(tree, rootPrefix);
 
   return {
     id: source.id,
     name,
     version,
     environments,
-    items
+    items,
+    readme
   };
 }
 

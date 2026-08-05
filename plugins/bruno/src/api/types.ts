@@ -105,6 +105,8 @@ export interface NormalizedCollection {
   version?: string;
   environments: Environment[];
   items: Item[];
+  /** Collection-root README markdown, if present. */
+  readme?: string;
 }
 
 /** GET /collections list entry. */
