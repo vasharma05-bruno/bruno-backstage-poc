@@ -1,5 +1,8 @@
 import type { LoggerService, UrlReaderService } from '@backstage/backend-plugin-api';
 import type { Config } from '@backstage/config';
+import { ScmIntegrations, type ScmIntegrationRegistry } from '@backstage/integration';
+import { Octokit } from '@octokit/rest';
+import { createHash } from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
 // @usebruno/lang@0.38.0 exports the v2 parsers with a `V2` suffix; alias them
@@ -93,6 +96,10 @@ interface CachedCollection extends CollectionDetail {}
 export interface CollectionService {
   listCollections(): CollectionSummary[];
   getCollection(id: string): CollectionDetail | undefined;
+  connectFromUrl(input: {
+    url: string;
+    userToken?: string;
+  }): Promise<{ collectionId: string; detail: CollectionDetail }>;
   refresh(): Promise<void>;
 }
 
@@ -128,6 +135,30 @@ export function readBrunoSources(config: Config): BrunoSourceConfig[] {
 }
 
 /**
+ * Normalizes a GitHub collection URL to a stable identity. Lower-cases the
+ * host, drops query/hash, collapses duplicate slashes and a single trailing
+ * slash. `/tree/<branch>/<subpath>` is preserved (distinct subpaths are
+ * distinct collections).
+ */
+export function normalizeGithubUrl(url: string): string {
+  const u = new URL(url.trim());
+  u.hostname = u.hostname.toLowerCase();
+  u.hash = '';
+  u.search = '';
+  let normalizedPath = u.pathname.replace(/\/{2,}/g, '/');
+  if (normalizedPath.length > 1 && normalizedPath.endsWith('/')) {
+    normalizedPath = normalizedPath.slice(0, -1);
+  }
+  return `${u.protocol}//${u.host}${normalizedPath}`;
+}
+
+/** Derives the stable cache key / collection id from a GitHub URL. */
+export function collectionIdFromUrl(url: string): string {
+  const normalized = normalizeGithubUrl(url);
+  return createHash('sha256').update(normalized).digest('hex').slice(0, 16);
+}
+
+/**
  * Creates the collection loader / parse service. Parses all configured sources
  * once eagerly (on the first `refresh()`), and keeps the parsed collections in
  * an in-memory cache.
@@ -143,6 +174,8 @@ export async function createCollectionService(options: {
   const workingDir = options.workingDir ?? process.cwd();
 
   const cache = new Map<string, CachedCollection>();
+  const connectedCache = new Map<string, CachedCollection>();
+  const integrations = ScmIntegrations.fromConfig(config);
 
   async function loadSource(
     source: BrunoSourceConfig
@@ -210,7 +243,39 @@ export async function createCollectionService(options: {
       );
     },
     getCollection(id: string): CollectionDetail | undefined {
-      return cache.get(id);
+      return cache.get(id) ?? connectedCache.get(id);
+    },
+    async connectFromUrl(input: {
+      url: string;
+      userToken?: string;
+    }): Promise<{ collectionId: string; detail: CollectionDetail }> {
+      const normalized = normalizeGithubUrl(input.url);
+      const collectionId = collectionIdFromUrl(normalized);
+      const tree = await readUrlTreeWithCreds(
+        reader,
+        integrations,
+        normalized,
+        logger,
+        { userToken: input.userToken }
+      );
+      const source: BrunoSourceConfig = {
+        id: collectionId,
+        name: collectionId,
+        type: 'url',
+        target: normalized
+      };
+      const collection = parseCollection(source, tree, logger);
+      const requestCount = countRequests(collection.items);
+      const detail: CachedCollection = {
+        id: collectionId,
+        name: collection.name,
+        source: 'url',
+        sourceUrl: normalized,
+        requestCount,
+        collection
+      };
+      connectedCache.set(collectionId, detail);
+      return { collectionId, detail };
     },
     refresh
   };
@@ -319,6 +384,120 @@ async function readUrlTree(
       const buffer = await file.content();
       files.set(rel, buffer.toString('utf8'));
     }
+  }
+  return { files };
+}
+
+/**
+ * Reads a collection tree, preferring the Backstage service reader. If that
+ * fails and a user OAuth token is supplied, retries via Octokit using the
+ * user's own credentials. The user token is never logged, returned, or stored.
+ */
+async function readUrlTreeWithCreds(
+  reader: UrlReaderService,
+  integrations: ScmIntegrationRegistry,
+  url: string,
+  logger: LoggerService,
+  opts?: { userToken?: string }
+): Promise<FileTree> {
+  try {
+    return await readUrlTree(reader, url, logger);
+  } catch (error) {
+    if (opts?.userToken) {
+      logger.info('Service reader failed; retrying with user OAuth token.');
+      return await readUrlTreeViaOctokit(
+        integrations,
+        url,
+        opts.userToken,
+        logger
+      );
+    }
+    throw error;
+  }
+}
+
+type ParsedGithubUrl = {
+  owner: string;
+  repo: string;
+  ref?: string;
+  subpath: string;
+};
+
+/** Parses `owner/repo` and an optional `/tree/<ref>/<subpath>` from a URL. */
+function parseGithubUrl(url: string): ParsedGithubUrl {
+  const segments = new URL(url).pathname.split('/').filter((s) => s !== '');
+  const owner = segments[0];
+  const repo = segments[1];
+  if (!owner || !repo) {
+    throw new Error(`Unsupported GitHub URL: ${url}`);
+  }
+  if (segments[2] === 'tree' && segments[3]) {
+    return {
+      owner,
+      repo,
+      ref: segments[3],
+      subpath: segments.slice(4).join('/')
+    };
+  }
+  return { owner, repo, subpath: '' };
+}
+
+/**
+ * Reads a GitHub collection tree via Octokit using a user-supplied token. Used
+ * as a fallback when the service reader has no credentials for the repo. The
+ * token is passed only to the Octokit client and never logged or returned.
+ */
+async function readUrlTreeViaOctokit(
+  integrations: ScmIntegrationRegistry,
+  url: string,
+  userToken: string,
+  logger: LoggerService
+): Promise<FileTree> {
+  const { owner, repo, ref: parsedRef, subpath } = parseGithubUrl(url);
+  const apiBaseUrl
+    = integrations.github.byUrl(url)?.config.apiBaseUrl
+    ?? 'https://api.github.com';
+  const octokit = new Octokit({ auth: userToken, baseUrl: apiBaseUrl });
+
+  let ref = parsedRef;
+  if (!ref) {
+    const { data } = await octokit.repos.get({ owner, repo });
+    ref = data.default_branch;
+  }
+
+  const { data: tree } = await octokit.git.getTree({
+    owner,
+    repo,
+    tree_sha: ref,
+    recursive: 'true'
+  });
+
+  if (tree.truncated) {
+    logger.warn(
+      `GitHub tree for ${owner}/${repo} was truncated; some files may be missing.`
+    );
+  }
+
+  const prefix = subpath === '' ? '' : `${subpath}/`;
+  const files = new Map<string, string>();
+  for (const entry of tree.tree) {
+    if (entry.type !== 'blob' || !entry.path || !entry.sha) {
+      continue;
+    }
+    if (prefix !== '' && !entry.path.startsWith(prefix)) {
+      continue;
+    }
+    const rel = entry.path.slice(prefix.length);
+    if (!rel.endsWith('.bru') && !rel.endsWith('bruno.json')) {
+      continue;
+    }
+    const { data: blob } = await octokit.git.getBlob({
+      owner,
+      repo,
+      file_sha: entry.sha
+    });
+    const text = Buffer.from(blob.content, 'base64').toString('utf8');
+    files.set(rel, text);
   }
   return { files };
 }

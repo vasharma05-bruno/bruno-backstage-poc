@@ -1,15 +1,24 @@
-import type { LoggerService } from '@backstage/backend-plugin-api';
+import type {
+  HttpAuthService,
+  LoggerService,
+  UserInfoService
+} from '@backstage/backend-plugin-api';
 import { MiddlewareFactory } from '@backstage/backend-defaults/rootHttpRouter';
 import type { Config } from '@backstage/config';
+import { InputError } from '@backstage/errors';
 import express from 'express';
 import Router from 'express-promise-router';
 import type { CollectionService } from './collectionService';
+import type { ConnectionStore } from '../store/connectionStore';
 import { generateCollectionHtml } from './generateCollectionHtml';
 
 export interface RouterOptions {
   logger: LoggerService;
   config: Config;
   collectionService: CollectionService;
+  connectionStore: ConnectionStore;
+  httpAuth: HttpAuthService;
+  userInfo: UserInfoService;
 }
 
 /**
@@ -25,7 +34,8 @@ export interface RouterOptions {
 export async function createRouter(
   options: RouterOptions
 ): Promise<express.Router> {
-  const { logger, config, collectionService } = options;
+  const { logger, config, collectionService, connectionStore, httpAuth, userInfo } =
+    options;
 
   const router = Router();
   router.use(express.json());
@@ -60,6 +70,58 @@ export async function createRouter(
     }
     const html = generateCollectionHtml(detail.collection);
     res.type('text/html').send(html);
+  });
+
+  router.post('/connections', async (req, res) => {
+    const credentials = await httpAuth.credentials(req, { allow: ['user'] });
+    const { userEntityRef } = await userInfo.getUserInfo(credentials);
+
+    const { entityRef, url, userGithubToken } = req.body ?? {};
+    if (!entityRef || !url) {
+      throw new InputError('`entityRef` and `url` are required.');
+    }
+
+    const { collectionId, detail } = await collectionService.connectFromUrl({
+      url,
+      userToken: userGithubToken
+    });
+
+    await connectionStore.upsert({
+      entityRef,
+      githubUrl: detail.sourceUrl!,
+      collectionId,
+      connectedBy: userEntityRef
+    });
+
+    res.json({
+      collectionId,
+      name: detail.name,
+      requestCount: detail.requestCount
+    });
+  });
+
+  router.get('/connections/:entityRef', async (req, res) => {
+    await httpAuth.credentials(req, { allow: ['user'] });
+    const row = await connectionStore.getByEntityRef(req.params.entityRef);
+    if (!row) {
+      res
+        .status(404)
+        .json({ error: `No connection for entity: ${req.params.entityRef}` });
+      return;
+    }
+    res.json({
+      entityRef: row.entityRef,
+      collectionId: row.collectionId,
+      githubUrl: row.githubUrl,
+      connectedBy: row.connectedBy,
+      updatedAt: row.updatedAt
+    });
+  });
+
+  router.delete('/connections/:entityRef', async (req, res) => {
+    await httpAuth.credentials(req, { allow: ['user'] });
+    await connectionStore.delete(req.params.entityRef);
+    res.status(204).end();
   });
 
   // Manual refresh endpoint (handy for the POC / demos).

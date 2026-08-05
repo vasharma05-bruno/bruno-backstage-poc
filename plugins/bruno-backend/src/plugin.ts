@@ -4,6 +4,7 @@ import {
 } from '@backstage/backend-plugin-api';
 import { createCollectionService } from './service/collectionService';
 import { createRouter } from './service/router';
+import { createConnectionStore } from './store/connectionStore';
 
 /**
  * The Bruno backend plugin. Registers under plugin id `bruno`, so its routes
@@ -20,17 +21,37 @@ export const brunoPlugin = createBackendPlugin({
         httpRouter: coreServices.httpRouter,
         logger: coreServices.logger,
         config: coreServices.rootConfig,
-        reader: coreServices.urlReader
+        reader: coreServices.urlReader,
+        database: coreServices.database,
+        httpAuth: coreServices.httpAuth,
+        userInfo: coreServices.userInfo
       },
-      async init({ httpRouter, logger, config, reader }) {
+      async init({
+        httpRouter,
+        logger,
+        config,
+        reader,
+        database,
+        httpAuth,
+        userInfo
+      }) {
         const collectionService = await createCollectionService({
           logger,
           config,
           reader
         });
 
+        const connectionStore = await createConnectionStore(database);
+
         httpRouter.use(
-          await createRouter({ logger, config, collectionService })
+          await createRouter({
+            logger,
+            config,
+            collectionService,
+            connectionStore,
+            httpAuth,
+            userInfo
+          })
         );
 
         // POC: allow unauthenticated access to the read-only endpoints so the
