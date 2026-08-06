@@ -1,5 +1,6 @@
 import type { LoggerService, UrlReaderService } from '@backstage/backend-plugin-api';
 import type { Config } from '@backstage/config';
+import { InputError } from '@backstage/errors';
 import { ScmIntegrations, type ScmIntegrationRegistry } from '@backstage/integration';
 import { Octokit } from '@octokit/rest';
 import { createHash } from 'crypto';
@@ -266,6 +267,13 @@ export async function createCollectionService(options: {
         logger,
         { userToken: input.userToken }
       );
+      const hasManifest =
+        findBrunoJson(tree) !== undefined || findOpenCollectionYml(tree) !== undefined;
+      if (!hasManifest) {
+        throw new InputError(
+          `No Bruno collection found at ${normalized} (missing bruno.json / opencollection.yml)`
+        );
+      }
       const source: BrunoSourceConfig = {
         id: collectionId,
         name: collectionId,

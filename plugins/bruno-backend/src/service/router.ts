@@ -100,6 +100,20 @@ export async function createRouter(
     });
   });
 
+  router.get('/connections', async (req, res) => {
+    await httpAuth.credentials(req, { allow: ['user', 'service'] });
+    const rows = await connectionStore.listAll();
+    res.json(
+      rows.map(row => ({
+        entityRef: row.entityRef,
+        collectionId: row.collectionId,
+        githubUrl: row.githubUrl,
+        connectedBy: row.connectedBy,
+        updatedAt: row.updatedAt
+      }))
+    );
+  });
+
   router.get('/connections/:entityRef', async (req, res) => {
     await httpAuth.credentials(req, { allow: ['user'] });
     const row = await connectionStore.getByEntityRef(req.params.entityRef);

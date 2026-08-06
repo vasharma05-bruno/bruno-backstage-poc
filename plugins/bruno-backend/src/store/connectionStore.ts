@@ -12,6 +12,7 @@ export interface ConnectionStore {
   upsert(row: Omit<BrunoConnectionRow, 'updatedAt'>): Promise<void>;
   getByEntityRef(entityRef: string): Promise<BrunoConnectionRow | undefined>;
   delete(entityRef: string): Promise<void>;
+  listAll(): Promise<BrunoConnectionRow[]>;
 }
 
 type RawRow = {
@@ -76,6 +77,10 @@ export async function createConnectionStore(
     },
     async delete(entityRef): Promise<void> {
       await client('bruno_connections').where({ entity_ref: entityRef }).delete();
+    },
+    async listAll(): Promise<BrunoConnectionRow[]> {
+      const rows = await client('bruno_connections').select('*');
+      return (rows as RawRow[]).map(rowToModel);
     }
   };
 }
