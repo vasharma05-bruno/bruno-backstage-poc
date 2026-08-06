@@ -8,7 +8,8 @@ import type {
 import type {
   CollectionService } from '../service/collectionService';
 import {
-  readBrunoSources
+  readBrunoSources,
+  sanitizeName
 } from '../service/collectionService';
 import type { BrunoSourceConfig } from '../types';
 
@@ -135,14 +136,4 @@ export class BrunoEntityProvider implements EntityProvider {
 // format (scheme `bruno`, verb `open`, encoded `url` param) in sync.
 function brunoDeepLink(sourceUrl: string): string {
   return `bruno://open?url=${encodeURIComponent(sourceUrl)}`;
-}
-
-/** Sanitizes a source id into a valid Backstage entity name. */
-function sanitizeName(id: string): string {
-  const cleaned = id
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 63);
-  return cleaned || 'bruno-collection';
 }

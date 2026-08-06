@@ -29,6 +29,7 @@ export interface RouterOptions {
  *   GET /collections            -> Array<CollectionSummary>
  *   GET /collections/:id        -> CollectionDetail (404 if unknown)
  *   GET /collections/:id/docs   -> text/html (self-contained Scenario-B docs)
+ *   GET /dashboard              -> Dashboard (stats + cards + failed sources)
  *   POST /refresh               -> re-reads and re-parses all sources
  */
 export async function createRouter(
@@ -70,6 +71,12 @@ export async function createRouter(
     }
     const html = generateCollectionHtml(detail.collection);
     res.type('text/html').send(html);
+  });
+
+  router.get('/dashboard', async (req, res) => {
+    await httpAuth.credentials(req, { allow: ['user', 'service'] });
+    const links = await connectionStore.listAll();
+    res.json(collectionService.getDashboard(links));
   });
 
   router.post('/connections', async (req, res) => {

@@ -26,14 +26,18 @@ import type {
   BrunoSourceConfig,
   CollectionDetail,
   CollectionSummary,
+  Dashboard,
+  DashboardCollection,
   Environment,
   Item,
   KeyValue,
   NormalizedCollection,
   Param,
   RequestAuth,
-  RequestBody
+  RequestBody,
+  SourceFailure
 } from '../types';
+import type { BrunoConnectionRow } from '../store/connectionStore';
 
 /**
  * A parsed .bru request as produced by `@usebruno/lang`'s `bruToJson`.
@@ -110,6 +114,7 @@ export interface CollectionService {
     userToken?: string;
   }): Promise<{ collectionId: string; detail: CollectionDetail }>;
   refresh(): Promise<void>;
+  getDashboard(links: BrunoConnectionRow[]): Dashboard;
 }
 
 const BODY_MODES: RequestBody['mode'][] = [
@@ -141,6 +146,16 @@ export function readBrunoSources(config: Config): BrunoSourceConfig[] {
     type: s.getString('type') as 'local' | 'url',
     target: s.getString('target')
   }));
+}
+
+/** Sanitizes a source id into a valid Backstage entity name. */
+export function sanitizeName(id: string): string {
+  const cleaned = id
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 63);
+  return cleaned || 'bruno-collection';
 }
 
 /**
@@ -184,6 +199,7 @@ export async function createCollectionService(options: {
 
   const cache = new Map<string, CachedCollection>();
   const connectedCache = new Map<string, CachedCollection>();
+  let failures: SourceFailure[] = [];
   const integrations = ScmIntegrations.fromConfig(config);
 
   async function loadSource(
@@ -217,6 +233,11 @@ export async function createCollectionService(options: {
           (error as Error).message
         }`
       );
+      failures.push({
+        id: source.id,
+        target: source.target,
+        error: (error as Error).message
+      });
       return undefined;
     }
   }
@@ -226,6 +247,7 @@ export async function createCollectionService(options: {
     if (sources.length === 0) {
       logger.warn('No `bruno.sources` configured; nothing to load.');
     }
+    failures = [];
     const loaded = await Promise.all(sources.map(loadSource));
     cache.clear();
     for (const c of loaded) {
@@ -293,7 +315,47 @@ export async function createCollectionService(options: {
       connectedCache.set(collectionId, detail);
       return { collectionId, detail };
     },
-    refresh
+    refresh,
+    getDashboard(links: BrunoConnectionRow[]): Dashboard {
+      const byId = new Map<string, CachedCollection>();
+      for (const c of cache.values()) {
+        byId.set(c.id, c);
+      }
+      for (const c of connectedCache.values()) {
+        byId.set(c.id, c);
+      }
+      const linksByCollectionId = new Map<string, BrunoConnectionRow>();
+      for (const link of links) {
+        linksByCollectionId.set(link.collectionId, link);
+      }
+
+      let totalRequests = 0;
+      const collections: DashboardCollection[] = [];
+      for (const c of byId.values()) {
+        const link = linksByCollectionId.get(c.id);
+        totalRequests += c.requestCount;
+        collections.push({
+          id: c.id,
+          name: c.name,
+          requestCount: c.requestCount,
+          envCount: c.collection.environments.length,
+          activeEnv: c.collection.environments[0]?.name,
+          specType: 'bruno-collection',
+          linked: link !== undefined,
+          entityRef: link?.entityRef ?? `api:default/${sanitizeName(c.id)}`
+        });
+      }
+
+      return {
+        stats: {
+          collections: collections.length,
+          totalRequests,
+          linkedEntities: links.length
+        },
+        collections,
+        failures
+      };
+    }
   };
 }
 

@@ -26,6 +26,9 @@ export type {
   BrunoSourceConfig,
   CollectionDetail,
   CollectionSummary,
+  Dashboard,
+  DashboardCollection,
+  DashboardStats,
   Environment,
   FolderItem,
   Item,
@@ -35,5 +38,6 @@ export type {
   RequestAuth,
   RequestBody,
   RequestItem,
-  RequestScript
+  RequestScript,
+  SourceFailure
 } from './types';

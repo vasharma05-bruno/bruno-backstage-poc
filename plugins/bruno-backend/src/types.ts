@@ -135,3 +135,36 @@ export interface CollectionSummary {
 export interface CollectionDetail extends CollectionSummary {
   collection: NormalizedCollection;
 }
+
+/** A collection card in the dashboard aggregate (`GET /dashboard`). */
+export interface DashboardCollection {
+  id: string;
+  name: string;
+  requestCount: number;
+  envCount: number;
+  activeEnv?: string;
+  specType?: string;
+  linked: boolean;
+  entityRef?: string;
+}
+
+/** A source that failed to load during the last `refresh`. */
+export interface SourceFailure {
+  id: string;
+  target: string;
+  error: string;
+}
+
+/** Aggregate stat tiles for the dashboard. */
+export interface DashboardStats {
+  collections: number;
+  totalRequests: number;
+  linkedEntities: number;
+}
+
+/** The full payload returned by `GET /dashboard`. */
+export interface Dashboard {
+  stats: DashboardStats;
+  collections: DashboardCollection[];
+  failures: SourceFailure[];
+}
