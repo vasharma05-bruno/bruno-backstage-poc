@@ -57,6 +57,19 @@ export class BrunoClient implements BrunoApi {
     return `${base}/collections/${encodeURIComponent(id)}/docs`;
   }
 
+  async getOpenCollectionYaml(id: string): Promise<string> {
+    const base = await this.baseUrl();
+    const path = `/collections/${encodeURIComponent(id)}/opencollection.yml`;
+    const res = await this.fetchApi.fetch(`${base}${path}`);
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(
+        `Bruno backend request to ${path} failed (${res.status}): ${text}`
+      );
+    }
+    return res.text();
+  }
+
   async connect(
     entityRef: string,
     url: string,

@@ -11187,7 +11187,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/js-yaml@npm:^4.0.1":
+"@types/js-yaml@npm:^4.0.1, @types/js-yaml@npm:^4.0.9":
   version: 4.0.9
   resolution: "@types/js-yaml@npm:4.0.9"
   checksum: 10c0/24de857aa8d61526bbfbbaa383aa538283ad17363fcd5bb5148e2c7f604547db36646440e739d78241ed008702a8920665d1add5618687b6743858fae00da211
@@ -12269,11 +12269,13 @@ __metadata:
     "@octokit/rest": "npm:^19.0.3"
     "@opencollection/types": "npm:^0.12.0"
     "@types/express": "npm:^4.17.6"
+    "@types/js-yaml": "npm:^4.0.9"
     "@usebruno/converters": "npm:^0.22.0"
     "@usebruno/filestore": "npm:^0.11.0"
     "@usebruno/lang": "npm:^0.38.0"
     express: "npm:^4.22.0"
     express-promise-router: "npm:^4.1.0"
+    js-yaml: "npm:^4.1.0"
   languageName: unknown
   linkType: soft
 

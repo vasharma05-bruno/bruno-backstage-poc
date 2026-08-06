@@ -21,6 +21,8 @@ export interface BrunoApi {
   getCollection(id: string): Promise<CollectionDetail>;
   /** Absolute URL of the self-contained docs HTML for a collection. */
   getDocsUrl(id: string): Promise<string>;
+  /** GET /collections/:id/opencollection.yml — raw OpenCollection YAML text. */
+  getOpenCollectionYaml(id: string): Promise<string>;
   /** POST /connections — link an entity to a GitHub collection URL. */
   connect(entityRef: string, url: string, token?: string): Promise<ConnectResult>;
   /** POST /connections/discover — list all collection roots in a repo. */

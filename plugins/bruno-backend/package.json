@@ -34,11 +34,13 @@
     "@usebruno/filestore": "^0.11.0",
     "@usebruno/lang": "^0.38.0",
     "express": "^4.22.0",
-    "express-promise-router": "^4.1.0"
+    "express-promise-router": "^4.1.0",
+    "js-yaml": "^4.1.0"
   },
   "devDependencies": {
     "@backstage/cli": "^0.36.4",
-    "@types/express": "^4.17.6"
+    "@types/express": "^4.17.6",
+    "@types/js-yaml": "^4.0.9"
   },
   "files": [
     "dist"

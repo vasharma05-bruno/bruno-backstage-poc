@@ -11,6 +11,7 @@ import Router from 'express-promise-router';
 import type { CollectionService } from './collectionService';
 import type { ConnectionStore } from '../store/connectionStore';
 import { generateCollectionHtml } from './generateCollectionHtml';
+import { toOpenCollectionYaml } from './openCollectionExport';
 
 export interface RouterOptions {
   logger: LoggerService;
@@ -29,6 +30,7 @@ export interface RouterOptions {
  *   GET /collections            -> Array<CollectionSummary>
  *   GET /collections/:id        -> CollectionDetail (404 if unknown)
  *   GET /collections/:id/docs   -> text/html (self-contained Scenario-B docs)
+ *   GET /collections/:id/opencollection.yml -> text/yaml (OpenCollection export)
  *   GET /dashboard              -> Dashboard (stats + cards + failed sources)
  *   POST /connections/discover  -> DiscoverResult (all collection roots in a repo)
  *   POST /refresh               -> re-reads and re-parses all sources
@@ -72,6 +74,15 @@ export async function createRouter(
     }
     const html = generateCollectionHtml(detail.collection);
     res.type('text/html').send(html);
+  });
+
+  router.get('/collections/:id/opencollection.yml', (req, res) => {
+    const detail = collectionService.getCollection(req.params.id);
+    if (!detail) {
+      res.status(404).json({ error: `Unknown collection: ${req.params.id}` });
+      return;
+    }
+    res.type('text/yaml').send(toOpenCollectionYaml(detail));
   });
 
   router.get('/dashboard', async (req, res) => {
