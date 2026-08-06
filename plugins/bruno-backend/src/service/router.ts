@@ -158,7 +158,12 @@ export async function createRouter(
 
   router.delete('/connections/:entityRef', async (req, res) => {
     await httpAuth.credentials(req, { allow: ['user'] });
-    await connectionStore.delete(req.params.entityRef);
+    const entityRef = req.params.entityRef;
+    const row = await connectionStore.getByEntityRef(entityRef);
+    await connectionStore.delete(entityRef);
+    if (row) {
+      collectionService.evictConnected(row.collectionId);
+    }
     res.status(204).end();
   });
 

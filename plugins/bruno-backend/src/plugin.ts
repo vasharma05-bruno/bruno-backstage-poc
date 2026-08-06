@@ -4,6 +4,7 @@ import {
 } from '@backstage/backend-plugin-api';
 import { createCollectionService } from './service/collectionService';
 import { createRouter } from './service/router';
+import { readSchedule } from './service/schedule';
 import { createConnectionStore } from './store/connectionStore';
 
 /**
@@ -23,6 +24,7 @@ export const brunoPlugin = createBackendPlugin({
         config: coreServices.rootConfig,
         reader: coreServices.urlReader,
         database: coreServices.database,
+        scheduler: coreServices.scheduler,
         httpAuth: coreServices.httpAuth,
         userInfo: coreServices.userInfo
       },
@@ -32,6 +34,7 @@ export const brunoPlugin = createBackendPlugin({
         config,
         reader,
         database,
+        scheduler,
         httpAuth,
         userInfo
       }) {
@@ -42,6 +45,19 @@ export const brunoPlugin = createBackendPlugin({
         });
 
         const connectionStore = await createConnectionStore(database);
+
+        await collectionService.rebuildConnected(await connectionStore.listAll());
+        const connectedRefresh = scheduler.createScheduledTaskRunner(
+          readSchedule(config)
+        );
+        await connectedRefresh.run({
+          id: 'bruno-connected-rebuild',
+          fn: async () => {
+            await collectionService.rebuildConnected(
+              await connectionStore.listAll()
+            );
+          }
+        });
 
         httpRouter.use(
           await createRouter({

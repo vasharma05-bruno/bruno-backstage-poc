@@ -108,6 +108,10 @@ type FileTree = {
 
 interface CachedCollection extends CollectionDetail {}
 
+type ConnectedEntry = { detail: CachedCollection; fetchedAt: number };
+
+type DiscoverEntry = { result: DiscoverResult; fetchedAt: number };
+
 export interface CollectionService {
   listCollections(): CollectionSummary[];
   getCollection(id: string): CollectionDetail | undefined;
@@ -120,6 +124,8 @@ export interface CollectionService {
     userToken?: string;
   }): Promise<DiscoverResult>;
   refresh(): Promise<void>;
+  rebuildConnected(links: BrunoConnectionRow[]): Promise<void>;
+  evictConnected(collectionId: string): void;
   getDashboard(links: BrunoConnectionRow[]): Dashboard;
 }
 
@@ -138,6 +144,16 @@ const AUTH_MODES: RequestAuth['mode'][] = [
   'apikey',
   'digest'
 ];
+
+const CONNECTED_TTL_MS = 10 * 60_000;
+const CONNECTED_MAX = 200;
+// A just-connected entry is written to the cache before its DB row is committed
+// (POST /connections writes the cache, then upserts). Spare entries younger than
+// this from the row-gone ghost-drop so a concurrent rebuild tick can't evict a
+// connection that is mid-flight.
+const CONNECTED_GRACE_MS = 10_000;
+const DISCOVER_TTL_MS = 60_000;
+const DISCOVER_MAX = 50;
 
 /** Reads the `bruno.sources` block from Backstage config. Returns [] if absent. */
 export function readBrunoSources(config: Config): BrunoSourceConfig[] {
@@ -204,7 +220,8 @@ export async function createCollectionService(options: {
   const workingDir = options.workingDir ?? process.cwd();
 
   const cache = new Map<string, CachedCollection>();
-  const connectedCache = new Map<string, CachedCollection>();
+  const connectedCache = new Map<string, ConnectedEntry>();
+  const discoverCache = new Map<string, DiscoverEntry>();
   let failures: SourceFailure[] = [];
   const integrations = ScmIntegrations.fromConfig(config);
 
@@ -248,6 +265,100 @@ export async function createCollectionService(options: {
     }
   }
 
+  /** Inserts `k`→`v` at the MRU tail, evicting the oldest key past `max`. */
+  function lruSet<V>(m: Map<string, V>, k: string, v: V, max: number): void {
+    m.delete(k);
+    m.set(k, v);
+    if (m.size > max) {
+      m.delete(m.keys().next().value as string);
+    }
+  }
+
+  /** Reads `k`, promoting it to the MRU tail on a hit. */
+  function lruTouch<V>(m: Map<string, V>, k: string): V | undefined {
+    const v = m.get(k);
+    if (v !== undefined) {
+      m.delete(k);
+      m.set(k, v);
+    }
+    return v;
+  }
+
+  async function connectFromUrl(input: {
+    url: string;
+    userToken?: string;
+  }): Promise<{ collectionId: string; detail: CollectionDetail }> {
+    const normalized = normalizeGithubUrl(input.url);
+    const collectionId = collectionIdFromUrl(normalized);
+    const tree = await readUrlTreeWithCreds(
+      reader,
+      integrations,
+      normalized,
+      logger,
+      { userToken: input.userToken }
+    );
+    const hasManifest =
+      findBrunoJson(tree) !== undefined || findOpenCollectionYml(tree) !== undefined;
+    if (!hasManifest) {
+      throw new InputError(
+        `No Bruno collection found at ${normalized} (missing bruno.json / opencollection.yml)`
+      );
+    }
+    const source: BrunoSourceConfig = {
+      id: collectionId,
+      name: collectionId,
+      type: 'url',
+      target: normalized
+    };
+    const collection = parseCollection(source, tree, logger);
+    const requestCount = countRequests(collection.items);
+    const detail: CachedCollection = {
+      id: collectionId,
+      name: collection.name,
+      source: 'url',
+      sourceUrl: normalized,
+      requestCount,
+      collection
+    };
+    lruSet(
+      connectedCache,
+      collectionId,
+      { detail, fetchedAt: Date.now() },
+      CONNECTED_MAX
+    );
+    return { collectionId, detail };
+  }
+
+  /**
+   * Reconciles `connectedCache` against the store rows: drops entries whose row
+   * is gone (the only eviction path), and re-fetches stale/absent entries with
+   * the SERVICE token. A re-fetch failure keeps the last good entry (D6).
+   */
+  async function rebuildConnected(
+    links: BrunoConnectionRow[]
+  ): Promise<void> {
+    const liveIds = new Set(links.map((l) => l.collectionId));
+    const now = Date.now();
+    for (const [id, e] of [...connectedCache.entries()]) {
+      if (!liveIds.has(id) && now - e.fetchedAt >= CONNECTED_GRACE_MS) {
+        connectedCache.delete(id);
+      }
+    }
+    for (const link of links) {
+      const e = connectedCache.get(link.collectionId);
+      if (e && now - e.fetchedAt <= CONNECTED_TTL_MS) {
+        continue;
+      }
+      try {
+        await connectFromUrl({ url: link.githubUrl });
+      } catch {
+        logger.warn(
+          `Background refresh of connected collection ${link.collectionId} failed; keeping cached copy.`
+        );
+      }
+    }
+  }
+
   async function refresh(): Promise<void> {
     const sources = readBrunoSources(config);
     if (sources.length === 0) {
@@ -280,52 +391,23 @@ export async function createCollectionService(options: {
       );
     },
     getCollection(id: string): CollectionDetail | undefined {
-      return cache.get(id) ?? connectedCache.get(id);
-    },
-    async connectFromUrl(input: {
-      url: string;
-      userToken?: string;
-    }): Promise<{ collectionId: string; detail: CollectionDetail }> {
-      const normalized = normalizeGithubUrl(input.url);
-      const collectionId = collectionIdFromUrl(normalized);
-      const tree = await readUrlTreeWithCreds(
-        reader,
-        integrations,
-        normalized,
-        logger,
-        { userToken: input.userToken }
-      );
-      const hasManifest =
-        findBrunoJson(tree) !== undefined || findOpenCollectionYml(tree) !== undefined;
-      if (!hasManifest) {
-        throw new InputError(
-          `No Bruno collection found at ${normalized} (missing bruno.json / opencollection.yml)`
-        );
+      const hit = cache.get(id);
+      if (hit) {
+        return hit;
       }
-      const source: BrunoSourceConfig = {
-        id: collectionId,
-        name: collectionId,
-        type: 'url',
-        target: normalized
-      };
-      const collection = parseCollection(source, tree, logger);
-      const requestCount = countRequests(collection.items);
-      const detail: CachedCollection = {
-        id: collectionId,
-        name: collection.name,
-        source: 'url',
-        sourceUrl: normalized,
-        requestCount,
-        collection
-      };
-      connectedCache.set(collectionId, detail);
-      return { collectionId, detail };
+      const e = lruTouch(connectedCache, id);
+      return e?.detail;
     },
+    connectFromUrl,
     async discoverCollections(input: {
       url: string;
       userToken?: string;
     }): Promise<DiscoverResult> {
       const normalized = normalizeGithubUrl(input.url);
+      const cached = lruTouch(discoverCache, normalized);
+      if (cached && Date.now() - cached.fetchedAt <= DISCOVER_TTL_MS) {
+        return cached.result;
+      }
       const tree = await readUrlTreeWithCreds(
         reader,
         integrations,
@@ -356,16 +438,27 @@ export async function createCollectionService(options: {
         };
       });
 
+      lruSet(
+        discoverCache,
+        normalized,
+        { result: { collections }, fetchedAt: Date.now() },
+        DISCOVER_MAX
+      );
       return { collections };
     },
     refresh,
+    rebuildConnected,
+    evictConnected(collectionId: string): void {
+      connectedCache.delete(collectionId);
+      logger.info(`Evicted connected collection ${collectionId} from cache.`);
+    },
     getDashboard(links: BrunoConnectionRow[]): Dashboard {
       const byId = new Map<string, CachedCollection>();
       for (const c of cache.values()) {
         byId.set(c.id, c);
       }
-      for (const c of connectedCache.values()) {
-        byId.set(c.id, c);
+      for (const e of connectedCache.values()) {
+        byId.set(e.detail.id, e.detail);
       }
       const linksByCollectionId = new Map<string, BrunoConnectionRow>();
       for (const link of links) {
