@@ -11,6 +11,7 @@ import Button from '@material-ui/core/Button';
 import { brunoApiRef } from '../../api/BrunoApi';
 import type { CollectionDetail, ConnectResult } from '../../api/types';
 import { getCollectionId, getSourceUrl } from '../../lib/annotations';
+import { emitConnectionChange } from '../../lib/connectionEvents';
 import { OpenInBruno } from '../OpenInBruno';
 
 type State =
@@ -166,6 +167,7 @@ export function BrunoCard() {
     try {
       const result = await brunoApi.connect(entityRef, trimmed);
       await finishConnected(result, trimmed);
+      emitConnectionChange(entityRef);
     } catch {
       setState({ status: 'needsGithub' });
     } finally {
@@ -196,6 +198,7 @@ export function BrunoCard() {
       setState({ status: 'connecting' });
       const result = await brunoApi.connect(entityRef, trimmed, token);
       await finishConnected(result, trimmed);
+      emitConnectionChange(entityRef);
     } catch (e) {
       setState({
         status: 'error',
@@ -216,6 +219,7 @@ export function BrunoCard() {
       await brunoApi.disconnect(entityRef);
       setUrl('');
       setState({ status: 'notConnected' });
+      emitConnectionChange(entityRef);
     } catch (e) {
       setState({
         status: 'error',

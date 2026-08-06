@@ -6,6 +6,7 @@ import { stringifyEntityRef } from '@backstage/catalog-model';
 import { brunoApiRef } from '../../api/BrunoApi';
 import type { CollectionDetail } from '../../api/types';
 import { getCollectionId } from '../../lib/annotations';
+import { subscribeConnectionChange } from '../../lib/connectionEvents';
 
 type State =
   | { status: 'loading' }
@@ -29,6 +30,12 @@ export function CollectionOverviewCard(): JSX.Element | null {
   const annotationCollectionId = getCollectionId(entity);
 
   const [state, setState] = useState<State>({ status: 'loading' });
+  const [refreshNonce, setRefreshNonce] = useState(0);
+
+  useEffect(
+    () => subscribeConnectionChange(entityRef, () => setRefreshNonce((n) => n + 1)),
+    [entityRef]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -76,7 +83,7 @@ export function CollectionOverviewCard(): JSX.Element | null {
     return () => {
       cancelled = true;
     };
-  }, [brunoApi, entityRef, annotationCollectionId]);
+  }, [brunoApi, entityRef, annotationCollectionId, refreshNonce]);
 
   if (state.status !== 'ready') {
     return null;

@@ -17,6 +17,7 @@ import { stringifyEntityRef } from '@backstage/catalog-model';
 import { brunoApiRef } from '../../api/BrunoApi';
 import type { CollectionDetail, RequestItem } from '../../api/types';
 import { getCollectionId } from '../../lib/annotations';
+import { subscribeConnectionChange } from '../../lib/connectionEvents';
 import { CollectionTree } from './CollectionTree';
 import { RequestDetail } from './RequestDetail';
 import { firstRequestId, flattenRequests } from './tree';
@@ -52,6 +53,12 @@ export function CollectionDocs() {
   const [loading, setLoading] = useState(true);
   const [notConnected, setNotConnected] = useState(false);
   const [selectedId, setSelectedId] = useState<string | undefined>();
+  const [refreshNonce, setRefreshNonce] = useState(0);
+
+  useEffect(
+    () => subscribeConnectionChange(entityRef, () => setRefreshNonce((n) => n + 1)),
+    [entityRef]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -88,7 +95,7 @@ export function CollectionDocs() {
     return () => {
       cancelled = true;
     };
-  }, [brunoApi, entityRef, annotationCollectionId]);
+  }, [brunoApi, entityRef, annotationCollectionId, refreshNonce]);
 
   if (loading) {
     return (

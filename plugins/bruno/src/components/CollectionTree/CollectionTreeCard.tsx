@@ -14,6 +14,7 @@ import { brunoApiRef } from '../../api/BrunoApi';
 import type { CollectionDetail, Item } from '../../api/types';
 import { isFolderItem, isRequestItem } from '../../api/types';
 import { getCollectionId } from '../../lib/annotations';
+import { subscribeConnectionChange } from '../../lib/connectionEvents';
 import { MethodBadge } from '../MethodBadge';
 
 type State =
@@ -92,6 +93,12 @@ export function CollectionTreeCard(): JSX.Element | null {
   const annotationCollectionId = getCollectionId(entity);
 
   const [state, setState] = useState<State>({ status: 'loading' });
+  const [refreshNonce, setRefreshNonce] = useState(0);
+
+  useEffect(
+    () => subscribeConnectionChange(entityRef, () => setRefreshNonce((n) => n + 1)),
+    [entityRef]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -139,7 +146,7 @@ export function CollectionTreeCard(): JSX.Element | null {
     return () => {
       cancelled = true;
     };
-  }, [brunoApi, entityRef, annotationCollectionId]);
+  }, [brunoApi, entityRef, annotationCollectionId, refreshNonce]);
 
   if (state.status !== 'ready') {
     return null;
