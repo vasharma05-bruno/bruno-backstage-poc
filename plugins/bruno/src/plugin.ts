@@ -4,7 +4,8 @@ import {
   brunoCard,
   brunoCollectionTreeCard,
   brunoCollectionOverviewCard,
-  brunoDocsContent
+  brunoDocsContent,
+  brunoPage
 } from './extensions';
 
 /**
@@ -21,6 +22,8 @@ import {
  *  - brunoCollectionTreeCard -> read-only collection tree card on kind:api
  *  - brunoCollectionOverviewCard -> collection-root README card on kind:api
  *  - brunoDocsContent      -> "API Docs" tab at /bruno-docs on the same filter
+ *  - brunoPage             -> standalone Bruno page at /bruno (auto-registered
+ *                             in the sidebar via routeRef + title + icon)
  */
 export const brunoPlugin = createFrontendPlugin({
   pluginId: 'bruno',
@@ -29,7 +32,8 @@ export const brunoPlugin = createFrontendPlugin({
     brunoCard,
     brunoCollectionTreeCard,
     brunoCollectionOverviewCard,
-    brunoDocsContent
+    brunoDocsContent,
+    brunoPage
   ]
 });
 

@@ -3,6 +3,11 @@ import {
   EntityCardBlueprint,
   EntityContentBlueprint
 } from '@backstage/plugin-catalog-react/alpha';
+import {
+  PageBlueprint,
+  createRouteRef
+} from '@backstage/frontend-plugin-api';
+import Http from '@material-ui/icons/Http';
 
 /**
  * Filter selecting any API entity. Used as the card/content filter so
@@ -77,5 +82,31 @@ export const brunoDocsContent = EntityContentBlueprint.make({
     filter: isApiEntity,
     loader: () =>
       import('./components/CollectionDocs').then((m) => <m.CollectionDocs />)
+  }
+});
+
+/**
+ * Route ref for the standalone Bruno page. Setting `routeRef` + `title` + `icon`
+ * on the PageBlueprint below is what makes the nav item appear: the custom
+ * Sidebar renders `nav.rest({ sortBy: 'title' })`, which auto-discovers pages
+ * carrying all three. No NavItemBlueprint (absent in 1.53) and no
+ * `packages/app` edit are needed.
+ */
+const brunoPageRouteRef = createRouteRef();
+
+/**
+ * Standalone Bruno page at `/bruno`. The component renders content only (the
+ * PageLayout supplies the header). Icon is `Http` — `@material-ui/icons/Api` is
+ * missing in this version, so importing it would break the build.
+ */
+export const brunoPage = PageBlueprint.make({
+  name: 'bruno',
+  params: {
+    path: '/bruno',
+    title: 'Bruno',
+    icon: <Http fontSize="inherit" />,
+    routeRef: brunoPageRouteRef,
+    loader: () =>
+      import('./components/BrunoPage').then((m) => <m.BrunoPage />)
   }
 });

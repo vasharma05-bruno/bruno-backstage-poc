@@ -4,7 +4,8 @@ import type {
   CollectionDetail,
   CollectionSummary,
   ConnectionRecord,
-  ConnectResult
+  ConnectResult,
+  Dashboard
 } from './types';
 
 /**
@@ -38,6 +39,10 @@ export class BrunoClient implements BrunoApi {
 
   async getCollections(): Promise<CollectionSummary[]> {
     return this.getJson<CollectionSummary[]>('/collections');
+  }
+
+  async getDashboard(): Promise<Dashboard> {
+    return this.getJson<Dashboard>('/dashboard');
   }
 
   async getCollection(id: string): Promise<CollectionDetail> {

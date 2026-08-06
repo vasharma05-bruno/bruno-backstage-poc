@@ -3,7 +3,8 @@ import type {
   CollectionDetail,
   CollectionSummary,
   ConnectionRecord,
-  ConnectResult
+  ConnectResult,
+  Dashboard
 } from './types';
 
 /**
@@ -25,6 +26,8 @@ export interface BrunoApi {
   getConnection(entityRef: string): Promise<ConnectionRecord | undefined>;
   /** DELETE /connections/:entityRef */
   disconnect(entityRef: string): Promise<void>;
+  /** GET /dashboard — aggregate stats, collection cards, and source failures. */
+  getDashboard(): Promise<Dashboard>;
 }
 
 export const brunoApiRef = createApiRef<BrunoApi>({
