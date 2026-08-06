@@ -6,6 +6,7 @@ import { createCollectionService } from './service/collectionService';
 import { createRouter } from './service/router';
 import { readSchedule } from './service/schedule';
 import { createConnectionStore } from './store/connectionStore';
+import { createCollectionsStore } from './store/collectionsStore';
 
 /**
  * The Bruno backend plugin. Registers under plugin id `bruno`, so its routes
@@ -45,6 +46,7 @@ export const brunoPlugin = createBackendPlugin({
         });
 
         const connectionStore = await createConnectionStore(database);
+        const collectionsStore = await createCollectionsStore(database);
 
         await collectionService.rebuildConnected(await connectionStore.listAll());
         const connectedRefresh = scheduler.createScheduledTaskRunner(
@@ -65,6 +67,7 @@ export const brunoPlugin = createBackendPlugin({
             config,
             collectionService,
             connectionStore,
+            collectionsStore,
             httpAuth,
             userInfo
           })

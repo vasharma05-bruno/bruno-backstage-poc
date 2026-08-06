@@ -33,6 +33,7 @@ export type {
   DiscoverResult,
   Environment,
   FolderItem,
+  ImportedCollection,
   Item,
   KeyValue,
   NormalizedCollection,

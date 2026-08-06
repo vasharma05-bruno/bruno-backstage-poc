@@ -5,7 +5,8 @@ import type {
   ConnectionRecord,
   ConnectResult,
   Dashboard,
-  DiscoverResult
+  DiscoverResult,
+  ImportedCollection
 } from './types';
 
 /**
@@ -33,6 +34,12 @@ export interface BrunoApi {
   disconnect(entityRef: string): Promise<void>;
   /** GET /dashboard — aggregate stats, collection cards, and source failures. */
   getDashboard(): Promise<Dashboard>;
+  /** POST /collections/import — import one or more collections (unlinked). */
+  importCollections(
+    collections: Array<{ githubUrl: string; name: string }>
+  ): Promise<{ imported: number }>;
+  /** GET /collections/imported — imported-but-unlinked collections. */
+  getImportedCollections(): Promise<ImportedCollection[]>;
 }
 
 export const brunoApiRef = createApiRef<BrunoApi>({

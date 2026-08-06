@@ -168,6 +168,20 @@ export interface DashboardCollection {
   specType?: string;
   linked: boolean;
   entityRef?: string;
+  /**
+   * True for a collection imported (§5) but not yet materialized/connected —
+   * a stub card with a Link action.
+   */
+  imported?: boolean;
+}
+
+/** GET /collections/imported response entry. */
+export interface ImportedCollection {
+  collectionId: string;
+  name: string;
+  githubUrl: string;
+  importedBy: string;
+  updatedAt: string;
 }
 
 /** A source that failed to load during the last `refresh`. */

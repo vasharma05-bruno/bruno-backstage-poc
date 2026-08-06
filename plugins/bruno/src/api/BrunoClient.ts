@@ -6,7 +6,8 @@ import type {
   ConnectionRecord,
   ConnectResult,
   Dashboard,
-  DiscoverResult
+  DiscoverResult,
+  ImportedCollection
 } from './types';
 
 /**
@@ -120,6 +121,28 @@ export class BrunoClient implements BrunoApi {
       );
     }
     return (await res.json()) as ConnectionRecord;
+  }
+
+  async importCollections(
+    collections: Array<{ githubUrl: string; name: string }>
+  ): Promise<{ imported: number }> {
+    const base = await this.baseUrl();
+    const res = await this.fetchApi.fetch(`${base}/collections/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ collections })
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(
+        `Bruno backend request to /collections/import failed (${res.status}): ${text}`
+      );
+    }
+    return (await res.json()) as { imported: number };
+  }
+
+  async getImportedCollections(): Promise<ImportedCollection[]> {
+    return this.getJson<ImportedCollection[]>('/collections/imported');
   }
 
   async disconnect(entityRef: string): Promise<void> {

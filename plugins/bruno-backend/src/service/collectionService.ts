@@ -40,6 +40,7 @@ import type {
   SourceFailure
 } from '../types';
 import type { BrunoConnectionRow } from '../store/connectionStore';
+import type { ImportedCollectionRow } from '../store/collectionsStore';
 
 /**
  * A parsed .bru request as produced by `@usebruno/lang`'s `bruToJson`.
@@ -126,7 +127,10 @@ export interface CollectionService {
   refresh(): Promise<void>;
   rebuildConnected(links: BrunoConnectionRow[]): Promise<void>;
   evictConnected(collectionId: string): void;
-  getDashboard(links: BrunoConnectionRow[]): Dashboard;
+  getDashboard(
+    links: BrunoConnectionRow[],
+    imported: ImportedCollectionRow[]
+  ): Dashboard;
 }
 
 const BODY_MODES: RequestBody['mode'][] = [
@@ -452,13 +456,22 @@ export async function createCollectionService(options: {
       connectedCache.delete(collectionId);
       logger.info(`Evicted connected collection ${collectionId} from cache.`);
     },
-    getDashboard(links: BrunoConnectionRow[]): Dashboard {
+    getDashboard(
+      links: BrunoConnectionRow[],
+      imported: ImportedCollectionRow[]
+    ): Dashboard {
       const byId = new Map<string, CachedCollection>();
       for (const c of cache.values()) {
         byId.set(c.id, c);
       }
       for (const e of connectedCache.values()) {
         byId.set(e.detail.id, e.detail);
+      }
+      const importedStubs = new Map<string, ImportedCollectionRow>();
+      for (const row of imported) {
+        if (!byId.has(row.collectionId)) {
+          importedStubs.set(row.collectionId, row);
+        }
       }
       const linksByCollectionId = new Map<string, BrunoConnectionRow>();
       for (const link of links) {
@@ -479,6 +492,19 @@ export async function createCollectionService(options: {
           specType: 'bruno-collection',
           linked: link !== undefined,
           entityRef: link?.entityRef ?? `api:default/${sanitizeName(c.id)}`
+        });
+      }
+
+      for (const row of importedStubs.values()) {
+        collections.push({
+          id: row.collectionId,
+          name: row.name,
+          requestCount: 0,
+          envCount: 0,
+          specType: undefined,
+          linked: false,
+          imported: true
+          // entityRef intentionally omitted for stubs (D4)
         });
       }
 

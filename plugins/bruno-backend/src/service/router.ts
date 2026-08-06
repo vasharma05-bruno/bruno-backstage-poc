@@ -9,7 +9,9 @@ import { InputError } from '@backstage/errors';
 import express from 'express';
 import Router from 'express-promise-router';
 import type { CollectionService } from './collectionService';
+import { collectionIdFromUrl } from './collectionService';
 import type { ConnectionStore } from '../store/connectionStore';
+import type { CollectionsStore } from '../store/collectionsStore';
 import { generateCollectionHtml } from './generateCollectionHtml';
 import { toOpenCollectionYaml } from './openCollectionExport';
 
@@ -18,6 +20,7 @@ export interface RouterOptions {
   config: Config;
   collectionService: CollectionService;
   connectionStore: ConnectionStore;
+  collectionsStore: CollectionsStore;
   httpAuth: HttpAuthService;
   userInfo: UserInfoService;
 }
@@ -28,6 +31,8 @@ export interface RouterOptions {
  *
  *   GET /health                 -> { status: 'ok' }
  *   GET /collections            -> Array<CollectionSummary>
+ *   POST /collections/import    -> { imported: number } (import unlinked collections)
+ *   GET /collections/imported   -> Array<ImportedCollection>
  *   GET /collections/:id        -> CollectionDetail (404 if unknown)
  *   GET /collections/:id/docs   -> text/html (self-contained Scenario-B docs)
  *   GET /collections/:id/opencollection.yml -> text/yaml (OpenCollection export)
@@ -38,8 +43,15 @@ export interface RouterOptions {
 export async function createRouter(
   options: RouterOptions
 ): Promise<express.Router> {
-  const { logger, config, collectionService, connectionStore, httpAuth, userInfo } =
-    options;
+  const {
+    logger,
+    config,
+    collectionService,
+    connectionStore,
+    collectionsStore,
+    httpAuth,
+    userInfo
+  } = options;
 
   const router = Router();
   router.use(express.json());
@@ -50,6 +62,49 @@ export async function createRouter(
 
   router.get('/collections', (_req, res) => {
     res.json(collectionService.listCollections());
+  });
+
+  router.post('/collections/import', async (req, res) => {
+    const credentials = await httpAuth.credentials(req, { allow: ['user'] });
+    const { userEntityRef } = await userInfo.getUserInfo(credentials);
+    const { collections } = req.body ?? {};
+    if (!Array.isArray(collections) || collections.length === 0) {
+      throw new InputError('`collections` must be a non-empty array.');
+    }
+    let count = 0;
+    for (const c of collections) {
+      if (!c?.githubUrl || !c?.name) {
+        throw new InputError('Each collection needs `githubUrl` and `name`.');
+      }
+      let collectionId: string;
+      try {
+        collectionId = collectionIdFromUrl(c.githubUrl);
+      } catch {
+        throw new InputError(`Invalid githubUrl: ${c.githubUrl}`);
+      }
+      await collectionsStore.upsert({
+        collectionId,
+        githubUrl: c.githubUrl,
+        name: c.name,
+        importedBy: userEntityRef
+      });
+      count += 1;
+    }
+    res.json({ imported: count });
+  });
+
+  router.get('/collections/imported', async (req, res) => {
+    await httpAuth.credentials(req, { allow: ['user', 'service'] });
+    const rows = await collectionsStore.listAll();
+    res.json(
+      rows.map((row) => ({
+        collectionId: row.collectionId,
+        name: row.name,
+        githubUrl: row.githubUrl,
+        importedBy: row.importedBy,
+        updatedAt: row.updatedAt
+      }))
+    );
   });
 
   router.get('/collections/:id', (req, res) => {
@@ -88,7 +143,8 @@ export async function createRouter(
   router.get('/dashboard', async (req, res) => {
     await httpAuth.credentials(req, { allow: ['user', 'service'] });
     const links = await connectionStore.listAll();
-    res.json(collectionService.getDashboard(links));
+    const imported = await collectionsStore.listAll();
+    res.json(collectionService.getDashboard(links, imported));
   });
 
   router.post('/connections', async (req, res) => {
