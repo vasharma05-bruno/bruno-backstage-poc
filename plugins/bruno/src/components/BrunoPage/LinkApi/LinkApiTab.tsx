@@ -21,7 +21,10 @@ type State
  * server-side annotation-absent filter); the right column links the selected
  * entity to a Bruno collection by GitHub URL.
  */
-export function LinkApiTab(): JSX.Element {
+export function LinkApiTab(props: {
+  preselectImportedCollectionId?: string;
+}): JSX.Element {
+  const { preselectImportedCollectionId } = props;
   const catalogApi = useApi(catalogApiRef);
   const [state, setState] = useState<State>({ status: 'loading' });
   const [selectedRef, setSelectedRef] = useState<string | undefined>();
@@ -104,6 +107,7 @@ export function LinkApiTab(): JSX.Element {
           selectedRef={selectedRef}
           selectedName={selected?.name}
           onLinked={onLinked}
+          preselectImportedCollectionId={preselectImportedCollectionId}
         />
       </Grid>
     </Grid>

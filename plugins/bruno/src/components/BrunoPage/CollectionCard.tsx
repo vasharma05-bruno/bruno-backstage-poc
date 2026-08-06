@@ -83,9 +83,13 @@ function OpenAction(props: { entityRef?: string }): JSX.Element {
 /** Single dashboard collection card. Handles undefined activeEnv/specType. */
 export function CollectionCard(props: {
   collection: DashboardCollection;
+  onRequestLink?: (collectionId: string) => void;
 }): JSX.Element {
   const classes = useStyles();
-  const { collection } = props;
+  const { collection, onRequestLink } = props;
+  // Imported-but-unlinked stub: no entityRef, so no OPEN target — render a
+  // "Link" action (in-page deep-link) instead. See D4/D9.
+  const isImportedStub = Boolean(collection.imported) && !collection.linked;
 
   return (
     <InfoCard>
@@ -102,6 +106,7 @@ export function CollectionCard(props: {
             size="small"
           />
         )}
+        {isImportedStub && <Chip label="imported" size="small" />}
         {collection.specType && (
           <Chip label={collection.specType} size="small" />
         )}
@@ -122,7 +127,17 @@ export function CollectionCard(props: {
       </Box>
 
       <Box className={classes.actions}>
-        <OpenAction entityRef={collection.entityRef} />
+        {isImportedStub ? (
+          <Button
+            variant="contained"
+            size="small"
+            onClick={() => onRequestLink?.(collection.id)}
+          >
+            Link
+          </Button>
+        ) : (
+          <OpenAction entityRef={collection.entityRef} />
+        )}
       </Box>
     </InfoCard>
   );

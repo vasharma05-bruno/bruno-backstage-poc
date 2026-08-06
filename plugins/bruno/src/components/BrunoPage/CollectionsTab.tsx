@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Progress, WarningPanel } from '@backstage/core-components';
 import { useApi } from '@backstage/core-plugin-api';
 import Box from '@material-ui/core/Box';
+import Button from '@material-ui/core/Button';
 import TextField from '@material-ui/core/TextField';
 import Typography from '@material-ui/core/Typography';
 import { brunoApiRef } from '../../api/BrunoApi';
@@ -9,6 +10,7 @@ import type { Dashboard } from '../../api/types';
 import { StatTiles } from './StatTiles';
 import { FailuresStrip } from './FailuresStrip';
 import { CollectionGrid } from './CollectionGrid';
+import { AddCollectionModal } from './AddCollectionModal';
 
 type State
   = | { status: 'loading' }
@@ -20,10 +22,15 @@ type State
  * a failures strip (when any), a client-side search box, and a 2-column card
  * grid. Search filters over name / specType / activeEnv (case-insensitive).
  */
-export function CollectionsTab(): JSX.Element {
+export function CollectionsTab(props: {
+  onRequestLink?: (collectionId: string) => void;
+}): JSX.Element {
+  const { onRequestLink } = props;
   const brunoApi = useApi(brunoApiRef);
   const [state, setState] = useState<State>({ status: 'loading' });
   const [query, setQuery] = useState('');
+  const [addOpen, setAddOpen] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -46,7 +53,7 @@ export function CollectionsTab(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [brunoApi]);
+  }, [brunoApi, refreshKey]);
 
   const dashboard = state.status === 'ready' ? state.dashboard : undefined;
 
@@ -89,7 +96,13 @@ export function CollectionsTab(): JSX.Element {
         </Box>
       )}
 
-      <Box mb={2}>
+      <Box
+        mb={2}
+        display="flex"
+        alignItems="flex-start"
+        justifyContent="space-between"
+        style={{ gap: 16 }}
+      >
         <TextField
           fullWidth
           label="Search collections"
@@ -97,6 +110,13 @@ export function CollectionsTab(): JSX.Element {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
+        <Button
+          variant="contained"
+          color="primary"
+          onClick={() => setAddOpen(true)}
+        >
+          Add collection
+        </Button>
       </Box>
 
       {filtered.length === 0 ? (
@@ -104,8 +124,17 @@ export function CollectionsTab(): JSX.Element {
           No collections match your search.
         </Typography>
       ) : (
-        <CollectionGrid collections={filtered} />
+        <CollectionGrid collections={filtered} onRequestLink={onRequestLink} />
       )}
+
+      <AddCollectionModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onImported={() => {
+          setAddOpen(false);
+          setRefreshKey((k) => k + 1);
+        }}
+      />
     </Box>
   );
 }
