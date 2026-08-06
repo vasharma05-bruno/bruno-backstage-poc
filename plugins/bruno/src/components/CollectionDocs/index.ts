@@ -1,1 +1,1 @@
-export { CollectionDocs } from './CollectionDocs';
+export { OcDocsFrame as CollectionDocs } from './OcDocsFrame';
