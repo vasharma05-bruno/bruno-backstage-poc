@@ -135,6 +135,20 @@ export interface ConnectResult {
   requestCount: number;
 }
 
+/** A single candidate collection root from `POST /connections/discover`. */
+export interface DiscoveredCollection {
+  collectionPath: string;
+  name: string;
+  requestCount: number;
+  collectionId: string;
+  githubUrl: string;
+}
+
+/** POST /connections/discover response. */
+export interface DiscoverResult {
+  collections: DiscoveredCollection[];
+}
+
 /** GET /connections/:entityRef response. */
 export interface ConnectionRecord {
   entityRef: string;

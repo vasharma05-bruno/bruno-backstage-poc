@@ -30,6 +30,7 @@ export interface RouterOptions {
  *   GET /collections/:id        -> CollectionDetail (404 if unknown)
  *   GET /collections/:id/docs   -> text/html (self-contained Scenario-B docs)
  *   GET /dashboard              -> Dashboard (stats + cards + failed sources)
+ *   POST /connections/discover  -> DiscoverResult (all collection roots in a repo)
  *   POST /refresh               -> re-reads and re-parses all sources
  */
 export async function createRouter(
@@ -105,6 +106,22 @@ export async function createRouter(
       name: detail.name,
       requestCount: detail.requestCount
     });
+  });
+
+  router.post('/connections/discover', async (req, res) => {
+    await httpAuth.credentials(req, { allow: ['user'] });
+
+    const { url, userGithubToken } = req.body ?? {};
+    if (!url) {
+      throw new InputError('`url` is required.');
+    }
+
+    res.json(
+      await collectionService.discoverCollections({
+        url,
+        userToken: userGithubToken
+      })
+    );
   });
 
   router.get('/connections', async (req, res) => {

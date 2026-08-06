@@ -136,6 +136,22 @@ export interface CollectionDetail extends CollectionSummary {
   collection: NormalizedCollection;
 }
 
+/** A single candidate collection root found by `POST /connections/discover`. */
+export interface DiscoveredCollection {
+  /** Root-relative path of the collection within the input tree (`''` = root). */
+  collectionPath: string;
+  name: string;
+  requestCount: number;
+  collectionId: string;
+  /** Fully-qualified GitHub URL to pass verbatim to `POST /connections`. */
+  githubUrl: string;
+}
+
+/** The full payload returned by `POST /connections/discover`. */
+export interface DiscoverResult {
+  collections: DiscoveredCollection[];
+}
+
 /** A collection card in the dashboard aggregate (`GET /dashboard`). */
 export interface DashboardCollection {
   id: string;

@@ -28,6 +28,8 @@ import type {
   CollectionSummary,
   Dashboard,
   DashboardCollection,
+  DiscoveredCollection,
+  DiscoverResult,
   Environment,
   Item,
   KeyValue,
@@ -113,6 +115,10 @@ export interface CollectionService {
     url: string;
     userToken?: string;
   }): Promise<{ collectionId: string; detail: CollectionDetail }>;
+  discoverCollections(input: {
+    url: string;
+    userToken?: string;
+  }): Promise<DiscoverResult>;
   refresh(): Promise<void>;
   getDashboard(links: BrunoConnectionRow[]): Dashboard;
 }
@@ -314,6 +320,43 @@ export async function createCollectionService(options: {
       };
       connectedCache.set(collectionId, detail);
       return { collectionId, detail };
+    },
+    async discoverCollections(input: {
+      url: string;
+      userToken?: string;
+    }): Promise<DiscoverResult> {
+      const normalized = normalizeGithubUrl(input.url);
+      const tree = await readUrlTreeWithCreds(
+        reader,
+        integrations,
+        normalized,
+        logger,
+        { userToken: input.userToken }
+      );
+      const ref = await resolveRef(integrations, normalized, input.userToken);
+      const roots = findAllCollectionRoots(tree);
+
+      const collections: DiscoveredCollection[] = roots.map((rootPrefix) => {
+        const sub = sliceTreeAtRoot(tree, rootPrefix);
+        const source: BrunoSourceConfig = {
+          id: 'discover',
+          name: 'discover',
+          type: 'url',
+          target: normalized
+        };
+        const collection = parseCollection(source, sub, logger);
+        const requestCount = countRequests(collection.items);
+        const githubUrl = composeCollectionUrl(normalized, rootPrefix, ref);
+        return {
+          collectionPath: rootPrefix,
+          name: collection.name,
+          requestCount,
+          collectionId: collectionIdFromUrl(githubUrl),
+          githubUrl
+        };
+      });
+
+      return { collections };
     },
     refresh,
     getDashboard(links: BrunoConnectionRow[]): Dashboard {
@@ -684,6 +727,95 @@ function findOpenCollectionYml(tree: FileTree): string | undefined {
     }
   }
   return best;
+}
+
+/**
+ * Collects EVERY collection root in the tree (not just the shortest, unlike
+ * `findBrunoJson`/`findOpenCollectionYml`). A root is the directory of a
+ * `bruno.json` or `opencollection.yml` manifest. When both formats sit in the
+ * same directory, `yml` wins on tie (matching `detectFormat`). Sorted by
+ * `rootPrefix` for stable output.
+ */
+function findAllCollectionRoots(tree: FileTree): string[] {
+  // The directory of every Bruno manifest. `parseCollection` re-detects the
+  // format (yml wins) on each sliced sub-tree, so only the root path matters.
+  const roots = new Set<string>();
+  for (const key of tree.files.keys()) {
+    if (
+      key === 'bruno.json'
+      || key.endsWith('/bruno.json')
+      || key === 'opencollection.yml'
+      || key.endsWith('/opencollection.yml')
+    ) {
+      roots.add(posixDirname(key));
+    }
+  }
+  return Array.from(roots).sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Slices a sub-tree at `rootPrefix`, re-keying files to be root-relative so the
+ * existing `parseCollection` sees a single manifest at its own root. When
+ * `rootPrefix` is `''` the tree is returned unchanged.
+ */
+function sliceTreeAtRoot(tree: FileTree, rootPrefix: string): FileTree {
+  if (rootPrefix === '') {
+    return tree;
+  }
+  const prefix = `${rootPrefix}/`;
+  const files = new Map<string, string>();
+  for (const [key, value] of tree.files) {
+    if (key.startsWith(prefix)) {
+      files.set(key.slice(prefix.length), value);
+    }
+  }
+  return { files };
+}
+
+/**
+ * Composes the fully-qualified GitHub URL for a discovered collection root.
+ * Joins the input URL's subpath with the root's prefix within that subtree, and
+ * yields `https://<host>/<owner>/<repo>/tree/<ref>/<fullSubpath>`. When both the
+ * input subpath and the root are empty, reduces to the plain repo URL.
+ */
+function composeCollectionUrl(
+  normalizedRepoUrl: string,
+  rootPrefixWithinInput: string,
+  ref: string
+): string {
+  const u = new URL(normalizedRepoUrl);
+  const { subpath: inputSubpath } = parseGithubUrl(normalizedRepoUrl);
+  const fullSubpath = joinPosix(inputSubpath, rootPrefixWithinInput);
+  const segments = u.pathname.split('/').filter((s) => s !== '');
+  const owner = segments[0];
+  const repo = segments[1];
+  if (fullSubpath === '') {
+    return `${u.protocol}//${u.host}/${owner}/${repo}`;
+  }
+  return `${u.protocol}//${u.host}/${owner}/${repo}/tree/${ref}/${fullSubpath}`;
+}
+
+/**
+ * Resolves the git ref for a URL: the explicit `/tree/<ref>` if present,
+ * otherwise the repo's default branch via Octokit. The Octokit client is built
+ * with the service integration token (or the user token) and the integration's
+ * `apiBaseUrl`, mirroring `readUrlTreeViaOctokit`. The token is never logged.
+ */
+async function resolveRef(
+  integrations: ScmIntegrationRegistry,
+  url: string,
+  userToken?: string
+): Promise<string> {
+  const { owner, repo, ref } = parseGithubUrl(url);
+  if (ref) {
+    return ref;
+  }
+  const integrationConfig = integrations.github.byUrl(url)?.config;
+  const auth = integrationConfig?.token ?? userToken;
+  const apiBaseUrl = integrationConfig?.apiBaseUrl ?? 'https://api.github.com';
+  const octokit = new Octokit({ auth, baseUrl: apiBaseUrl });
+  const { data } = await octokit.repos.get({ owner, repo });
+  return data.default_branch;
 }
 
 /** Finds the collection-root README (case-insensitive) at `rootPrefix`. */

@@ -5,7 +5,8 @@ import type {
   CollectionSummary,
   ConnectionRecord,
   ConnectResult,
-  Dashboard
+  Dashboard,
+  DiscoverResult
 } from './types';
 
 /**
@@ -74,6 +75,22 @@ export class BrunoClient implements BrunoApi {
       );
     }
     return (await res.json()) as ConnectResult;
+  }
+
+  async discover(url: string, token?: string): Promise<DiscoverResult> {
+    const base = await this.baseUrl();
+    const res = await this.fetchApi.fetch(`${base}/connections/discover`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, userGithubToken: token })
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(
+        `Bruno backend request to /connections/discover failed (${res.status}): ${text}`
+      );
+    }
+    return (await res.json()) as DiscoverResult;
   }
 
   async getConnection(entityRef: string): Promise<ConnectionRecord | undefined> {

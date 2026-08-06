@@ -4,7 +4,8 @@ import type {
   CollectionSummary,
   ConnectionRecord,
   ConnectResult,
-  Dashboard
+  Dashboard,
+  DiscoverResult
 } from './types';
 
 /**
@@ -22,6 +23,8 @@ export interface BrunoApi {
   getDocsUrl(id: string): Promise<string>;
   /** POST /connections — link an entity to a GitHub collection URL. */
   connect(entityRef: string, url: string, token?: string): Promise<ConnectResult>;
+  /** POST /connections/discover — list all collection roots in a repo. */
+  discover(url: string, token?: string): Promise<DiscoverResult>;
   /** GET /connections/:entityRef — resolves to undefined on 404. */
   getConnection(entityRef: string): Promise<ConnectionRecord | undefined>;
   /** DELETE /connections/:entityRef */

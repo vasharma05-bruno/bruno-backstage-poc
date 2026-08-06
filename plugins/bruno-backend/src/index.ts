@@ -29,6 +29,8 @@ export type {
   Dashboard,
   DashboardCollection,
   DashboardStats,
+  DiscoveredCollection,
+  DiscoverResult,
   Environment,
   FolderItem,
   Item,
