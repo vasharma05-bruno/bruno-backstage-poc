@@ -8,6 +8,7 @@ import type { Config } from '@backstage/config';
 import { catalogProcessingExtensionPoint } from '@backstage/plugin-catalog-node';
 import { createCollectionService } from './service/collectionService';
 import { BrunoEntityProvider } from './provider/BrunoEntityProvider';
+import { BrunoLinkProcessor } from './processor/BrunoLinkProcessor';
 
 const DEFAULT_FREQUENCY_SECONDS = 60;
 const DEFAULT_TIMEOUT_SECONDS = 30;
@@ -54,9 +55,11 @@ export const brunoCatalogModule = createBackendModule({
         logger: coreServices.logger,
         config: coreServices.rootConfig,
         reader: coreServices.urlReader,
-        scheduler: coreServices.scheduler
+        scheduler: coreServices.scheduler,
+        discovery: coreServices.discovery,
+        auth: coreServices.auth
       },
-      async init({ catalog, logger, config, reader, scheduler }) {
+      async init({ catalog, logger, config, reader, scheduler, discovery, auth }) {
         const schedule = readSchedule(config);
 
         const collectionService = await createCollectionService({
@@ -75,6 +78,8 @@ export const brunoCatalogModule = createBackendModule({
             taskRunner
           })
         );
+
+        catalog.addProcessor(new BrunoLinkProcessor({ discovery, auth, logger }));
       }
     });
   }
