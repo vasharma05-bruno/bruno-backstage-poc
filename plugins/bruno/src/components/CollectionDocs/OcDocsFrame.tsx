@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
-import { makeStyles, useTheme } from '@material-ui/core/styles';
 import {
   Content,
   EmptyState,
   Progress,
   ResponseErrorPanel
 } from '@backstage/core-components';
+import Button from '@material-ui/core/Button';
+import Typography from '@material-ui/core/Typography';
+import LaunchIcon from '@material-ui/icons/Launch';
 import { useApi } from '@backstage/core-plugin-api';
 import { useEntity } from '@backstage/plugin-catalog-react';
 import { stringifyEntityRef } from '@backstage/catalog-model';
@@ -13,38 +15,24 @@ import { brunoApiRef } from '../../api/BrunoApi';
 import { getCollectionId } from '../../lib/annotations';
 import { subscribeConnectionChange } from '../../lib/connectionEvents';
 
-const useStyles = makeStyles(() => ({
-  frame: {
-    width: '100%',
-    height: '80vh',
-    border: 0
-  }
-}));
-
 /**
- * Renders a connected collection's API docs by embedding the OpenCollection
- * docs page served by the backend (`GET /collections/:id/docs`) via an iframe
- * `src`. The backend page is a real document on the backend origin, which — as
- * opposed to the previous `srcdoc` approach — gives the OpenCollection bundle a
- * real URL/origin so its `sessionStorage` access and `HashRouter` routing work.
+ * "API Docs" entity tab.
  *
- * The frame is cross-origin to the app (backend :7007 vs app :3000 in dev); the
- * backend relaxes `X-Frame-Options`/CSP `frame-ancestors` on that response so
- * the app may embed it. The theme is passed as a query param and the frame
- * reloads on connection changes via a cache-busting nonce.
+ * Resolves the connected collection id (from the `bruno.dev/collection-id`
+ * annotation, falling back to a runtime connection lookup) and offers a launcher
+ * that opens the standalone full-screen docs page (`/bruno/docs?c=<id>`) in a new
+ * browser tab. The OpenCollection docs render full-viewport on that dedicated
+ * page rather than embedded inline here (see components/BrunoDocsPage). Renders
+ * loading / not-connected / error states while resolving.
  */
 export function OcDocsFrame() {
-  const classes = useStyles();
-  const theme = useTheme();
   const { entity } = useEntity();
   const brunoApi = useApi(brunoApiRef);
 
   const entityRef = stringifyEntityRef(entity);
   const annotationCollectionId = getCollectionId(entity);
-  const themeMode: 'light' | 'dark'
-    = theme.palette.type === 'dark' ? 'dark' : 'light';
 
-  const [src, setSrc] = useState<string | undefined>();
+  const [collectionId, setCollectionId] = useState<string | undefined>();
   const [error, setError] = useState<Error | undefined>();
   const [loading, setLoading] = useState(true);
   const [notConnected, setNotConnected] = useState(false);
@@ -60,22 +48,20 @@ export function OcDocsFrame() {
     setLoading(true);
     setNotConnected(false);
     setError(undefined);
+    setCollectionId(undefined);
 
     const resolveId = annotationCollectionId
       ? Promise.resolve(annotationCollectionId)
       : brunoApi.getConnection(entityRef).then((record) => record?.collectionId);
 
     resolveId
-      .then(async (collectionId) => {
+      .then((id) => {
         if (cancelled) return;
-        if (!collectionId) {
+        if (!id) {
           setNotConnected(true);
           return;
         }
-        const url = await brunoApi.getDocsUrl(collectionId, themeMode);
-        if (cancelled) return;
-        // The nonce forces the iframe to reload when the connection changes.
-        setSrc(`${url}&v=${refreshNonce}`);
+        setCollectionId(id);
       })
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e : new Error(String(e)));
@@ -86,7 +72,7 @@ export function OcDocsFrame() {
     return () => {
       cancelled = true;
     };
-  }, [brunoApi, entityRef, annotationCollectionId, themeMode, refreshNonce]);
+  }, [brunoApi, entityRef, annotationCollectionId, refreshNonce]);
 
   if (loading) {
     return (
@@ -113,7 +99,7 @@ export function OcDocsFrame() {
       </Content>
     );
   }
-  if (!src) {
+  if (!collectionId) {
     return (
       <Content>
         <EmptyState
@@ -125,20 +111,29 @@ export function OcDocsFrame() {
     );
   }
 
+  const openDocs = () => {
+    // Open the standalone full-screen docs page in a new tab. Relative URL keeps
+    // it on the app origin (the page then embeds the backend docs iframe).
+    window.open(
+      `/bruno/docs?c=${encodeURIComponent(collectionId)}`,
+      '_blank',
+      'noopener,noreferrer'
+    );
+  };
+
   return (
     <Content>
-      {/*
-        The docs page is served from the backend origin, so allow-same-origin
-        here grants the frame its OWN (backend) origin — needed for the bundle's
-        sessionStorage — while keeping it cross-origin to (and isolated from) the
-        Backstage app that embeds it.
-      */}
-      <iframe
-        title="API Documentation"
-        className={classes.frame}
-        sandbox="allow-scripts allow-same-origin"
-        src={src}
-      />
+      <Typography variant="body1" gutterBottom>
+        The Bruno API documentation opens in a dedicated full-screen view.
+      </Typography>
+      <Button
+        variant="contained"
+        color="primary"
+        startIcon={<LaunchIcon />}
+        onClick={openDocs}
+      >
+        Open API docs
+      </Button>
     </Content>
   );
 }
