@@ -949,7 +949,10 @@ async function resolveRef(
   }
   let auth: string | undefined;
   try {
-    auth = (await credentials.getCredentials({ url })).token;
+    // `|| undefined` so a blank token from a tokenless (anonymous) integration
+    // never shadows the user's OAuth token below — a private repo must fall
+    // through to the caller's credentials, not resolve anonymously and 404.
+    auth = (await credentials.getCredentials({ url })).token || undefined;
   } catch {
     // No host credential for this repo (e.g. a GitHub App not installed there);
     // fall back to the caller's user OAuth token below.
