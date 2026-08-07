@@ -3,6 +3,7 @@ import { useApi, githubAuthApiRef } from '@backstage/core-plugin-api';
 import { brunoApiRef } from '../../api/BrunoApi';
 import type { ConnectResult, DiscoveredCollection } from '../../api/types';
 import { emitConnectionChange } from '../../lib/connectionEvents';
+import { classifyLinkError } from '../../lib/linkErrors';
 
 export type State
   = | { status: 'idle' }
@@ -12,6 +13,7 @@ export type State
     | { status: 'noCollections' }
     | { status: 'connecting' }
     | { status: 'needsGithubLink' }
+    | { status: 'notFound' }
     | { status: 'linked' }
     | { status: 'error'; errorMsg: string };
 
@@ -92,9 +94,45 @@ export function useCollectionPicker(
     return undefined;
   };
 
-  // Resolves a scan result: 0 roots → nothing to link; 1 → auto-select; >1 →
-  // show the picker with LINK disabled until the user chooses.
-  const resolveScan = (collections: DiscoveredCollection[]) => {
+  // Connects a single discovered collection without a fresh user gesture,
+  // reusing the token already held for the running scan. Called only from inside
+  // scan/scanWithGithub, so `inFlight.current` is still true (the enclosing
+  // `finally` owns it) and no new first-await is introduced — never calls
+  // `getAccessToken`.
+  const autoLink = async (
+    chosen: DiscoveredCollection,
+    token?: string
+  ) => {
+    if (!entityRef) {
+      return;
+    }
+    setState({ status: 'connecting' });
+    try {
+      const result = await brunoApi.connect(entityRef, chosen.githubUrl, token);
+      setState({ status: 'linked' });
+      emitConnectionChange(entityRef);
+      await onLinked(result);
+    } catch (e) {
+      if (classifyLinkError(e) === 'notFound') {
+        setState({ status: 'notFound' });
+      } else if (scanTokenRef.current) {
+        setState({
+          status: 'error',
+          errorMsg: e instanceof Error ? e.message : String(e)
+        });
+      } else {
+        setState({ status: 'needsGithubLink' });
+      }
+    }
+  };
+
+  // Resolves a scan result: 0 roots → nothing to link; 1 → auto-link with the
+  // token from the current scan; >1 → show the picker with LINK disabled until
+  // the user chooses.
+  const resolveScan = async (
+    collections: DiscoveredCollection[],
+    token?: string
+  ) => {
     if (collections.length === 0) {
       setSelectedCollectionId('');
       setState({ status: 'noCollections' });
@@ -102,9 +140,10 @@ export function useCollectionPicker(
     }
     if (collections.length === 1) {
       setSelectedCollectionId(collections[0].collectionId);
-    } else {
-      setSelectedCollectionId('');
+      await autoLink(collections[0], token);
+      return;
     }
+    setSelectedCollectionId('');
     setState({ status: 'scanned', collections });
   };
 
@@ -139,9 +178,17 @@ export function useCollectionPicker(
         scanTokenRef.current = undefined;
         result = await brunoApi.discover(trimmed);
       }
-      resolveScan(result.collections);
-    } catch {
-      setState({ status: 'needsGithubScan' });
+      await resolveScan(result.collections, token || undefined);
+    } catch (e) {
+      // A 404 without a token is ambiguous: GitHub returns 404 for a private
+      // repo the anonymous read can't see, not just for a genuinely missing
+      // one. Only treat it as "not found" once we actually used a token;
+      // otherwise offer the Connect GitHub path so private repos stay reachable.
+      if (scanTokenRef.current && classifyLinkError(e) === 'notFound') {
+        setState({ status: 'notFound' });
+      } else {
+        setState({ status: 'needsGithubScan' });
+      }
     } finally {
       inFlight.current = false;
     }
@@ -171,12 +218,16 @@ export function useCollectionPicker(
       scanTokenRef.current = token;
       setState({ status: 'scanning' });
       const result = await brunoApi.discover(trimmed, token);
-      resolveScan(result.collections);
+      await resolveScan(result.collections, token);
     } catch (e) {
-      setState({
-        status: 'error',
-        errorMsg: e instanceof Error ? e.message : String(e)
-      });
+      if (classifyLinkError(e) === 'notFound') {
+        setState({ status: 'notFound' });
+      } else {
+        setState({
+          status: 'error',
+          errorMsg: e instanceof Error ? e.message : String(e)
+        });
+      }
     } finally {
       inFlight.current = false;
     }
@@ -213,7 +264,9 @@ export function useCollectionPicker(
       }
       await onLinked(result);
     } catch (e) {
-      if (scanTokenRef.current) {
+      if (classifyLinkError(e) === 'notFound') {
+        setState({ status: 'notFound' });
+      } else if (scanTokenRef.current) {
         setState({
           status: 'error',
           errorMsg: e instanceof Error ? e.message : String(e)
@@ -274,10 +327,14 @@ export function useCollectionPicker(
       }
       await onLinked(linked);
     } catch (e) {
-      setState({
-        status: 'error',
-        errorMsg: e instanceof Error ? e.message : String(e)
-      });
+      if (classifyLinkError(e) === 'notFound') {
+        setState({ status: 'notFound' });
+      } else {
+        setState({
+          status: 'error',
+          errorMsg: e instanceof Error ? e.message : String(e)
+        });
+      }
     } finally {
       inFlight.current = false;
     }

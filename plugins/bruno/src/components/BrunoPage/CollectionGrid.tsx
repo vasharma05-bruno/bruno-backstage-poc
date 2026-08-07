@@ -6,8 +6,9 @@ import type { DashboardCollection } from '../../api/types';
 export function CollectionGrid(props: {
   collections: DashboardCollection[];
   onRequestLink?: (collectionId: string) => void;
+  onChanged?: () => void;
 }): JSX.Element {
-  const { collections, onRequestLink } = props;
+  const { collections, onRequestLink, onChanged } = props;
   return (
     <Grid container spacing={2}>
       {collections.map((collection) => (
@@ -15,6 +16,7 @@ export function CollectionGrid(props: {
           <CollectionCard
             collection={collection}
             onRequestLink={onRequestLink}
+            onChanged={onChanged}
           />
         </Grid>
       ))}

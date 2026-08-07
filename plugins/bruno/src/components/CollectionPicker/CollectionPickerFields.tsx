@@ -55,6 +55,15 @@ export function CollectionPickerFields(props: {
         </Grid>
       )}
 
+      {state.status === 'notFound' && (
+        <Grid item xs={12}>
+          <Typography variant="body2" color="textSecondary">
+            No Bruno collection found in that repository. Check the URL, or
+            confirm the repo contains a bruno.json / opencollection.yml.
+          </Typography>
+        </Grid>
+      )}
+
       {state.status === 'noCollections' && (
         <Grid item xs={12}>
           <Typography variant="body2" color="textSecondary">

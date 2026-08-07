@@ -177,4 +177,18 @@ export class BrunoClient implements BrunoApi {
       );
     }
   }
+
+  async deleteImportedCollection(collectionId: string): Promise<void> {
+    const base = await this.baseUrl();
+    const path = `/collections/imported/${encodeURIComponent(collectionId)}`;
+    const res = await this.fetchApi.fetch(`${base}${path}`, {
+      method: 'DELETE'
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(
+        `Bruno backend request to ${path} failed (${res.status}): ${text}`
+      );
+    }
+  }
 }

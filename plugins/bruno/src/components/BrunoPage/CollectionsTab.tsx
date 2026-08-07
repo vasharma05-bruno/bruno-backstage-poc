@@ -124,7 +124,11 @@ export function CollectionsTab(props: {
           No collections match your search.
         </Typography>
       ) : (
-        <CollectionGrid collections={filtered} onRequestLink={onRequestLink} />
+        <CollectionGrid
+          collections={filtered}
+          onRequestLink={onRequestLink}
+          onChanged={() => setRefreshKey((k) => k + 1)}
+        />
       )}
 
       <AddCollectionModal

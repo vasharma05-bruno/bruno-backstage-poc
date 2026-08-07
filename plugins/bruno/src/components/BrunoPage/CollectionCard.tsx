@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { InfoCard, LinkButton } from '@backstage/core-components';
 import { parseEntityRef } from '@backstage/catalog-model';
+import { useApi } from '@backstage/core-plugin-api';
 import Avatar from '@material-ui/core/Avatar';
 import Box from '@material-ui/core/Box';
 import Button from '@material-ui/core/Button';
@@ -7,6 +9,8 @@ import Chip from '@material-ui/core/Chip';
 import Tooltip from '@material-ui/core/Tooltip';
 import Typography from '@material-ui/core/Typography';
 import { makeStyles } from '@material-ui/core/styles';
+import { brunoApiRef } from '../../api/BrunoApi';
+import { emitConnectionChange } from '../../lib/connectionEvents';
 import type { DashboardCollection } from '../../api/types';
 
 const useStyles = makeStyles((theme) => ({
@@ -38,7 +42,9 @@ const useStyles = makeStyles((theme) => ({
     marginBottom: theme.spacing(1)
   },
   actions: {
-    marginTop: theme.spacing(1)
+    marginTop: theme.spacing(1),
+    display: 'flex',
+    gap: theme.spacing(1)
   }
 }));
 
@@ -84,12 +90,52 @@ function OpenAction(props: { entityRef?: string }): JSX.Element {
 export function CollectionCard(props: {
   collection: DashboardCollection;
   onRequestLink?: (collectionId: string) => void;
+  onChanged?: () => void;
 }): JSX.Element {
   const classes = useStyles();
-  const { collection, onRequestLink } = props;
+  const { collection, onRequestLink, onChanged } = props;
+  const brunoApi = useApi(brunoApiRef);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
   // Imported-but-unlinked stub: no entityRef, so no OPEN target — render a
   // "Link" action (in-page deep-link) instead. See D4/D9.
   const isImportedStub = Boolean(collection.imported) && !collection.linked;
+
+  const onUnlink = async () => {
+    if (!collection.entityRef) {
+      return;
+    }
+    if (!window.confirm('Unlink this collection from its entity?')) {
+      return;
+    }
+    setBusy(true);
+    setError(undefined);
+    try {
+      await brunoApi.disconnect(collection.entityRef);
+      emitConnectionChange(collection.entityRef);
+      onChanged?.();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onDelete = async () => {
+    if (!window.confirm('Delete this imported collection?')) {
+      return;
+    }
+    setBusy(true);
+    setError(undefined);
+    try {
+      await brunoApi.deleteImportedCollection(collection.id);
+      onChanged?.();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <InfoCard>
@@ -128,17 +174,45 @@ export function CollectionCard(props: {
 
       <Box className={classes.actions}>
         {isImportedStub ? (
-          <Button
-            variant="contained"
-            size="small"
-            onClick={() => onRequestLink?.(collection.id)}
-          >
-            Link
-          </Button>
+          <>
+            <Button
+              variant="contained"
+              size="small"
+              onClick={() => onRequestLink?.(collection.id)}
+            >
+              Link
+            </Button>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={onDelete}
+              disabled={busy}
+            >
+              Delete
+            </Button>
+          </>
         ) : (
-          <OpenAction entityRef={collection.entityRef} />
+          <>
+            <OpenAction entityRef={collection.entityRef} />
+            {collection.linked && collection.entityRef && (
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={onUnlink}
+                disabled={busy}
+              >
+                Unlink
+              </Button>
+            )}
+          </>
         )}
       </Box>
+
+      {error && (
+        <Typography variant="body2" color="error">
+          {error}
+        </Typography>
+      )}
     </InfoCard>
   );
 }

@@ -36,6 +36,7 @@ export interface RouterOptions {
  *   GET /collections            -> Array<CollectionSummary>
  *   POST /collections/import    -> { imported: number } (import unlinked collections)
  *   GET /collections/imported   -> Array<ImportedCollection>
+ *   DELETE /collections/imported/:id -> 204 (remove an imported-but-unlinked collection)
  *   GET /collections/:id        -> CollectionDetail (404 if unknown)
  *   GET /collections/:id/docs   -> text/html (self-contained Scenario-B docs)
  *   GET /collections/:id/opencollection.yml -> text/yaml (OpenCollection export)
@@ -108,6 +109,17 @@ export async function createRouter(
         updatedAt: row.updatedAt
       }))
     );
+  });
+
+  router.delete('/collections/imported/:id', async (req, res) => {
+    await httpAuth.credentials(req, { allow: ['user'] });
+    const id = req.params.id;
+    await collectionsStore.delete(id);
+    // Defensive: `collectionIdFromUrl` is deterministic, so an imported id can
+    // collide with a live connected-cache entry. The eviction is a no-op for a
+    // purely-imported row and is idempotent.
+    collectionService.evictConnected(id);
+    res.status(204).end();
   });
 
   router.get('/collections/:id', (req, res) => {

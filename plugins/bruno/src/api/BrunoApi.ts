@@ -43,6 +43,8 @@ export interface BrunoApi {
   ): Promise<{ imported: number }>;
   /** GET /collections/imported — imported-but-unlinked collections. */
   getImportedCollections(): Promise<ImportedCollection[]>;
+  /** DELETE /collections/imported/:id — removes an imported-but-unlinked collection. */
+  deleteImportedCollection(collectionId: string): Promise<void>;
 }
 
 export const brunoApiRef = createApiRef<BrunoApi>({
