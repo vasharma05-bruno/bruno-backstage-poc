@@ -1,36 +1,35 @@
+import { repoRootFromCollectionUrl } from './githubUrl';
+
 /**
  * Helpers for the "Open in Bruno" action.
  *
- * IMPORTANT (POC gap, see docs/POC-DECISIONS.md D3 / Q3):
- * Today's Bruno desktop only registers the `bruno://app/oauth2/callback`
- * deep-link handler. There is currently NO `bruno://open` or import-from-URL
- * verb — that is a documented Beta desktop dependency. We therefore:
- *   1. build the intended `bruno://` deep link (so it's trivial to flip on once
- *      the desktop verb ships), and
- *   2. offer a "Clone & open in Bruno" fallback that gives the user a
- *      `git clone` command they can run and then open the folder in Bruno.
+ * "Open in Bruno" hands the collection's repo-root URL to Bruno's hosted fetch
+ * endpoint (`https://fetch.usebruno.com/?url=<repoUrl>`), which loads the
+ * collection in Bruno. We also offer a "Clone & open in Bruno" fallback that
+ * gives the user a `git clone` command to run and then open the folder in
+ * Bruno.
  *
- * Keep the exact deep-link format in ONE place (below) so it's easy to change.
+ * Keep the exact URL format in ONE place (below) so it's easy to change.
  */
 
 /**
- * The deep-link scheme + verb we intend to use once the desktop app supports
- * it. Centralized so the exact format is a one-line change.
- *
- * VERIFY: `bruno://open` is aspirational — not yet handled by Bruno desktop.
+ * Base URL of Bruno's hosted "fetch collection from URL" endpoint.
+ * Centralized so the exact format is a one-line change.
  */
-export const BRUNO_DEEP_LINK_SCHEME = 'bruno';
-export const BRUNO_OPEN_VERB = 'open';
+export const BRUNO_FETCH_BASE_URL = 'https://fetch.usebruno.com/';
 
 /**
- * Build the intended `bruno://open?url=<sourceUrl>` deep link.
+ * Build the `https://fetch.usebruno.com/?url=<repoUrl>` open link.
+ *
+ * We send only the repo root (`https://<host>/<owner>/<repo>`), not the deeper
+ * `/tree/<ref>/<subpath>` collection path.
  *
  * @param sourceUrl - The `bruno.dev/source-url` annotation (a git repo / tree
  *   URL pointing at the collection).
  */
 export function buildBrunoDeepLink(sourceUrl: string): string {
-  const encoded = encodeURIComponent(sourceUrl);
-  return `${BRUNO_DEEP_LINK_SCHEME}://${BRUNO_OPEN_VERB}?url=${encoded}`;
+  const encoded = encodeURIComponent(repoRootFromCollectionUrl(sourceUrl));
+  return `${BRUNO_FETCH_BASE_URL}?url=${encoded}`;
 }
 
 /**

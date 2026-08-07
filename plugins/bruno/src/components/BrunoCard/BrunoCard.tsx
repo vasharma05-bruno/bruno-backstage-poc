@@ -193,6 +193,17 @@ export function BrunoCard() {
     = picker.state.status === 'scanning'
       || picker.state.status === 'connecting';
 
+  const connectedSourceUrl
+    = state.status === 'connected' ? state.sourceUrl : undefined;
+  const repoUrl = connectedSourceUrl
+    ? repoRootFromCollectionUrl(connectedSourceUrl)
+    : undefined;
+  // Only show Source separately when it points somewhere deeper than the repo
+  // root (e.g. a /tree/<ref>/<subpath> collection); otherwise Repo says it all.
+  const showSource = Boolean(
+    connectedSourceUrl && connectedSourceUrl !== repoUrl
+  );
+
   return (
     <InfoCard title="Bruno Collection">
       {state.status === 'loading' && <Progress />}
@@ -282,15 +293,27 @@ export function BrunoCard() {
           </Grid>
           <Grid item xs={6}>
             <Typography variant="caption" color="textSecondary">
-              Source
+              Repo
             </Typography>
             <Typography variant="body2">
-              {state.sourceUrl ? (
-                <Link to={state.sourceUrl}>{shorten(state.sourceUrl)}</Link>
+              {repoUrl ? (
+                <Link to={repoUrl}>{shorten(repoUrl)}</Link>
               ) : (
                 '—'
               )}
             </Typography>
+            {showSource && connectedSourceUrl && (
+              <Box mt={1}>
+                <Typography variant="caption" color="textSecondary">
+                  Source
+                </Typography>
+                <Typography variant="body2">
+                  <Link to={connectedSourceUrl}>
+                    {shorten(connectedSourceUrl)}
+                  </Link>
+                </Typography>
+              </Box>
+            )}
           </Grid>
           <Grid item xs={12}>
             <Box mt={1}>

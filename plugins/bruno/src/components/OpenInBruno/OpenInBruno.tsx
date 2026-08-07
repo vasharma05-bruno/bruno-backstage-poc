@@ -14,10 +14,10 @@ import {
 /**
  * "Open in Bruno" split action.
  *
- * Primary button attempts the `bruno://open` deep link (a Beta desktop
- * dependency — see docs/POC-DECISIONS.md D3/Q3; today Bruno desktop only
- * handles `bruno://app/oauth2/callback`). The dropdown offers a
- * "Clone & open in Bruno" fallback that copies a `git clone` instruction.
+ * Primary button opens the collection via Bruno's hosted fetch endpoint
+ * (`https://fetch.usebruno.com/?url=<repoUrl>`) in a new tab. The dropdown
+ * offers a "Clone & open in Bruno" fallback that copies a `git clone`
+ * instruction.
  */
 export function OpenInBruno(props: { sourceUrl?: string }) {
   const { sourceUrl } = props;
@@ -37,9 +37,13 @@ export function OpenInBruno(props: { sourceUrl?: string }) {
   }
 
   const openDeepLink = () => {
-    // Attempt to hand off to the desktop app. If no handler is registered the
-    // browser simply does nothing (or shows a "no app" dialog).
-    window.location.href = buildBrunoDeepLink(sourceUrl);
+    // Hand the collection URL to Bruno's hosted fetch endpoint in a new tab so
+    // we don't navigate the user away from Backstage.
+    window.open(
+      buildBrunoDeepLink(sourceUrl),
+      '_blank',
+      'noopener,noreferrer'
+    );
   };
 
   const copyCloneInstruction = async () => {
@@ -56,7 +60,7 @@ export function OpenInBruno(props: { sourceUrl?: string }) {
 
   return (
     <>
-      <Tooltip title="Direct bruno:// open is a Beta desktop dependency (today Bruno handles only bruno://app/oauth2/callback). Use 'Clone & open' as a fallback.">
+      <Tooltip title="Opens the collection in Bruno via fetch.usebruno.com. Use 'Clone & open' as a fallback.">
         <span style={{ display: 'inline-flex' }}>
           <Button
             variant="contained"

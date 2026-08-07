@@ -133,7 +133,25 @@ export class BrunoEntityProvider implements EntityProvider {
 }
 
 // Mirrors buildBrunoDeepLink in plugins/bruno/src/lib/brunoLink.ts — keep the
-// format (scheme `bruno`, verb `open`, encoded `url` param) in sync.
+// format (`https://fetch.usebruno.com/?url=<repo-root>`) in sync. We send only
+// the repo root, not the deeper /tree/<ref>/<subpath> collection path.
 function brunoDeepLink(sourceUrl: string): string {
-  return `bruno://open?url=${encodeURIComponent(sourceUrl)}`;
+  return `https://fetch.usebruno.com/?url=${encodeURIComponent(
+    repoRootFromCollectionUrl(sourceUrl)
+  )}`;
+}
+
+/** Reduce a collection URL to its repo-root `https://<host>/<owner>/<repo>`.
+ *  Mirrors repoRootFromCollectionUrl in plugins/bruno/src/lib/githubUrl.ts. */
+function repoRootFromCollectionUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const seg = u.pathname.split('/').filter(Boolean);
+    if (seg.length < 2) {
+      return url;
+    }
+    return `${u.origin}/${seg[0]}/${seg[1]}`;
+  } catch {
+    return url;
+  }
 }
