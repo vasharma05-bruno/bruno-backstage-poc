@@ -20,8 +20,11 @@ export interface BrunoApi {
   getCollections(): Promise<CollectionSummary[]>;
   /** GET /collections/:id */
   getCollection(id: string): Promise<CollectionDetail>;
-  /** Absolute URL of the self-contained docs HTML for a collection. */
-  getDocsUrl(id: string): Promise<string>;
+  /**
+   * Absolute URL of the OpenCollection docs page for a collection, for embedding
+   * via an iframe `src`. `theme` selects the renderer's light/dark palette.
+   */
+  getDocsUrl(id: string, theme: 'light' | 'dark'): Promise<string>;
   /** GET /collections/:id/opencollection.yml — raw OpenCollection YAML text. */
   getOpenCollectionYaml(id: string): Promise<string>;
   /** POST /connections — link an entity to a GitHub collection URL. */

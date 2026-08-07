@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { makeStyles, useTheme } from '@material-ui/core/styles';
 import {
   Content,
@@ -13,8 +13,6 @@ import { brunoApiRef } from '../../api/BrunoApi';
 import { getCollectionId } from '../../lib/annotations';
 import { subscribeConnectionChange } from '../../lib/connectionEvents';
 
-const CDN = 'https://staging.cdn.opencollection.com';
-
 const useStyles = makeStyles(() => ({
   frame: {
     width: '100%',
@@ -23,41 +21,18 @@ const useStyles = makeStyles(() => ({
   }
 }));
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-function buildSrcDoc(
-  yaml: string,
-  title: string,
-  theme: 'light' | 'dark'
-): string {
-  // Neutralize any `</script` (the HTML tokenizer ends a script element on
-  // `</script` followed by whitespace, `/`, or `>`, not just `</script>`).
-  // The capture group preserves the original casing of the tag.
-  const data = JSON.stringify(yaml).replace(/<(\/script)/gi, '<\\$1');
-  return [
-    '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/>',
-    '<meta name="viewport" content="width=device-width, initial-scale=1.0"/>',
-    `<title>${escapeHtml(title)} - API Documentation</title>`,
-    '<style>body{margin:0;padding:0}#opencollection-container{width:100vw;height:100vh}</style>',
-    `<link rel="stylesheet" href="${CDN}/docs.css"/>`,
-    `<script src="${CDN}/docs.js"></script>`,
-    '</head><body><div id="opencollection-container"></div>',
-    '<script>',
-    `const collectionData = ${data};`,
-    'new window.OpenCollection({',
-    'target: document.getElementById(\'opencollection-container\'),',
-    'opencollection: collectionData,',
-    `theme: '${theme}' });`,
-    '</script></body></html>'
-  ].join('');
-}
-
+/**
+ * Renders a connected collection's API docs by embedding the OpenCollection
+ * docs page served by the backend (`GET /collections/:id/docs`) via an iframe
+ * `src`. The backend page is a real document on the backend origin, which — as
+ * opposed to the previous `srcdoc` approach — gives the OpenCollection bundle a
+ * real URL/origin so its `sessionStorage` access and `HashRouter` routing work.
+ *
+ * The frame is cross-origin to the app (backend :7007 vs app :3000 in dev); the
+ * backend relaxes `X-Frame-Options`/CSP `frame-ancestors` on that response so
+ * the app may embed it. The theme is passed as a query param and the frame
+ * reloads on connection changes via a cache-busting nonce.
+ */
 export function OcDocsFrame() {
   const classes = useStyles();
   const theme = useTheme();
@@ -69,7 +44,7 @@ export function OcDocsFrame() {
   const themeMode: 'light' | 'dark'
     = theme.palette.type === 'dark' ? 'dark' : 'light';
 
-  const [yaml, setYaml] = useState<string | undefined>();
+  const [src, setSrc] = useState<string | undefined>();
   const [error, setError] = useState<Error | undefined>();
   const [loading, setLoading] = useState(true);
   const [notConnected, setNotConnected] = useState(false);
@@ -84,23 +59,23 @@ export function OcDocsFrame() {
     let cancelled = false;
     setLoading(true);
     setNotConnected(false);
+    setError(undefined);
 
     const resolveId = annotationCollectionId
       ? Promise.resolve(annotationCollectionId)
       : brunoApi.getConnection(entityRef).then((record) => record?.collectionId);
 
     resolveId
-      .then((collectionId) => {
-        if (cancelled) return undefined;
+      .then(async (collectionId) => {
+        if (cancelled) return;
         if (!collectionId) {
           setNotConnected(true);
-          return undefined;
+          return;
         }
-        return brunoApi.getOpenCollectionYaml(collectionId).then((y) => {
-          if (cancelled) return;
-          setYaml(y);
-          setError(undefined);
-        });
+        const url = await brunoApi.getDocsUrl(collectionId, themeMode);
+        if (cancelled) return;
+        // The nonce forces the iframe to reload when the connection changes.
+        setSrc(`${url}&v=${refreshNonce}`);
       })
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e : new Error(String(e)));
@@ -111,19 +86,7 @@ export function OcDocsFrame() {
     return () => {
       cancelled = true;
     };
-  }, [brunoApi, entityRef, annotationCollectionId, refreshNonce]);
-
-  const srcDoc = useMemo(
-    () =>
-      yaml
-        ? buildSrcDoc(
-            yaml,
-            entity.metadata.title ?? entity.metadata.name,
-            themeMode
-          )
-        : '',
-    [yaml, entity.metadata.title, entity.metadata.name, themeMode]
-  );
+  }, [brunoApi, entityRef, annotationCollectionId, themeMode, refreshNonce]);
 
   if (loading) {
     return (
@@ -150,7 +113,7 @@ export function OcDocsFrame() {
       </Content>
     );
   }
-  if (!yaml) {
+  if (!src) {
     return (
       <Content>
         <EmptyState
@@ -165,18 +128,16 @@ export function OcDocsFrame() {
   return (
     <Content>
       {/*
-        allow-same-origin is required: the OpenCollection bundle reads
-        sessionStorage/localStorage and resolves dynamic imports, which throw
-        under an opaque (sandboxed) origin. With srcdoc this gives the frame the
-        app's origin, so the third-party bundle + rendered collection content
-        can reach the app's session — accepted for the POC; Beta hardening =
-        serve the host page from a separate origin (bruno-backend) instead.
+        The docs page is served from the backend origin, so allow-same-origin
+        here grants the frame its OWN (backend) origin — needed for the bundle's
+        sessionStorage — while keeping it cross-origin to (and isolated from) the
+        Backstage app that embeds it.
       */}
       <iframe
         title="API Documentation"
         className={classes.frame}
         sandbox="allow-scripts allow-same-origin"
-        srcDoc={srcDoc}
+        src={src}
       />
     </Content>
   );

@@ -12,7 +12,7 @@ import type { CollectionService } from './collectionService';
 import { collectionIdFromUrl } from './collectionService';
 import type { ConnectionStore } from '../store/connectionStore';
 import type { CollectionsStore } from '../store/collectionsStore';
-import { generateCollectionHtml } from './generateCollectionHtml';
+import { generateOcDocsHtml } from './generateOcDocsHtml';
 import { toOpenCollectionYaml } from './openCollectionExport';
 
 export interface RouterOptions {
@@ -127,8 +127,16 @@ export async function createRouter(
         )}</p></body></html>`);
       return;
     }
-    const html = generateCollectionHtml(detail.collection);
-    res.type('text/html').send(html);
+    // Serves the OpenCollection docs page as a real document so the frontend can
+    // embed it via iframe `src` (not `srcdoc`) — a real origin/URL is what makes
+    // the bundle's sessionStorage + HashRouter routing work. The page is meant
+    // to be framed by the Backstage app (a different origin in dev: :3000 vs
+    // :7007), so we must override the two headers that would otherwise block
+    // cross-origin embedding.
+    applyDocsEmbeddingHeaders(res, config);
+    const theme = req.query.theme === 'dark' ? 'dark' : 'light';
+    const yaml = toOpenCollectionYaml(detail);
+    res.type('text/html').send(generateOcDocsHtml(yaml, detail.name, theme));
   });
 
   router.get('/collections/:id/opencollection.yml', (req, res) => {
@@ -252,4 +260,39 @@ function escapeHtml(value: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+/**
+ * Relaxes the security headers on the docs response so the OpenCollection docs
+ * page can be embedded in the Backstage app's iframe from a different origin.
+ *
+ * Helmet (root http router) sets `X-Frame-Options: SAMEORIGIN` and a CSP whose
+ * default `frame-ancestors 'self'` both forbid cross-origin framing, so we
+ * remove the former and replace the CSP with one scoped to this document:
+ * it permits the OpenCollection CDN bundle (script/style/font), the WASM eval
+ * the bundle needs, and framing by the configured app origin. POC-scope: Beta
+ * hardening would serve this behind user-cookie auth on a dedicated origin.
+ */
+function applyDocsEmbeddingHeaders(
+  res: express.Response,
+  config: Config
+): void {
+  const appBaseUrl = config.getOptionalString('app.baseUrl');
+  const frameAncestors = ['\'self\'', appBaseUrl].filter(Boolean).join(' ');
+  const cdn
+    = 'https://staging.cdn.opencollection.com https://staging.cdn.usebruno.com';
+  res.removeHeader('X-Frame-Options');
+  res.setHeader(
+    'Content-Security-Policy',
+    [
+      'default-src \'self\'',
+      `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${cdn}`,
+      `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com ${cdn}`,
+      `font-src 'self' data: https://fonts.gstatic.com ${cdn}`,
+      'img-src \'self\' data: https:',
+      'connect-src \'self\' https:',
+      'worker-src \'self\' blob:',
+      `frame-ancestors ${frameAncestors}`
+    ].join('; ')
+  );
 }

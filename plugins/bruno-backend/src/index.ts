@@ -18,7 +18,7 @@ export { brunoCatalogModule } from './module';
 export { BrunoEntityProvider } from './provider/BrunoEntityProvider';
 export { createCollectionService } from './service/collectionService';
 export { createRouter } from './service/router';
-export { generateCollectionHtml } from './service/generateCollectionHtml';
+export { generateOcDocsHtml } from './service/generateOcDocsHtml';
 
 // Re-export the shared contract types so the frontend may reuse them.
 export type {

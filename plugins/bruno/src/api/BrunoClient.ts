@@ -53,9 +53,9 @@ export class BrunoClient implements BrunoApi {
     );
   }
 
-  async getDocsUrl(id: string): Promise<string> {
+  async getDocsUrl(id: string, theme: 'light' | 'dark'): Promise<string> {
     const base = await this.baseUrl();
-    return `${base}/collections/${encodeURIComponent(id)}/docs`;
+    return `${base}/collections/${encodeURIComponent(id)}/docs?theme=${theme}`;
   }
 
   async getOpenCollectionYaml(id: string): Promise<string> {
