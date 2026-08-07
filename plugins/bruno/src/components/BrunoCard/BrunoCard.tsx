@@ -7,6 +7,7 @@ import Grid from '@material-ui/core/Grid';
 import Typography from '@material-ui/core/Typography';
 import Box from '@material-ui/core/Box';
 import Button from '@material-ui/core/Button';
+import LaunchIcon from '@material-ui/icons/Launch';
 import { makeStyles } from '@material-ui/core/styles';
 import { brunoApiRef } from '../../api/BrunoApi';
 import type { CollectionDetail } from '../../api/types';
@@ -316,8 +317,21 @@ export function BrunoCard() {
             )}
           </Grid>
           <Grid item xs={12}>
-            <Box mt={1}>
+            <Box mt={1} className={classes.actionRow}>
               <OpenInBruno sourceUrl={state.sourceUrl} />
+              <Button
+                variant="outlined"
+                color="primary"
+                startIcon={<LaunchIcon />}
+                onClick={() =>
+                  window.open(
+                    `/bruno/docs?c=${encodeURIComponent(state.collectionId)}`,
+                    '_blank',
+                    'noopener,noreferrer'
+                  )}
+              >
+                Run in Bruno
+              </Button>
             </Box>
           </Grid>
           <Grid item xs={12}>
