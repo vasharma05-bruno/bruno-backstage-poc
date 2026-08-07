@@ -101,6 +101,23 @@ Two-panel layout per the mockup.
 
 **No auto-discovery list** in this plan — the "DISCOVERED GIT COLLECTIONS · RANKED BY MATCH" section is intentionally omitted (north-star). The manual entry covers the same outcome without the org-crawl + scoring machinery.
 
+### 6.1 Multiple collections in one repo → collection picker (persisted)
+
+A single GitHub repo often holds **more than one Bruno collection** (multiple directories, each with its own `bruno.json`). The manual entry above assumes the user points at one collection path; when they instead point at a repo (or a subtree) that contains several, the linker must let them **choose which collection to link**, and that choice must be **persisted** so the link is stable across refreshes and restarts.
+
+**Flow:**
+1. **Enter repo (or subtree).** The user enters `org/repo` — optionally with a `#/subpath` to narrow the search — and clicks **VERIFY / SCAN** (a step before `LINK`).
+2. **Backend discovery.** A new endpoint **`GET /connections/discover?url=<repo-or-subtree>`** walks the repo tree once (reusing `readUrlTreeWithCreds` — public via service token, private via service-then-user-OAuth), finds **every directory containing a `bruno.json`**, and returns a list: `[{ collectionPath, name, requestCount, collectionId }]`. `collectionId = sha256(normalizedCollectionUrl)` per collection, so each candidate has a stable id before anything is stored.
+3. **Frontend resolves count:**
+   - **0 found** → clean error: *"No Bruno collections found in this repo/path."* Nothing stored.
+   - **1 found** → auto-select it (no dropdown); show its name + request count, enable **LINK**.
+   - **>1 found** → render a **dropdown** listing each collection by `name` (with its `collectionPath` + request count as secondary text). The user picks exactly one; **LINK** stays disabled until a selection is made.
+4. **Link + persist the chosen collection.** On **LINK**, the store row for the entity is written with the **fully-qualified URL of the selected collection** (`…/tree/<ref>/<collectionPath>`) and its `collectionId`. Because the stored `github_url` already carries the collection's sub-path, rehydration, the processor injection (§4), and `GET /collections/:id` all resolve to the exact chosen collection — no ambiguity.
+
+**Persistence detail.** The existing store ([`connectionStore.ts`](../plugins/bruno-backend/src/store/connectionStore.ts)) is **one row per `entity_ref`** (`entity_ref` PK), so an entity links to exactly **one** chosen collection at a time. The selected collection's path is encoded inside the stored `github_url`, so **no schema change is required**. *Optional (secondary):* add an explicit `collection_path TEXT` column if we later want to display/relink without re-parsing the URL — not needed for the core flow.
+
+**Scope note.** This is **collection selection within a single repo**, not org-wide repo discovery — the "142 repos / ranked by match" crawl stays north-star (§1). We scan exactly the one repo the user named.
+
 ---
 
 ## 7. Current-state facts this builds on (`file:line`)
@@ -124,6 +141,8 @@ Two-panel layout per the mockup.
 | R-E | **Verify-before-link needs private creds** | Private repo link fails without a token | Reuse NEXT-STEPS service-then-user-OAuth; if unauthorized, prompt to connect GitHub (same flow). |
 | R-F | **Optional PR-to-YAML path** | Write access + PR machinery | Keep optional/secondary; not required for the one-click link. |
 | R-G | **Overlap with `/api-docs`** | Why a dedicated page | Justified by Bruno-specific tiles/cards + the link console; else fall back to a filtered catalog view. |
+| R-H | **Repo-tree walk cost for discovery (§6.1)** | Large monorepos → many files to scan for `bruno.json` | Walk once per VERIFY (not per keystroke); prefer a shallow tree/contents listing over a full clone; scope to the user-supplied subtree when given; cache the discovery result for the entity during the link session. |
+| R-I | **One collection per entity (§6.1)** | `entity_ref` is the PK, so an API links to a single collection | Intentional for this plan (mirrors the mockup's one-to-one link). Multiple collections per entity is a future schema change (composite key), not scoped here. |
 
 ---
 
@@ -134,6 +153,7 @@ Two-panel layout per the mockup.
 - **N2-P3 — Dashboard aggregate endpoint (S–M).** `GET /dashboard` with per-collection summary + `linked` + failed-source surfacing. *`plugins/bruno-backend/src/service/`.*
 - **N2-P4 — Bruno page shell + Collections tab (M).** `PageBlueprint` + `NavItemBlueprint`; tab bar (Collections, Link API only); stat tiles; search; card grid with corrected env semantics. *`plugins/bruno/src/components/BrunoPage/`, `src/extensions.tsx`.*
 - **N2-P5 — Link API tab (M).** Left "APIs without collections" (catalog client query); right manual repo+path link + verify + "what linking does" explainer. *`plugins/bruno/src/components/BrunoPage/LinkApi/`, `src/api/`.*
+- **N2-P6 — Multi-collection discovery + picker (§6.1) (S–M).** Backend `GET /connections/discover` (walk repo → all `bruno.json` roots, reuse `readUrlTreeWithCreds`); frontend VERIFY/SCAN step resolving 0 / 1 / >1 into a **collection dropdown**; persist the chosen collection's fully-qualified URL + `collectionId` in the existing store row (no schema change). *`plugins/bruno-backend/src/service/router.ts`, `src/service/collectionService.ts`, `plugins/bruno/src/components/BrunoPage/LinkApi/`, `src/api/`.*
 
 Effort: **S** ≈ <1 day · **M** ≈ 1–3 days · **L** ≈ >3 days (rough).
 
@@ -144,5 +164,6 @@ Effort: **S** ≈ <1 day · **M** ≈ 1–3 days · **L** ≈ >3 days (rough).
 - **Link (public):** on the Link API tab, pick an unlinked API, enter a public `org/repo#/path` → verify passes → link stored → within one refresh the entity shows the BrunoCard + API Docs tab (annotation injected by the processor). Confirm `bruno.dev/collection-path` is present on the entity.
 - **Link (private):** same with a private repo → service-token path when the org PAT can see it; otherwise the GitHub-connect prompt → user-OAuth fetch → link succeeds. Bad path (no `bruno.json`) → clean "not a Bruno collection" error, no link stored.
 - **Collections tab:** tiles show real counts (collections, total requests, linked); cards show request count, env count, the active/default env name, spec-type badge, and `linked` where applicable; search filters live; a deliberately broken source shows as failed, not missing.
+- **Multi-collection picker (§6.1):** point the linker at a repo containing **two or more** collections → discovery returns all `bruno.json` roots → a dropdown lists each by name; a single-collection repo auto-selects with no dropdown; a repo with none shows a clean "no collections found" error and stores nothing. After linking the chosen one, reload the page and confirm the **same** collection rehydrates (persisted), and the injected annotation / API Docs tab resolve to that collection — not a sibling.
 - **Unlink:** `DELETE` removes the row; after refresh the injected annotation is gone and the surfaces detach.
 - **Scope guard:** no Test Runs / Setup & Workflow tabs; no match-ranking, org-crawl, or request-search present. No Bruno logic in `packages/app`/`packages/backend` beyond the auth harness.

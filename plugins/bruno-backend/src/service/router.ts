@@ -166,14 +166,14 @@ export async function createRouter(
     const credentials = await httpAuth.credentials(req, { allow: ['user'] });
     const { userEntityRef } = await userInfo.getUserInfo(credentials);
 
-    const { entityRef, url, userGithubToken } = req.body ?? {};
+    const { entityRef, url } = req.body ?? {};
     if (!entityRef || !url) {
       throw new InputError('`entityRef` and `url` are required.');
     }
 
     const { collectionId, detail } = await collectionService.connectFromUrl({
       url,
-      userToken: userGithubToken
+      userToken: githubTokenFromHeader(req)
     });
 
     await connectionStore.upsert({
@@ -193,7 +193,7 @@ export async function createRouter(
   router.post('/connections/discover', async (req, res) => {
     await httpAuth.credentials(req, { allow: ['user'] });
 
-    const { url, userGithubToken } = req.body ?? {};
+    const { url } = req.body ?? {};
     if (!url) {
       throw new InputError('`url` is required.');
     }
@@ -201,7 +201,7 @@ export async function createRouter(
     res.json(
       await collectionService.discoverCollections({
         url,
-        userToken: userGithubToken
+        userToken: githubTokenFromHeader(req)
       })
     );
   });
@@ -267,6 +267,17 @@ function escapeHtml(value: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+/**
+ * Reads the caller's GitHub OAuth token from the `x-bruno-github-token` request
+ * header (the frontend sends it here, never in the JSON body). Returns
+ * `undefined` when absent or empty. The token is never logged.
+ */
+function githubTokenFromHeader(req: express.Request): string | undefined {
+  const raw = req.headers['x-bruno-github-token'];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return value ? value : undefined;
 }
 
 /**

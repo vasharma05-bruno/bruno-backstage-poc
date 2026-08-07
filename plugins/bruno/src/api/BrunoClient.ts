@@ -11,6 +11,13 @@ import type {
 } from './types';
 
 /**
+ * Header carrying the caller's GitHub OAuth token to the backend. Sent as a
+ * header (never in the request body) so the token doesn't sit in JSON payloads
+ * that are trivially visible in the browser's network inspector / logs.
+ */
+const GITHUB_TOKEN_HEADER = 'x-bruno-github-token';
+
+/**
  * Default {@link BrunoApi} implementation. Talks to the `bruno` backend plugin
  * over HTTP, resolving the base URL via the discovery API.
  */
@@ -77,10 +84,16 @@ export class BrunoClient implements BrunoApi {
     token?: string
   ): Promise<ConnectResult> {
     const base = await this.baseUrl();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+    if (token) {
+      headers[GITHUB_TOKEN_HEADER] = token;
+    }
     const res = await this.fetchApi.fetch(`${base}/connections`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entityRef, url, userGithubToken: token })
+      headers,
+      body: JSON.stringify({ entityRef, url })
     });
     if (!res.ok) {
       const text = await res.text().catch(() => res.statusText);
@@ -93,10 +106,16 @@ export class BrunoClient implements BrunoApi {
 
   async discover(url: string, token?: string): Promise<DiscoverResult> {
     const base = await this.baseUrl();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+    if (token) {
+      headers[GITHUB_TOKEN_HEADER] = token;
+    }
     const res = await this.fetchApi.fetch(`${base}/connections/discover`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, userGithubToken: token })
+      headers,
+      body: JSON.stringify({ url })
     });
     if (!res.ok) {
       const text = await res.text().catch(() => res.statusText);
