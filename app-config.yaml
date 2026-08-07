@@ -32,13 +32,9 @@ backend:
       - "'self'"
       - "'unsafe-eval'"
       - "'unsafe-inline'"
-      - 'https://staging.cdn.opencollection.com'
-      - 'https://staging.cdn.usebruno.com'
     img-src:
       - "'self'"
       - 'data:'
-      - 'https://staging.cdn.opencollection.com'
-      - 'https://staging.cdn.usebruno.com'
     # Content-Security-Policy directives follow the Helmet format: https://helmetjs.github.io/#reference
     # Default Helmet Content-Security-Policy values can be removed by setting the key to false
   cors:

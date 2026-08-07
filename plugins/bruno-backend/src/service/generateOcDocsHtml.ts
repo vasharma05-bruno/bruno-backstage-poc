@@ -1,5 +1,5 @@
 /** CDN that hosts the OpenCollection docs renderer bundle (POC: staging). */
-const CDN = 'https://staging.cdn.opencollection.com';
+const CDN = 'https://staging.cdn.usebruno.com/api-docs';
 
 /** HTML-escape a value for safe interpolation into markup / attributes. */
 function escapeHtml(s: string): string {
@@ -39,8 +39,8 @@ export function generateOcDocsHtml(
     '<meta name="viewport" content="width=device-width, initial-scale=1.0"/>',
     `<title>${escapeHtml(title)} - API Documentation</title>`,
     '<style>html,body{margin:0;padding:0;height:100%}#opencollection-container{width:100vw;height:100vh}</style>',
-    `<link rel="stylesheet" href="${CDN}/docs.css"/>`,
-    `<script src="${CDN}/docs.js"></script>`,
+    `<link rel="stylesheet" href="${CDN}/api-docs.css"/>`,
+    `<script src="${CDN}/api-docs.js"></script>`,
     '</head><body><div id="opencollection-container"></div>',
     '<script>',
     `const collectionData = ${data};`,
