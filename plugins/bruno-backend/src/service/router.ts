@@ -279,19 +279,32 @@ function applyDocsEmbeddingHeaders(
 ): void {
   const appBaseUrl = config.getOptionalString('app.baseUrl');
   const frameAncestors = ['\'self\'', appBaseUrl].filter(Boolean).join(' ');
-  const cdn
-    = 'https://staging.cdn.opencollection.com https://staging.cdn.usebruno.com';
+  // POC-scope: the OpenCollection renderer (staging bundle) lazy-loads from
+  // several CDNs and embeds arbitrary third-party media, so pinning hosts is
+  // impractical. Derived by statically auditing the bundle:
+  //   - script  : its own bundle (opencollection->usebruno CDN 301) + Monaco
+  //               editor from jsDelivr + blob: module workers  -> https: blob:
+  //   - wasm     : QuickJS runtime fetched as a data: URL + eval'd
+  //               -> connect-src data: + script-src 'unsafe-eval'
+  //   - fonts    : Inter from fonts.googleapis/gstatic          -> https: data:
+  //   - media    : HLS/FLV/Mux players (jsDelivr) + blob:        -> media-src
+  //   - iframes  : oEmbed players (YouTube/Vimeo/SoundCloud/...) -> frame-src
+  // The bundle is a trusted first-party renderer on an isolated origin,
+  // embeddable only by the app (frame-ancestors). Beta hardening = pin exact
+  // hosts + move this route behind user-cookie auth.
   res.removeHeader('X-Frame-Options');
   res.setHeader(
     'Content-Security-Policy',
     [
       'default-src \'self\'',
-      `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${cdn}`,
-      `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com ${cdn}`,
-      `font-src 'self' data: https://fonts.gstatic.com ${cdn}`,
-      'img-src \'self\' data: https:',
-      'connect-src \'self\' https: data:',
-      'worker-src \'self\' blob:',
+      'script-src \'self\' \'unsafe-inline\' \'unsafe-eval\' https: blob:',
+      'style-src \'self\' \'unsafe-inline\' https: data:',
+      'font-src \'self\' data: https:',
+      'img-src \'self\' data: blob: https:',
+      'media-src \'self\' data: blob: https:',
+      'connect-src \'self\' https: data: blob:',
+      'worker-src \'self\' blob: https:',
+      'frame-src \'self\' https:',
       `frame-ancestors ${frameAncestors}`
     ].join('; ')
   );
