@@ -13,7 +13,10 @@ import { collectionIdFromUrl } from './collectionService';
 import type { ConnectionStore } from '../store/connectionStore';
 import type { CollectionsStore } from '../store/collectionsStore';
 import { generateOcDocsHtml } from './generateOcDocsHtml';
-import { toOpenCollectionYaml } from './openCollectionExport';
+import {
+  redactCollectionDetail,
+  toOpenCollectionYaml
+} from './openCollectionExport';
 
 export interface RouterOptions {
   logger: LoggerService;
@@ -113,7 +116,11 @@ export async function createRouter(
       res.status(404).json({ error: `Unknown collection: ${req.params.id}` });
       return;
     }
-    res.json(detail);
+    // Redact secrets before returning: this route is reachable on the
+    // unauthenticated `/collections` prefix, and the raw detail otherwise
+    // leaks env-var values + auth secrets in plaintext. Same choke point as
+    // the YAML export.
+    res.json(redactCollectionDetail(detail));
   });
 
   router.get('/collections/:id/docs', (req, res) => {

@@ -35,6 +35,79 @@ import yaml from 'js-yaml';
 
 const REDACTED = '<redacted>';
 
+/**
+ * Auth-block field names whose values are secrets across the supported modes
+ * (`basic.password`, `bearer.token`, `digest.password`, `apikey.value`, plus
+ * common OAuth fields). Mirrors the per-mode redaction {@link mapAuth} applies
+ * to the YAML export.
+ */
+const AUTH_SECRET_KEYS = new Set([
+  'password',
+  'token',
+  'secret',
+  'value',
+  'passphrase',
+  'privateKey',
+  'clientSecret',
+  'accessToken',
+  'refreshToken'
+]);
+
+function redactAuthInPlace(auth: RequestAuth | undefined): void {
+  if (!auth) {
+    return;
+  }
+  for (const key of Object.keys(auth)) {
+    if (
+      key !== 'mode'
+      && AUTH_SECRET_KEYS.has(key)
+      && typeof auth[key] === 'string'
+      && auth[key] !== ''
+    ) {
+      auth[key] = REDACTED;
+    }
+  }
+}
+
+function redactItemsInPlace(items: Item[]): void {
+  for (const item of items) {
+    if (item.type === 'folder') {
+      redactItemsInPlace(item.items);
+    } else {
+      redactAuthInPlace(item.auth);
+    }
+  }
+}
+
+/**
+ * Returns a deep copy of a {@link CollectionDetail} with secrets stripped, for
+ * the JSON detail endpoint. Applies the SAME redaction stance as the YAML
+ * export ({@link toOpenCollectionYaml}) through this single choke point: every
+ * environment-variable value is dropped (env vars routinely hold tokens/keys
+ * and can't be told apart from non-secrets), and auth-block secret fields
+ * become `<redacted>`. The cached `detail` is never mutated (structuredClone).
+ *
+ * As with the export (R-D), secrets hardcoded into header/param/body *values*
+ * are NOT redacted here — that stays documented and is tracked as a hardening
+ * item.
+ *
+ * @public
+ */
+export function redactCollectionDetail(
+  detail: CollectionDetail
+): CollectionDetail {
+  const clone = structuredClone(detail);
+  for (const env of clone.collection.environments) {
+    for (const v of env.variables) {
+      if (v.value) {
+        v.value = REDACTED;
+      }
+    }
+  }
+  redactItemsInPlace(clone.collection.items);
+  return clone;
+}
+
 interface BrunoCollectionLike {
   name: string;
   brunoConfig?: { version?: string };
