@@ -5,7 +5,8 @@ import {
   brunoCollectionTreeCard,
   brunoCollectionOverviewCard,
   brunoDocsContent,
-  brunoPage
+  brunoPage,
+  brunoDocsPage
 } from './extensions';
 
 /**
@@ -24,6 +25,8 @@ import {
  *  - brunoDocsContent      -> "API Docs" tab at /bruno-docs on the same filter
  *  - brunoPage             -> standalone Bruno page at /bruno (auto-registered
  *                             in the sidebar via routeRef + title + icon)
+ *  - brunoDocsPage         -> chrome-less full-screen docs page at /bruno/docs
+ *                             (no title/icon, kept out of the sidebar)
  */
 export const brunoPlugin = createFrontendPlugin({
   pluginId: 'bruno',
@@ -33,7 +36,8 @@ export const brunoPlugin = createFrontendPlugin({
     brunoCollectionOverviewCard,
     brunoCollectionTreeCard,
     brunoDocsContent,
-    brunoPage
+    brunoPage,
+    brunoDocsPage
   ]
 });
 

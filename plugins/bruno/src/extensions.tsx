@@ -110,3 +110,26 @@ export const brunoPage = PageBlueprint.make({
       import('./components/BrunoPage').then((m) => <m.BrunoPage />)
   }
 });
+
+/**
+ * Route ref for the standalone full-screen docs page. No `title`/`icon` (so it
+ * stays out of the sidebar) and `noHeader` so the page renders chrome-less.
+ */
+export const brunoDocsPageRouteRef = createRouteRef();
+
+/**
+ * Standalone, chrome-less full-viewport API-docs page at `/bruno/docs`, opened
+ * in a new tab as `/bruno/docs?c=<collectionId>`. Deliberately has no `title`/
+ * `icon` (kept out of the auto-discovered sidebar) and `noHeader: true` so only
+ * the full-screen docs iframe shows.
+ */
+export const brunoDocsPage = PageBlueprint.make({
+  name: 'docs-page',
+  params: {
+    path: '/bruno/docs',
+    routeRef: brunoDocsPageRouteRef,
+    noHeader: true,
+    loader: () =>
+      import('./components/BrunoDocsPage').then((m) => <m.BrunoDocsPage />)
+  }
+});
