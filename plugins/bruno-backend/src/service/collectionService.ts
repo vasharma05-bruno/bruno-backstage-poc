@@ -1,7 +1,12 @@
 import type { LoggerService, UrlReaderService } from '@backstage/backend-plugin-api';
 import type { Config } from '@backstage/config';
 import { InputError } from '@backstage/errors';
-import { ScmIntegrations, type ScmIntegrationRegistry } from '@backstage/integration';
+import {
+  DefaultGithubCredentialsProvider,
+  ScmIntegrations,
+  type GithubCredentialsProvider,
+  type ScmIntegrationRegistry
+} from '@backstage/integration';
 import { Octokit } from '@octokit/rest';
 import { createHash } from 'crypto';
 import fs from 'fs/promises';
@@ -228,6 +233,11 @@ export async function createCollectionService(options: {
   const discoverCache = new Map<string, DiscoverEntry>();
   let failures: SourceFailure[] = [];
   const integrations = ScmIntegrations.fromConfig(config);
+  // Resolves GitHub credentials the same way the UrlReader does, so the host
+  // may configure either a PAT (`integrations.github.token`) or a GitHub App
+  // (`integrations.github.apps`) — the provider yields a usable token for both.
+  const githubCredentials =
+    DefaultGithubCredentialsProvider.fromIntegrations(integrations);
 
   async function loadSource(
     source: BrunoSourceConfig
@@ -419,7 +429,12 @@ export async function createCollectionService(options: {
         logger,
         { userToken: input.userToken }
       );
-      const ref = await resolveRef(integrations, normalized, input.userToken);
+      const ref = await resolveRef(
+        integrations,
+        githubCredentials,
+        normalized,
+        input.userToken
+      );
       const roots = findAllCollectionRoots(tree);
 
       const collections: DiscoveredCollection[] = roots.map((rootPrefix) => {
@@ -917,11 +932,14 @@ function composeCollectionUrl(
 /**
  * Resolves the git ref for a URL: the explicit `/tree/<ref>` if present,
  * otherwise the repo's default branch via Octokit. The Octokit client is built
- * with the service integration token (or the user token) and the integration's
- * `apiBaseUrl`, mirroring `readUrlTreeViaOctokit`. The token is never logged.
+ * with the host credential resolved via the GitHub credentials provider (a PAT
+ * or a GitHub App installation token, whichever the host configured), falling
+ * back to the caller's user OAuth token, plus the integration's `apiBaseUrl`.
+ * The token is never logged.
  */
 async function resolveRef(
   integrations: ScmIntegrationRegistry,
+  credentials: GithubCredentialsProvider,
   url: string,
   userToken?: string
 ): Promise<string> {
@@ -929,9 +947,16 @@ async function resolveRef(
   if (ref) {
     return ref;
   }
-  const integrationConfig = integrations.github.byUrl(url)?.config;
-  const auth = integrationConfig?.token ?? userToken;
-  const apiBaseUrl = integrationConfig?.apiBaseUrl ?? 'https://api.github.com';
+  let auth: string | undefined;
+  try {
+    auth = (await credentials.getCredentials({ url })).token;
+  } catch {
+    // No host credential for this repo (e.g. a GitHub App not installed there);
+    // fall back to the caller's user OAuth token below.
+  }
+  auth = auth ?? userToken;
+  const apiBaseUrl =
+    integrations.github.byUrl(url)?.config.apiBaseUrl ?? 'https://api.github.com';
   const octokit = new Octokit({ auth, baseUrl: apiBaseUrl });
   const { data } = await octokit.repos.get({ owner, repo });
   return data.default_branch;
