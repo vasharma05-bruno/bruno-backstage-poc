@@ -59,7 +59,7 @@ This is the **one and only POC** — not a separate effort and not a hand-off to
 | # | Decision | Rationale |
 |---|----------|-----------|
 | N1 | **Persistence = backend database** (`coreServices.database`) mapping `entityRef → githubUrl`, **inside `plugins/bruno-backend`**. | The provider owns its entities via full-mutation and can't annotate arbitrary entities; there is no store today. A DB keyed by `entityRef` is the clean home for a runtime connection. Survives restarts, shared across users. |
-| N2 | **Private-repo creds = service token first, then user OAuth fallback.** Try `integrations.github` PAT via `UrlReader`; if the repo isn't visible, fall back to the caller's GitHub OAuth token (`repo` scope). | Best coverage. Org-shared repos work with zero user friction; user-owned private repos work via the user's own token. Directly answers the "use the user's GitHub credentials from Backstage" ask. |
+| N2 | **Private-repo creds = anonymous/App credential first, then user OAuth fallback.** Try `UrlReader` with whatever `integrations.github` resolves via `DefaultGithubCredentialsProvider` (anonymous by default; an App/PAT only if a host configures one — commits `cb16545`, `0cce637`); if the repo isn't visible, fall back to the caller's GitHub OAuth token (`repo` scope). | Best coverage. Public + service-visible repos work with zero user friction; user-owned private repos work via the user's own token. Directly answers the "use the user's GitHub credentials from Backstage" ask. |
 | N3 | **Sign-in policy = any authenticated GitHub/Google user** (`dangerouslyAllowSignInWithoutUserInCatalog`). | No catalog `User` entity is required — least friction for the test harness. Must tighten for production (see R8). |
 
 ---
@@ -99,7 +99,7 @@ auth:
             - resolver: emailLocalPartMatchingUserEntityName
               dangerouslyAllowSignInWithoutUserInCatalog: true
 ```
-> Note: `integrations.github` (the `${GITHUB_TOKEN}` service PAT) is **separate** from `auth.providers.github` (user login). The former powers server-side `UrlReader` fetches; the latter creates user sessions. Both are needed — for different jobs.
+> Note: `integrations.github` (an **optional** host App/PAT) is **separate** from `auth.providers.github` (user login). The former, when configured, powers server-side `UrlReader` fetches; the latter creates user sessions and yields the user's OAuth token. The service PAT is **no longer required or present** — `${GITHUB_TOKEN}` is commented out, so `integrations.github` is tokenless by default. For private repos, only the `auth.providers.github` user-OAuth path is needed.
 
 **Frontend** — the new frontend system (`@backstage/frontend-defaults`) needs a **`SignInPage` extension** offering GitHub + Google + (dev) Guest, referencing `githubAuthApiRef` / `googleAuthApiRef`; registered in `packages/app/src/App.tsx` `features`. New file e.g. `packages/app/src/modules/auth/signInPage.tsx`, mirroring the existing `packages/app/src/modules/nav`.
 
@@ -118,15 +118,15 @@ The largest change: it breaks the "config `source.id` is the only identity" coup
    Use Backstage's Knex-based `DatabaseService` (`getClient()` + migrations) — the standard plugin-DB pattern. SQLite in dev.
 2. **Stable id from URL.** `collection_id = sha256(normalizedUrl)` (short). Reused as the cache key so the existing `getCollection(id)` / `/collections/:id/docs` routes keep working unchanged for connected collections.
 3. **New routes** (`src/service/router.ts`), authenticated (drop the `unauthenticated` policy for these):
-   - `POST /connections` — `{ entityRef, url, userGithubToken? }` → normalize URL, fetch tree (creds logic below), parse to `NormalizedCollection`, upsert store row + cache, return `{ collectionId, name, requestCount }`.
+   - `POST /connections` — `{ entityRef, url }` (+ optional user token in the `x-bruno-github-token` header, commit `eb30085`) → normalize URL, fetch tree (creds logic below), parse to `NormalizedCollection`, upsert store row + cache, return `{ collectionId, name, requestCount }`.
    - `GET /connections/:entityRef` — stored connection or `404` (card rehydrates on load).
    - `DELETE /connections/:entityRef` — disconnect.
    - Existing `GET /collections/:id` and `/:id/docs` now also serve connected collections (same cache).
-4. **Creds logic (service-token-then-user-OAuth).** Generalize `readUrlTree` → `readUrlTreeWithCreds(url, { userToken? })`:
-   - **Public / service-visible:** `reader.readTree(url)` (service PAT, existing path). Success → done.
+4. **Creds logic (anonymous/App-then-user-OAuth).** Generalize `readUrlTree` → `readUrlTreeWithCreds(url, { userToken? })`:
+   - **Public / service-visible:** `reader.readTree(url)` — resolves whatever `integrations.github` provides via `DefaultGithubCredentialsProvider` (anonymous by default; an App/PAT only if a host configures one — commits `cb16545`, `0cce637`). Success → done.
    - **Private + service can't see it (403/404):** if `userGithubToken` was supplied, retry via a token-scoped fetch — a per-request Octokit tree/content call, or a `GithubUrlReader` constructed with the user token — then feed the resulting `FileTree` into the **unchanged** `parseCollection`.
    - Add `httpAuth` + `userInfo` deps to identify the caller (stamp `connected_by`).
-5. **User token handling.** The frontend obtains it and passes it in the `POST /connections` body over the authenticated Backstage call; the backend uses it only for that one fetch and **never persists it**.
+5. **User token handling.** The frontend obtains it and passes it in the `x-bruno-github-token` **request header** on the authenticated Backstage call (commit `eb30085`; not the JSON body); the backend uses it only for that one fetch and **never persists it**.
 
 > **🔍 Investigate first (prior art) — how the Bruno app fetches a collection from a GitHub repo link.** Before finalizing `readUrlTreeWithCreds`, study the desktop app's own git-fetch path in **`~/packages/bruno`** (the Bruno source — desktop/electron + `bruno-app`). Known entry points from earlier scoping: the **clone-and-scan** IPC `renderer:clone-git-repository` + `renderer:scan-for-bruno-files`, and the URL-import path `renderer:fetch-api-spec` (API-spec-only today). Questions to answer: (a) does it **git-clone** the repo or hit the **GitHub API/raw** — and how does that compare to Backstage's `UrlReader.readTree()`? (b) how does it **authenticate** to private repos (token source, scope)? (c) how does it **locate `bruno.json`** and walk `.bru` files (monorepo/sub-path handling)? (d) is there a reusable module or normalization we should mirror rather than reinvent? Feed the findings back into the creds logic (item 4) and the `bruno.json` path-verification used by linking ([`NEXT-STEPS-2.md §6`](./NEXT-STEPS-2.md)). Goal: align our server-side fetch with how Bruno itself does it, and reuse where sensible.
 
@@ -182,7 +182,7 @@ Evidence from the code, so the coupling is explicit before we touch it.
 - `packages/app/src/App.tsx` — `createApp` from `@backstage/frontend-defaults`; **no `SignInPage`** → guest default.
 - `packages/backend/src/index.ts:29–33` — only `plugin-auth-backend` + guest-provider wired.
 - GitHub auth-backend module already installed (`^0.5.5`, unwired); Google module not installed.
-- `app-config.yaml:129–133` — `auth.providers.guest: {}` only. `integrations.github` (`:50–59`) is a **service PAT**, not user login.
+- `app-config.yaml:129–133` — `auth.providers.guest: {}` only. `integrations.github` (`:50–59`) is **tokenless by default** (`${GITHUB_TOKEN}` commented out), and is an optional host App/PAT — separate from user login.
 
 **Card / entity flow (plugin):**
 - `plugins/bruno/src/components/BrunoCard/BrunoCard.tsx:65–70` — hard-errors if `bruno.dev/collection-id` is missing.

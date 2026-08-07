@@ -43,7 +43,7 @@ The requester asked to look into how the Bruno app imports a collection from a G
 
 ### 3.2 Why the plugin diverges (and why that's correct)
 A Backstage backend **cannot assume a git binary or clone to disk** for arbitrary repos. The plugin already does the server-appropriate equivalent:
-- Fetches the repo **tree via `UrlReaderService` / Octokit** (`readUrlTreeWithCreds`) using the **service token, then user-OAuth fallback** — private-repo creds never reach the browser (RISK #1).
+- Fetches the repo **tree via `UrlReaderService` / Octokit** (`readUrlTreeWithCreds`) using the **anonymous/App default, then user-OAuth fallback** — the **service/App credential** never reaches the browser (RISK #1). (The user's own private-repo OAuth token *originates* in the browser by design; it's passed through for a single backend fetch and never persisted.)
 - Scans for **the same two markers** (`bruno.json` / `opencollection.yml`) via `findAllCollectionRoots`, exposed as `POST /connections/discover` and the client `discover()` (**N2-P6**).
 
 **Takeaway:** the plugin's `discover` is the API-tree analog of Bruno's clone-scan. Features A and B **reuse `discover`**; they do not add a new fetch mechanism. Bruno's *single-open* vs *multi-open* distinction maps cleanly onto A (pick one) vs B (pick many).
@@ -190,7 +190,7 @@ Grounded in the current caches (`plugins/bruno-backend/src/service/collectionSer
 | **Process restart** | Clears; startup rehydrates. | Clears; startup rehydrates. |
 
 ### 8.2 Credential caveat (shapes the refresh)
-The scheduled re-fetch uses the **service token** (like config sources): it can refresh public + service-visible-private collections. **User-token private** collections can't be background-refreshed (that token is never persisted — correct posture), so those rely on **TTL + refresh-on-next-authenticated-access**.
+The scheduled re-fetch uses the **host credential** (anonymous/App/PAT — whatever `integrations.github` resolves, like config sources): it can refresh public + service-visible-private collections. **User-token private** collections can't be background-refreshed (that token is never persisted — correct posture), so those rely on **TTL + refresh-on-next-authenticated-access**.
 
 ### 8.3 Discover-result cache (for §4/§5 "change collection")
 Cache a repo's `discover` result **briefly per session** (keyed by normalized repo URL) so re-opening the picker / "Change collection" doesn't re-walk the tree. Short TTL; not durable.

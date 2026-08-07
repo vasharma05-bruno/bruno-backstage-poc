@@ -24,7 +24,7 @@ The prior plan mis-framed three things; the POC doc + code exploration correct t
 
 **Two auth stories to keep straight throughout:**
 - **Open in Bruno desktop** → the *desktop* needs its *own* Git access to the private repo.
-- **Render inside / from Backstage** → the *backend* fetches with *Backstage's* creds; the browser/desktop never sees them.
+- **Render inside / from Backstage** → the *backend* fetches: **public** repos anonymously, **private** repos with the *requesting user's* GitHub OAuth token. The *service/App* credential is never seen by the browser/desktop; the *user's own* private-repo token is obtained client-side by design and passed through for a single backend fetch.
 
 ## Questions to answer, with evidence gathered so far
 
@@ -42,8 +42,8 @@ Each question below already has partial evidence from the codebase; the spike co
   - URL import exists **only for API specs** (OpenAPI/Postman/Insomnia) via `renderer:fetch-api-spec` (`src/ipc/apiSpec.js`) + `fetchAndValidateApiSpecFromUrl` (`bruno-app/.../importers/common.js`). **No "open a Bruno collection from a URL."** Closest existing path: **git-clone-and-scan** (`renderer:clone-git-repository` in `src/ipc/git.js` + `renderer:scan-for-bruno-files`).
   - **Gap list (must-build in Bruno desktop):** `bruno://open?...` / `bruno://clone?repo=...` verb parsing; a collection-from-URL / clone-collection import action. This is **not** free wiring — it's a desktop change and an external dependency for the demo slice.
 
-**Q4 — Private repo (RISK #1).** Can the backend fetch a collection from a **private** GitHub repo server-side with Backstage creds, no creds to the browser, no egress to Bruno services?
-→ *Backstage exposes `ScmIntegrations` / `UrlReaderService` in backend plugins, which already resolve GitHub App/token creds from `app-config`. The spike wires `bruno.dev/collection-path` → `UrlReader.readUrl()` and returns the collection to the frontend. Confirm: token never crosses to browser; the only network egress is Backstage→GitHub.*
+**Q4 — Private repo (RISK #1).** Can the backend fetch a collection from a **private** GitHub repo server-side, with no *service* creds to the browser, no egress to Bruno services?
+→ *Backstage exposes `ScmIntegrations` / `UrlReaderService` in backend plugins, which resolve an optional GitHub App/token cred from `app-config` when a host configures one. The spike wires `bruno.dev/collection-path` → `UrlReader.readUrl()` and returns the collection to the frontend. Confirm: the **service/App token** never crosses to the browser (the user's own private-repo OAuth token is client-obtained by design); the only network egress is Backstage→GitHub.*
 
 **Q5 — In-Backstage docs (RISK #2).** Can a Collection Docs viewer/playground be embedded in a Backstage tab and load a fetched (private) collection instantly? How much extraction is needed?
 → *This is the embeddability spike. Carries **both scenarios** (see next section). Facts on the candidate `@opencollection/docs` renderer: default-exports `<OpenCollection collection={obj|yaml|json|url|File} …>`, owns its own Redux store per instance (safe to mount), but wraps itself in `HashRouter` with no `basename` (will contend for Backstage's URL) and executes requests **browser-direct via native `fetch`** with no proxy hook. Extraction cost is real; the spike quantifies it.*
@@ -124,13 +124,13 @@ The temporal view of the scope above. **Phase 1/2 contents are provisional** —
 - **Legacy frontend system** (likely what a throwaway `@backstage/create-app` scaffolds today): mount `<BrunoCard>` and an `<EntityLayout.Route>` docs tab by hand in `packages/app/src/components/catalog/EntityPage.tsx`. The POC can use this direct-mount path; the section above is the Beta path.
 
 **Config (`app-config.yaml`).** Two blocks:
-- `integrations.github` (a token or GitHub App) — **the credential source the backend fetch uses**; this is the auth path RISK #1 exercises. Nothing plugin-specific here; it's Backstage's standard SCM integration.
+- `integrations.github` (a token or GitHub App) — an **optional** host credential; tokenless by default. When present it's the service/App credential the backend fetch resolves for public + service-visible repos. The **primary** private-repo path is the requesting user's GitHub OAuth token, not this block. This is the auth path RISK #1 exercises. Nothing plugin-specific here; it's Backstage's standard SCM integration.
 - A `bruno:` block — which repo(s)/locations the provider scans for `bruno.json`, plus a refresh schedule.
 
 **How a Bruno entity comes to exist.** The POC path is **provider-materialized**: `BrunoEntityProvider` scans the configured repo, finds `bruno.json`, and emits an `API`-kind entity carrying the `bruno.dev/collection-path` annotation — no hand-written `catalog-info.yaml`. (The Beta alternative — annotating a pre-existing entity via a `CatalogProcessor` — is explicitly out of scope; see Scope.)
 
 **Two auth stories, restated at the wiring layer (don't conflate):**
-- **Render inside / from Backstage** → the *backend plugin* fetches with *Backstage's* `integrations.github` creds; browser and desktop never see them.
+- **Render inside / from Backstage** → the *backend plugin* fetches: **public** repos anonymously, **private** repos with the *requesting user's* GitHub OAuth token (the browser *does* obtain that token, by design). An optional host `integrations.github` App/PAT is resolved server-side when configured; that *service/App* credential is never seen by browser or desktop.
 - **Open in Bruno desktop** → the *desktop* uses its *own* Git access to the private repo; Backstage only hands off a `bruno://` URL.
 
 **Installing into a real (Beta) instance — summary.** `yarn add` the two packages → add the two `backend.add(...)` lines → install the frontend plugin/extension (or mount the card on legacy) → set `integrations.github` + the `bruno:` config. Marketplace/registry distribution and brand shims are **out of scope** (deferred to Beta).
@@ -148,7 +148,7 @@ Consolidates the choices implied across this doc plus the standard Backstage sta
 | **Docs renderer** | Candidate `@opencollection/docs` (Scenario A — needs extraction/patching) **or** a new `@usebruno/docs-generator` (Scenario B) | Chosen by the **embeddability verdict**; carry both until the POC decides. |
 | **Desktop dependency** | Bruno Electron `bruno://` protocol + import-from-URL/clone (PR #3000 / issue #2970) | **Beta dependency, not built in the POC** — see Q3 gap. |
 | **Testing** | Jest + `@backstage/test-utils`; supertest for the backend router; Playwright for the demo-slice e2e | Playwright is preinstalled in the dev environment. |
-| **Config / secrets** | `app-config.yaml` `integrations.github` (token or GitHub App) | The only credential source; **no secrets reach the browser**. |
+| **Config / secrets** | `app-config.yaml` `integrations.github` (token or GitHub App) — **optional**, tokenless by default | An optional host credential (not the only source); the primary private-repo path is the user's OAuth token. **No *service/App* secret reaches the browser**. |
 | **Distribution (GA)** | npm packages under `@usebruno/*`; Backstage marketplace/registry | GA phase only. |
 
 ## Deliverables
@@ -165,7 +165,7 @@ Consolidates the choices implied across this doc plus the standard Backstage sta
 
 ## Verification (how we prove each spike)
 
-- **WS1:** fetch a known private repo's `bruno.json` from the backend; assert the browser network log never carries the GitHub token, and the only outbound call is Backstage→GitHub. Negative test: unauthorized user / missing integration → clean failure.
+- **WS1:** fetch a known private repo's `bruno.json` from the backend; assert the browser network log never carries the **service/App** GitHub token (the user's own OAuth token is client-obtained by design), and the only outbound call is Backstage→GitHub. Negative test: unauthorized user / missing integration → clean failure.
 - **WS2 Scenario A:** open the entity tab, confirm the fetched private collection renders; record CSP/console errors, bundle size, and router/URL interference. **Scenario B:** hit the generated link, confirm self-contained render behind Backstage access control (mirror the CDN bundle to remove egress); confirm an unauthenticated user is blocked.
 - **WS3:** point the provider at the public repo, then the private repo; confirm the API entity appears with correct name/request-count and the `bruno.dev/collection-path` annotation.
 - **WS4:** click Open in Bruno; confirm the desktop opens the collection from its GitHub location (requires the Q3 verb). Document exactly what was missing and what was built.

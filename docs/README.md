@@ -10,7 +10,7 @@
 
 A time-boxed feasibility spike (Epic **BRU-2982**) to de-risk a larger "Bruno for Backstage" plugin (Beta **BRU-824**) *before* committing to it. It answers two Beta-killer questions and produces a go / adjust / no-go recommendation:
 
-1. **RISK #1** — Can Backstage fetch collections from a **private GitHub repo** server-side, with no credentials ever reaching the browser?
+1. **RISK #1** — Can Backstage fetch collections from a **private GitHub repo** server-side, with no *service/App* credentials ever reaching the browser? (The requesting user's own GitHub OAuth token *is* client-obtained by design and passed through for a single backend fetch.)
 2. **RISK #2** — Can a **Collection Docs** experience live *inside* Backstage (vs. only linking out)?
 
 Both came back positive. Details and evidence are in the docs below.
@@ -57,7 +57,7 @@ Both came back positive. Details and evidence are in the docs below.
 
 7. **Catalogued the gaps.** Wrote **[POC-GAPS.md](./POC-GAPS.md)** — a fresh 3-part exploration of the frontend, backend, and sample/repo state, distilled into 10 open items (G1–G10) with evidence and priorities. Reframed away from "Beta-scope" because **the POC is still active**.
 
-8. **Scoped the next phase.** Wrote **[NEXT-STEPS.md](./NEXT-STEPS.md)** — the design for moving collections from static config to a **runtime, user-driven connect flow**: an app-side GitHub/Google auth test-harness, a paste-a-URL → connect flow (public direct; private via service token then the user's GitHub OAuth token), and a docs-column card. Locked three decisions (DB persistence, service-then-user creds, any-authenticated-user), with risks/blockers and a phased plan. **Scoped, not yet built.**
+8. **Scoped the next phase.** Wrote **[NEXT-STEPS.md](./NEXT-STEPS.md)** — the design for moving collections from static config to a **runtime, user-driven connect flow**: an app-side GitHub/Google auth test-harness, a paste-a-URL → connect flow (public anonymously; private via the user's GitHub OAuth token — a host GitHub App/PAT optional), and a docs-column card. Locked three decisions (DB persistence, service-then-user creds, any-authenticated-user), with risks/blockers and a phased plan. **Scoped, not yet built.**
 
 ---
 

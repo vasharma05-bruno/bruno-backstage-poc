@@ -167,7 +167,7 @@ this reaches ~8/10. Live-verified on :7007 where noted.
   rate limit. Restrict to `service`/admin; debounce.
 
 ## P2 — nice-to-have
-- **BE-9** User token in JSON body over default `express.json()`; minimal body validation (`router.ts:57,67-94,158-200`). Accept token via header; add `express.json({ limit })`; validate `githubUrl` host on import; schema-validate bodies.
+- **BE-9** ~~User token in JSON body~~ — the token is now sent via the `x-bruno-github-token` **header** (commit `eb30085`), not the JSON body, so the "accept token via header" item is **DONE**. Remaining: default `express.json()` with minimal body validation (`router.ts:57,67-94,158-200`) → add `express.json({ limit })`; validate `githubUrl` host on import; schema-validate bodies.
 - **BE-10** `rebuildConnected` sequential; `refresh()` unbounded `Promise.all`; Octokit fetches each blob individually (N+1) (`collectionService.ts:351-363,372,750`). Bound concurrency; per-fetch timeouts; GitHub 403/429 backoff; prefer `readTree`.
 - **BE-11** Tree truncation only warns → silent partial collections on large repos (`collectionService.ts:726-730`). Fail or fall back per-directory; surface truncation.
 
@@ -181,7 +181,7 @@ this reaches ~8/10. Live-verified on :7007 where noted.
 - **Per-process state assumes single replica** (caches, rebuild scheduler, eviction).
 - **User-supplied URLs trusted deep into the fetch layer.**
 - **External/staging deps embedded at runtime** with a permissive CSP.
-- **Good instincts, incompletely applied** — redaction existed only in the export (now also in the detail); token-safe logging but tokens still travel in bodies.
+- **Good instincts, incompletely applied** — redaction existed only in the export (now also in the detail); token-safe logging, and the user token now travels in the `x-bruno-github-token` header rather than the body (commit `eb30085`).
 
 ## Quick wins (backend)
 1. Require creds on `/collections*` except a purpose-built `/docs` (BE-1). — *detail JSON redaction already done.*
@@ -233,8 +233,10 @@ security/operational shortcuts are disqualifying for multi-team production.
   (dev `:memory:` loses all data on restart); DAT-3 unbounded growth / no backup;
   DAT-4 orphan rows on entity delete.
 - **Operational:** OPS-1 no metrics / trivial `/health`; OPS-2 CDN not
-  pinned/rollback; OPS-3 no feature flag; OPS-4 guest auth in prod; OPS-5 single
-  org-wide PAT / no rotation; OPS-6 no readiness gating.
+  pinned/rollback; OPS-3 no feature flag; OPS-4 guest auth in prod; OPS-5 **if** a host
+  configures a single org-wide PAT it has no rotation story (not the default —
+  `GITHUB_TOKEN` is commented out, so `integrations.github` is tokenless and the
+  primary private path is user-OAuth); OPS-6 no readiness gating.
 - **Compatibility & maintenance:** MNT-1 new-frontend-system churn
   (`frontend-plugin-api ^0.17.3`, caret ranges drift the tested baseline); MNT-2
   `@usebruno/*` + renderer licensing/stability; MNT-3 ambient-`any` converter;

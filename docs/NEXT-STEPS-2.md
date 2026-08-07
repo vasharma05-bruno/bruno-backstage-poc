@@ -39,7 +39,7 @@ Auth wiring stays in the **app** (test harness — see [`NEXT-STEPS.md §4`](./N
 ## 3. Dependencies on NEXT-STEPS
 
 This plan **builds on** [`NEXT-STEPS.md`](./NEXT-STEPS.md) and reuses:
-- **Feature 1 (auth harness)** — needed to verify/fetch **private** repos during linking (service-token-then-user-OAuth) and for future "mine vs org" scoping.
+- **Feature 1 (auth harness)** — needed to verify/fetch **private** repos during linking (anonymous/App-then-user-OAuth) and for future "mine vs org" scoping.
 - **The connection store (N1)** — the DB table is the shared source of truth for links; this plan adds the processor on top of it.
 - It **supersedes** NEXT-STEPS Feature 2's "card reads the DB directly" mechanism with the processor model (§4). NEXT-STEPS Feature 3 (docs column) is unchanged and benefits automatically — once the annotation is injected, the existing card/tab/column filters attach with no extra work.
 
@@ -96,7 +96,7 @@ Two-panel layout per the mockup.
 
 **Right — "Link a Bruno collection to `<selected-api>`":**
 - **Manual repo + path entry** is the **primary** path (match-ranked auto-discovery is north-star, excluded): input `org/repo#/path-within-repo`, a `LINK` action, and the helper text *"The plugin verifies the path contains a `bruno.json` before linking."*
-- On `LINK`: backend **fetches + verifies** `bruno.json` at that path (reusing `readUrlTreeWithCreds` — public via service token, private via service-then-user-OAuth from NEXT-STEPS), then **stores** the link and **triggers** the processor injection (§4).
+- On `LINK`: backend **fetches + verifies** `bruno.json` at that path (reusing `readUrlTreeWithCreds` — public anonymously, private via anonymous/App-then-user-OAuth from NEXT-STEPS), then **stores** the link and **triggers** the processor injection (§4).
 - Keep the **"What linking does"** explainer (store → processor injects annotation on refresh → one click, no PR → optional PR-to-YAML).
 
 **No auto-discovery list** in this plan — the "DISCOVERED GIT COLLECTIONS · RANKED BY MATCH" section is intentionally omitted (north-star). The manual entry covers the same outcome without the org-crawl + scoring machinery.
@@ -107,7 +107,7 @@ A single GitHub repo often holds **more than one Bruno collection** (multiple di
 
 **Flow:**
 1. **Enter repo (or subtree).** The user enters `org/repo` — optionally with a `#/subpath` to narrow the search — and clicks **VERIFY / SCAN** (a step before `LINK`).
-2. **Backend discovery.** A new endpoint **`GET /connections/discover?url=<repo-or-subtree>`** walks the repo tree once (reusing `readUrlTreeWithCreds` — public via service token, private via service-then-user-OAuth), finds **every directory containing a `bruno.json`**, and returns a list: `[{ collectionPath, name, requestCount, collectionId }]`. `collectionId = sha256(normalizedCollectionUrl)` per collection, so each candidate has a stable id before anything is stored.
+2. **Backend discovery.** A new endpoint **`GET /connections/discover?url=<repo-or-subtree>`** walks the repo tree once (reusing `readUrlTreeWithCreds` — public anonymously, private via anonymous/App-then-user-OAuth), finds **every directory containing a `bruno.json`**, and returns a list: `[{ collectionPath, name, requestCount, collectionId }]`. `collectionId = sha256(normalizedCollectionUrl)` per collection, so each candidate has a stable id before anything is stored.
 3. **Frontend resolves count:**
    - **0 found** → clean error: *"No Bruno collections found in this repo/path."* Nothing stored.
    - **1 found** → auto-select it (no dropdown); show its name + request count, enable **LINK**.
@@ -162,7 +162,7 @@ Effort: **S** ≈ <1 day · **M** ≈ 1–3 days · **L** ≈ >3 days (rough).
 ## 10. Verification
 
 - **Link (public):** on the Link API tab, pick an unlinked API, enter a public `org/repo#/path` → verify passes → link stored → within one refresh the entity shows the BrunoCard + API Docs tab (annotation injected by the processor). Confirm `bruno.dev/collection-path` is present on the entity.
-- **Link (private):** same with a private repo → service-token path when the org PAT can see it; otherwise the GitHub-connect prompt → user-OAuth fetch → link succeeds. Bad path (no `bruno.json`) → clean "not a Bruno collection" error, no link stored.
+- **Link (private):** same with a private repo → anonymous/App path only if a host has configured a PAT/App that can see it; otherwise (the default) the GitHub-connect prompt → user-OAuth fetch → link succeeds. Bad path (no `bruno.json`) → clean "not a Bruno collection" error, no link stored.
 - **Collections tab:** tiles show real counts (collections, total requests, linked); cards show request count, env count, the active/default env name, spec-type badge, and `linked` where applicable; search filters live; a deliberately broken source shows as failed, not missing.
 - **Multi-collection picker (§6.1):** point the linker at a repo containing **two or more** collections → discovery returns all `bruno.json` roots → a dropdown lists each by name; a single-collection repo auto-selects with no dropdown; a repo with none shows a clean "no collections found" error and stores nothing. After linking the chosen one, reload the page and confirm the **same** collection rehydrates (persisted), and the injected annotation / API Docs tab resolve to that collection — not a sibling.
 - **Unlink:** `DELETE` removes the row; after refresh the injected annotation is gone and the surfaces detach.
