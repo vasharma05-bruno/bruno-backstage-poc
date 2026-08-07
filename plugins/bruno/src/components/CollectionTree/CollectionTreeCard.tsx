@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { InfoCard } from '@backstage/core-components';
 import { useApi } from '@backstage/core-plugin-api';
 import { useEntity } from '@backstage/plugin-catalog-react';
@@ -8,7 +8,11 @@ import ListItem from '@material-ui/core/ListItem';
 import ListItemText from '@material-ui/core/ListItemText';
 import Typography from '@material-ui/core/Typography';
 import Box from '@material-ui/core/Box';
+import Accordion from '@material-ui/core/Accordion';
+import AccordionSummary from '@material-ui/core/AccordionSummary';
+import AccordionDetails from '@material-ui/core/AccordionDetails';
 import FolderIcon from '@material-ui/icons/Folder';
+import ExpandMoreIcon from '@material-ui/icons/ExpandMore';
 import { makeStyles } from '@material-ui/core/styles';
 import { brunoApiRef } from '../../api/BrunoApi';
 import type { CollectionDetail, Item } from '../../api/types';
@@ -17,11 +21,11 @@ import { getCollectionId } from '../../lib/annotations';
 import { subscribeConnectionChange } from '../../lib/connectionEvents';
 import { MethodBadge } from '../MethodBadge';
 
-type State =
-  | { status: 'loading' }
-  | { status: 'hidden' }
-  | { status: 'ready'; detail: CollectionDetail }
-  | { status: 'error' };
+type State
+  = | { status: 'loading' }
+    | { status: 'hidden' }
+    | { status: 'ready'; detail: CollectionDetail }
+    | { status: 'error' };
 
 const useStyles = makeStyles((theme) => ({
   requestRow: {
@@ -33,6 +37,25 @@ const useStyles = makeStyles((theme) => ({
     display: 'flex',
     alignItems: 'center',
     gap: theme.spacing(0.5)
+  },
+  accordion: {
+    'boxShadow': 'none',
+    'background': 'transparent',
+    '&:before': {
+      display: 'none'
+    }
+  },
+  folderSummary: {
+    'minHeight': 0,
+    'padding': 0,
+    '& .MuiAccordionSummary-content': {
+      margin: theme.spacing(0.5, 0)
+    }
+  },
+  folderDetails: {
+    display: 'block',
+    padding: 0,
+    paddingLeft: theme.spacing(2)
   }
 }));
 
@@ -47,19 +70,27 @@ function CompactTree(props: { items: Item[]; prefix?: string }) {
         const id = `${prefix}${idx}`;
         if (isFolderItem(item)) {
           return (
-            <Fragment key={id}>
-              <ListItem dense>
+            <Accordion
+              key={id}
+              elevation={0}
+              className={classes.accordion}
+              TransitionProps={{ unmountOnExit: true }}
+            >
+              <AccordionSummary
+                expandIcon={<ExpandMoreIcon fontSize="small" />}
+                className={classes.folderSummary}
+              >
                 <Box className={classes.folderRow}>
                   <FolderIcon fontSize="small" color="action" />
                   <Typography variant="body2">
                     <strong>{item.name}</strong>
                   </Typography>
                 </Box>
-              </ListItem>
-              <Box pl={2}>
+              </AccordionSummary>
+              <AccordionDetails className={classes.folderDetails}>
                 <CompactTree items={item.items} prefix={`${id}.`} />
-              </Box>
-            </Fragment>
+              </AccordionDetails>
+            </Accordion>
           );
         }
         if (isRequestItem(item)) {

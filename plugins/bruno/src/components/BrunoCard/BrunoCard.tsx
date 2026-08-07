@@ -7,6 +7,7 @@ import Grid from '@material-ui/core/Grid';
 import Typography from '@material-ui/core/Typography';
 import Box from '@material-ui/core/Box';
 import Button from '@material-ui/core/Button';
+import { makeStyles } from '@material-ui/core/styles';
 import { brunoApiRef } from '../../api/BrunoApi';
 import type { CollectionDetail } from '../../api/types';
 import { getCollectionId, getSourceUrl } from '../../lib/annotations';
@@ -27,6 +28,13 @@ type State
     }
     | { status: 'error'; errorMsg: string };
 
+const useStyles = makeStyles((theme) => ({
+  actionRow: {
+    display: 'flex',
+    gap: theme.spacing(1)
+  }
+}));
+
 /**
  * Entity card for an API entity.
  *
@@ -37,6 +45,7 @@ type State
  * or show the collection picker to scan, pick and link a GitHub collection.
  */
 export function BrunoCard() {
+  const classes = useStyles();
   const { entity } = useEntity();
   const brunoApi = useApi(brunoApiRef);
 
@@ -200,7 +209,7 @@ export function BrunoCard() {
                 onClick={picker.link}
                 disabled={busy || !picker.selectedCollectionId}
               >
-                LINK
+                Link
               </Button>
             ) : picker.state.status === 'needsGithubLink' ? (
               <Button
@@ -217,7 +226,7 @@ export function BrunoCard() {
                 onClick={() => picker.scan()}
                 disabled={busy}
               >
-                SCAN
+                Scan
               </Button>
             )}
           </Grid>
@@ -260,7 +269,7 @@ export function BrunoCard() {
           </Grid>
           {!hasAnnotation && (
             <Grid item xs={12}>
-              <Box display="flex" style={{ gap: 8 }}>
+              <Box className={classes.actionRow}>
                 <Button variant="outlined" onClick={onDisconnect}>
                   Disconnect
                 </Button>

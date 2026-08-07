@@ -19,8 +19,8 @@ import {
  * Extensions:
  *  - brunoApi         -> registers brunoApiRef (ApiBlueprint)
  *  - brunoCard             -> entity card on kind:api + spec.type:bruno-collection
- *  - brunoCollectionTreeCard -> read-only collection tree card on kind:api
  *  - brunoCollectionOverviewCard -> collection-root README card on kind:api
+ *  - brunoCollectionTreeCard -> read-only collection tree card on kind:api
  *  - brunoDocsContent      -> "API Docs" tab at /bruno-docs on the same filter
  *  - brunoPage             -> standalone Bruno page at /bruno (auto-registered
  *                             in the sidebar via routeRef + title + icon)
@@ -30,8 +30,8 @@ export const brunoPlugin = createFrontendPlugin({
   extensions: [
     brunoApi,
     brunoCard,
-    brunoCollectionTreeCard,
     brunoCollectionOverviewCard,
+    brunoCollectionTreeCard,
     brunoDocsContent,
     brunoPage
   ]
