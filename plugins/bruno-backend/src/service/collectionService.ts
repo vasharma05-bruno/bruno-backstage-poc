@@ -125,6 +125,11 @@ export interface CollectionService {
     url: string;
     userToken?: string;
   }): Promise<{ collectionId: string; detail: CollectionDetail }>;
+  syncCollection(input: {
+    id: string;
+    url: string;
+    userToken?: string;
+  }): Promise<CollectionDetail>;
   discoverCollections(input: {
     url: string;
     userToken?: string;
@@ -343,6 +348,29 @@ export async function createCollectionService(options: {
     return { collectionId, detail };
   }
 
+  async function syncCollection(input: {
+    id: string;
+    url: string;
+    userToken?: string;
+  }): Promise<CollectionDetail> {
+    // Re-fetch + re-parse from GitHub. connectFromUrl refreshes connectedCache
+    // under collectionIdFromUrl(url) — the same key runtime-connected
+    // collections already use, so their cache is updated in place.
+    const { detail } = await connectFromUrl({
+      url: input.url,
+      userToken: input.userToken
+    });
+    // A static/provider collection lives in `cache` under its own id (which
+    // may differ from collectionIdFromUrl(url)); mirror the fresh parse so
+    // getCollection(id) returns updated data.
+    if (cache.has(input.id)) {
+      const mirrored: CachedCollection = { ...detail, id: input.id };
+      cache.set(input.id, mirrored);
+      return mirrored;
+    }
+    return detail;
+  }
+
   /**
    * Reconciles `connectedCache` against the store rows: drops entries whose row
    * is gone (the only eviction path), and re-fetches stale/absent entries with
@@ -413,6 +441,7 @@ export async function createCollectionService(options: {
       return e?.detail;
     },
     connectFromUrl,
+    syncCollection,
     async discoverCollections(input: {
       url: string;
       userToken?: string;

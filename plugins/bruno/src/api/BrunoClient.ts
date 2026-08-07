@@ -126,6 +126,26 @@ export class BrunoClient implements BrunoApi {
     return (await res.json()) as DiscoverResult;
   }
 
+  async sync(collectionId: string, token?: string): Promise<ConnectResult> {
+    const base = await this.baseUrl();
+    const path = `/collections/${encodeURIComponent(collectionId)}/sync`;
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers[GITHUB_TOKEN_HEADER] = token;
+    }
+    const res = await this.fetchApi.fetch(`${base}${path}`, {
+      method: 'POST',
+      headers
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(
+        `Bruno backend request to ${path} failed (${res.status}): ${text}`
+      );
+    }
+    return (await res.json()) as ConnectResult;
+  }
+
   async getConnection(entityRef: string): Promise<ConnectionRecord | undefined> {
     const base = await this.baseUrl();
     const path = `/connections/${encodeURIComponent(entityRef)}`;

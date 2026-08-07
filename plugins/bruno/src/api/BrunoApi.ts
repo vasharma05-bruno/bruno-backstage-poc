@@ -31,6 +31,8 @@ export interface BrunoApi {
   connect(entityRef: string, url: string, token?: string): Promise<ConnectResult>;
   /** POST /connections/discover — list all collection roots in a repo. */
   discover(url: string, token?: string): Promise<DiscoverResult>;
+  /** POST /collections/:id/sync — live re-pull from GitHub, refresh the cache. */
+  sync(collectionId: string, token?: string): Promise<ConnectResult>;
   /** GET /connections/:entityRef — resolves to undefined on 404. */
   getConnection(entityRef: string): Promise<ConnectionRecord | undefined>;
   /** DELETE /connections/:entityRef */

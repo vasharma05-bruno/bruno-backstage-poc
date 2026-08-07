@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { InfoCard, LinkButton } from '@backstage/core-components';
 import { parseEntityRef } from '@backstage/catalog-model';
-import { useApi } from '@backstage/core-plugin-api';
+import { githubAuthApiRef, useApi } from '@backstage/core-plugin-api';
 import Avatar from '@material-ui/core/Avatar';
 import Box from '@material-ui/core/Box';
 import Button from '@material-ui/core/Button';
@@ -95,6 +95,7 @@ export function CollectionCard(props: {
   const classes = useStyles();
   const { collection, onRequestLink, onChanged } = props;
   const brunoApi = useApi(brunoApiRef);
+  const githubAuth = useApi(githubAuthApiRef);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   // Imported-but-unlinked stub: no entityRef, so no OPEN target — render a
@@ -113,6 +114,22 @@ export function CollectionCard(props: {
     try {
       await brunoApi.disconnect(collection.entityRef);
       emitConnectionChange(collection.entityRef);
+      onChanged?.();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onSync = async () => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const token
+        = (await githubAuth.getAccessToken(['repo'], { optional: true }))
+          || undefined;
+      await brunoApi.sync(collection.id, token);
       onChanged?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -194,6 +211,16 @@ export function CollectionCard(props: {
         ) : (
           <>
             <OpenAction entityRef={collection.entityRef} />
+            {collection.linked && (
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={onSync}
+                disabled={busy}
+              >
+                Sync
+              </Button>
+            )}
             {collection.linked && collection.entityRef && (
               <Button
                 variant="outlined"

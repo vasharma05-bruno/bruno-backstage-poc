@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { InfoCard, Link, Progress } from '@backstage/core-components';
-import { useApi } from '@backstage/core-plugin-api';
+import { githubAuthApiRef, useApi } from '@backstage/core-plugin-api';
 import { useEntity } from '@backstage/plugin-catalog-react';
 import { stringifyEntityRef } from '@backstage/catalog-model';
 import Grid from '@material-ui/core/Grid';
@@ -48,6 +48,7 @@ export function BrunoCard() {
   const classes = useStyles();
   const { entity } = useEntity();
   const brunoApi = useApi(brunoApiRef);
+  const githubAuth = useApi(githubAuthApiRef);
 
   const entityRef = stringifyEntityRef(entity);
   const annotationCollectionId = getCollectionId(entity);
@@ -55,6 +56,8 @@ export function BrunoCard() {
   const hasAnnotation = Boolean(annotationCollectionId);
 
   const [state, setState] = useState<State>({ status: 'loading' });
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | undefined>();
   // Guards against concurrent/double disconnects.
   const inFlight = useRef(false);
 
@@ -155,6 +158,33 @@ export function BrunoCard() {
         errorMsg: e instanceof Error ? e.message : String(e)
       });
     } finally {
+      inFlight.current = false;
+    }
+  };
+
+  const onSync = async () => {
+    if (inFlight.current || state.status !== 'connected') {
+      return;
+    }
+    inFlight.current = true;
+    setSyncing(true);
+    setSyncError(undefined);
+    try {
+      const token
+        = (await githubAuth.getAccessToken(['repo'], { optional: true }))
+          || undefined;
+      await brunoApi.sync(state.collectionId, token);
+      const d = await brunoApi.getCollection(state.collectionId);
+      setState({
+        status: 'connected',
+        detail: d,
+        collectionId: state.collectionId,
+        sourceUrl: state.sourceUrl
+      });
+    } catch (e) {
+      setSyncError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSyncing(false);
       inFlight.current = false;
     }
   };
@@ -267,28 +297,42 @@ export function BrunoCard() {
               <OpenInBruno sourceUrl={state.sourceUrl} />
             </Box>
           </Grid>
-          {!hasAnnotation && (
-            <Grid item xs={12}>
-              <Box className={classes.actionRow}>
-                <Button variant="outlined" onClick={onDisconnect}>
-                  Disconnect
-                </Button>
-                <Button
-                  variant="outlined"
-                  onClick={() => {
-                    const root = repoRootFromCollectionUrl(
-                      state.sourceUrl ?? ''
-                    );
-                    picker.reset(root);
-                    setState({ status: 'picking' });
-                    void picker.scan(root);
-                  }}
-                >
-                  Change collection
-                </Button>
-              </Box>
-            </Grid>
-          )}
+          <Grid item xs={12}>
+            <Box className={classes.actionRow}>
+              <Button
+                variant="outlined"
+                onClick={onSync}
+                disabled={syncing}
+              >
+                Sync
+              </Button>
+              {!hasAnnotation && (
+                <>
+                  <Button variant="outlined" onClick={onDisconnect}>
+                    Disconnect
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    onClick={() => {
+                      const root = repoRootFromCollectionUrl(
+                        state.sourceUrl ?? ''
+                      );
+                      picker.reset(root);
+                      setState({ status: 'picking' });
+                      void picker.scan(root);
+                    }}
+                  >
+                    Change collection
+                  </Button>
+                </>
+              )}
+            </Box>
+            {syncError && (
+              <Typography variant="body2" color="error">
+                {syncError}
+              </Typography>
+            )}
+          </Grid>
         </Grid>
       )}
     </InfoCard>
