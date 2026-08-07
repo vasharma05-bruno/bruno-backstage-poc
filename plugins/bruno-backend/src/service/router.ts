@@ -290,7 +290,7 @@ function applyDocsEmbeddingHeaders(
       `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com ${cdn}`,
       `font-src 'self' data: https://fonts.gstatic.com ${cdn}`,
       'img-src \'self\' data: https:',
-      'connect-src \'self\' https:',
+      'connect-src \'self\' https: data:',
       'worker-src \'self\' blob:',
       `frame-ancestors ${frameAncestors}`
     ].join('; ')
