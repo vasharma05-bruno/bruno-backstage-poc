@@ -20,7 +20,7 @@ import { subscribeConnectionChange } from '../../lib/connectionEvents';
  *
  * Resolves the connected collection id (from the `bruno.dev/collection-id`
  * annotation, falling back to a runtime connection lookup) and offers a launcher
- * that opens the standalone full-screen docs page (`/bruno/docs?c=<id>`) in a new
+ * that opens the standalone full-screen docs page (`/bruno/docs/<id>`) in a new
  * browser tab. The OpenCollection docs render full-viewport on that dedicated
  * page rather than embedded inline here (see components/BrunoDocsPage). Renders
  * loading / not-connected / error states while resolving.
@@ -115,7 +115,7 @@ export function OcDocsFrame() {
     // Open the standalone full-screen docs page in a new tab. Relative URL keeps
     // it on the app origin (the page then embeds the backend docs iframe).
     window.open(
-      `/bruno/docs?c=${encodeURIComponent(collectionId)}`,
+      `/bruno/docs/${encodeURIComponent(collectionId)}`,
       '_blank',
       'noopener,noreferrer'
     );

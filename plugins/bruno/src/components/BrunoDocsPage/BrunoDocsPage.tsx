@@ -4,7 +4,9 @@ import Box from '@material-ui/core/Box';
 import Typography from '@material-ui/core/Typography';
 import { Progress } from '@backstage/core-components';
 import { useApi } from '@backstage/core-plugin-api';
+import { useRouteRefParams } from '@backstage/frontend-plugin-api';
 import { brunoApiRef } from '../../api/BrunoApi';
+import { brunoDocsPageRouteRef } from '../../extensions';
 
 const useStyles = makeStyles((theme) => ({
   frame: {
@@ -25,7 +27,7 @@ const useStyles = makeStyles((theme) => ({
 /**
  * Standalone, chrome-less full-viewport page that renders a Bruno collection's
  * OpenCollection API docs. Opened in a new tab (e.g. from a "Run in Bruno"
- * action) as `/bruno/docs?c=<collectionId>`; the fixed, full-viewport iframe
+ * action) as `/bruno/docs/<collectionId>`; the fixed, full-viewport iframe
  * overlays the app sidebar so only the docs show.
  *
  * The iframe embeds the backend-served docs page (`GET /collections/:id/docs`)
@@ -36,10 +38,9 @@ export function BrunoDocsPage(): JSX.Element {
   const classes = useStyles();
   const theme = useTheme();
   const brunoApi = useApi(brunoApiRef);
-  // Read the collection id from the query string directly. The page is opened
-  // fresh in a new tab with a static URL, so it needs no router reactivity.
-  const collectionId
-    = new URLSearchParams(window.location.search).get('c') ?? undefined;
+  // Read the collection id from the `:collectionId` path parameter bound to
+  // the page's route ref (see extensions.tsx).
+  const { collectionId } = useRouteRefParams(brunoDocsPageRouteRef);
   const themeMode: 'light' | 'dark'
     = theme.palette.type === 'dark' ? 'dark' : 'light';
 
@@ -51,7 +52,7 @@ export function BrunoDocsPage(): JSX.Element {
     setSrc(undefined);
     setError(undefined);
     if (!collectionId) {
-      setError('Missing collection id (expected a `c` query parameter).');
+      setError('Missing collection id in the URL path.');
       return undefined;
     }
     brunoApi

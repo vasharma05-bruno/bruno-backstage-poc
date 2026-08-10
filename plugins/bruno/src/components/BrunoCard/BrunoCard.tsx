@@ -325,7 +325,7 @@ export function BrunoCard() {
                 startIcon={<LaunchIcon />}
                 onClick={() =>
                   window.open(
-                    `/bruno/docs?c=${encodeURIComponent(state.collectionId)}`,
+                    `/bruno/docs/${encodeURIComponent(state.collectionId)}`,
                     '_blank',
                     'noopener,noreferrer'
                   )}
