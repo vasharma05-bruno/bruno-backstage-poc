@@ -1,8 +1,5 @@
 import type { Entity } from '@backstage/catalog-model';
-import {
-  EntityCardBlueprint,
-  EntityContentBlueprint
-} from '@backstage/plugin-catalog-react/alpha';
+import { EntityCardBlueprint } from '@backstage/plugin-catalog-react/alpha';
 import {
   PageBlueprint,
   createRouteRef
@@ -63,25 +60,6 @@ export const brunoCollectionOverviewCard = EntityCardBlueprint.make({
       import('./components/CollectionOverview').then((m) => (
         <m.CollectionOverviewCard />
       ))
-  }
-});
-
-/**
- * Entity content tab ("API Docs"). Signature verified against
- * @backstage/plugin-catalog-react@3.2.0 (mirrors `apiDocsApisEntityContent`).
- *
- * NOTE: the installed blueprint deprecates `defaultPath`/`defaultTitle` in
- * favour of `path`/`title` (see alpha.d.ts EntityContentBlueprint.params), so
- * we use `path: '/bruno-docs'` + `title: 'API Docs'`.
- */
-export const brunoDocsContent = EntityContentBlueprint.make({
-  name: 'docs',
-  params: {
-    path: '/bruno-docs',
-    title: 'API Docs',
-    filter: isApiEntity,
-    loader: () =>
-      import('./components/CollectionDocs').then((m) => <m.CollectionDocs />)
   }
 });
 

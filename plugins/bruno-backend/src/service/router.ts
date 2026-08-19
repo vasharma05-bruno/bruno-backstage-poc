@@ -65,7 +65,8 @@ export async function createRouter(
     res.json({ status: 'ok' });
   });
 
-  router.get('/collections', (_req, res) => {
+  router.get('/collections', async (req, res) => {
+    await httpAuth.credentials(req, { allow: ['user'] });
     res.json(collectionService.listCollections());
   });
 
@@ -123,20 +124,33 @@ export async function createRouter(
     res.status(204).end();
   });
 
-  router.get('/collections/:id', (req, res) => {
+  router.get('/collections/:id', async (req, res) => {
+    await httpAuth.credentials(req, { allow: ['user'] });
     const detail = collectionService.getCollection(req.params.id);
     if (!detail) {
       res.status(404).json({ error: `Unknown collection: ${req.params.id}` });
       return;
     }
-    // Redact secrets before returning: this route is reachable on the
-    // unauthenticated `/collections` prefix, and the raw detail otherwise
-    // leaks env-var values + auth secrets in plaintext. Same choke point as
-    // the YAML export.
+    // Redact secrets before returning: the raw detail otherwise leaks env-var
+    // values + auth secrets in plaintext. Same choke point as the YAML export.
     res.json(redactCollectionDetail(detail));
   });
 
+  // No in-handler credentials call: the `user-cookie` auth policy (plugin.ts)
+  // already gates this route via the credentials barrier, accepting either a
+  // full user/service token OR the Backstage limited-access cookie the iframe
+  // carries. A bearer-only `credentials` read here would reject that cookie.
   router.get('/collections/:id/docs', (req, res) => {
+    // Apply the embedding headers up-front — BEFORE the 404 branch — so the
+    // error page is framable too. Otherwise Helmet's default
+    // `X-Frame-Options: SAMEORIGIN` blocks the app from rendering the 404 in the
+    // iframe and the user sees a cryptic "refused to connect" instead of the
+    // "Unknown collection" message. Serving the docs as a real document (iframe
+    // `src`, not `srcdoc`) is what gives the OpenCollection bundle a real
+    // origin for its sessionStorage + HashRouter; the page is framed by the
+    // Backstage app (a different origin in dev: :3000 vs :7007), so we override
+    // the headers that would otherwise block cross-origin embedding.
+    applyDocsEmbeddingHeaders(res, config);
     const detail = collectionService.getCollection(req.params.id);
     if (!detail) {
       res
@@ -147,19 +161,13 @@ export async function createRouter(
         )}</p></body></html>`);
       return;
     }
-    // Serves the OpenCollection docs page as a real document so the frontend can
-    // embed it via iframe `src` (not `srcdoc`) — a real origin/URL is what makes
-    // the bundle's sessionStorage + HashRouter routing work. The page is meant
-    // to be framed by the Backstage app (a different origin in dev: :3000 vs
-    // :7007), so we must override the two headers that would otherwise block
-    // cross-origin embedding.
-    applyDocsEmbeddingHeaders(res, config);
     const theme = req.query.theme === 'dark' ? 'dark' : 'light';
     const yaml = toOpenCollectionYaml(detail);
     res.type('text/html').send(generateOcDocsHtml(yaml, detail.name, theme));
   });
 
-  router.get('/collections/:id/opencollection.yml', (req, res) => {
+  router.get('/collections/:id/opencollection.yml', async (req, res) => {
+    await httpAuth.credentials(req, { allow: ['user'] });
     const detail = collectionService.getCollection(req.params.id);
     if (!detail) {
       res.status(404).json({ error: `Unknown collection: ${req.params.id}` });
@@ -325,8 +333,9 @@ function githubTokenFromHeader(req: express.Request): string | undefined {
  * default `frame-ancestors 'self'` both forbid cross-origin framing, so we
  * remove the former and replace the CSP with one scoped to this document:
  * it permits the OpenCollection CDN bundle (script/style/font), the WASM eval
- * the bundle needs, and framing by the configured app origin. POC-scope: Beta
- * hardening would serve this behind user-cookie auth on a dedicated origin.
+ * the bundle needs, and framing by the configured app origin. The route itself
+ * is gated by the `user-cookie` auth policy (plugin.ts); Beta hardening would
+ * additionally serve it on a dedicated origin.
  */
 function applyDocsEmbeddingHeaders(
   res: express.Response,
@@ -345,8 +354,8 @@ function applyDocsEmbeddingHeaders(
   //   - media    : HLS/FLV/Mux players (jsDelivr) + blob:        -> media-src
   //   - iframes  : oEmbed players (YouTube/Vimeo/SoundCloud/...) -> frame-src
   // The bundle is a trusted first-party renderer on an isolated origin,
-  // embeddable only by the app (frame-ancestors). Beta hardening = pin exact
-  // hosts + move this route behind user-cookie auth.
+  // embeddable only by the app (frame-ancestors), and the route is gated by
+  // the `user-cookie` auth policy. Beta hardening = pin exact hosts.
   res.removeHeader('X-Frame-Options');
   res.setHeader(
     'Content-Security-Policy',

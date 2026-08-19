@@ -96,21 +96,6 @@ proxy:
 
 # Bruno for Backstage — collection sources scanned by BrunoEntityProvider and
 # served by the backend plugin at /api/bruno/*. See docs/POC-DECISIONS.md.
-bruno:
-  sources:
-    # Local sample collections committed into this repo (self-contained demo, D1).
-    - id: echo-demo
-      name: Echo Demo Collection
-      type: local
-      target: sample-collections/echo-demo
-    - id: sandwich-exec
-      name: Sandwich Exec
-      type: local
-      target: sample-collections/sandwich-exec
-    - id: sequential-exec
-      name: Sequential Exec
-      type: local
-      target: sample-collections/sequential-exec
     # RISK #1 / Q4 — the private-repo path. Fetched server-side via Backstage's
     # UrlReader using integrations.github creds; the token never reaches the
     # browser. Uncomment and set GITHUB_TOKEN to demo a (public or private) repo:
