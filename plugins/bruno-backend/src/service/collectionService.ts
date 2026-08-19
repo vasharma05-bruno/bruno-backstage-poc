@@ -241,8 +241,8 @@ export async function createCollectionService(options: {
   // Resolves GitHub credentials the same way the UrlReader does, so the host
   // may configure either a PAT (`integrations.github.token`) or a GitHub App
   // (`integrations.github.apps`) — the provider yields a usable token for both.
-  const githubCredentials =
-    DefaultGithubCredentialsProvider.fromIntegrations(integrations);
+  const githubCredentials
+    = DefaultGithubCredentialsProvider.fromIntegrations(integrations);
 
   async function loadSource(
     source: BrunoSourceConfig
@@ -316,8 +316,8 @@ export async function createCollectionService(options: {
       logger,
       { userToken: input.userToken }
     );
-    const hasManifest =
-      findBrunoJson(tree) !== undefined || findOpenCollectionYml(tree) !== undefined;
+    const hasManifest
+      = findBrunoJson(tree) !== undefined || findOpenCollectionYml(tree) !== undefined;
     if (!hasManifest) {
       throw new InputError(
         `No Bruno collection found at ${normalized} (missing bruno.json / opencollection.yml)`
@@ -751,7 +751,7 @@ async function readUrlTreeViaOctokit(
   const { owner, repo, ref: parsedRef, subpath } = parseGithubUrl(url);
   const apiBaseUrl
     = integrations.github.byUrl(url)?.config.apiBaseUrl
-    ?? 'https://api.github.com';
+      ?? 'https://api.github.com';
   const octokit = new Octokit({ auth: userToken, baseUrl: apiBaseUrl });
 
   let ref = parsedRef;
@@ -987,8 +987,8 @@ async function resolveRef(
     // fall back to the caller's user OAuth token below.
   }
   auth = auth ?? userToken;
-  const apiBaseUrl =
-    integrations.github.byUrl(url)?.config.apiBaseUrl ?? 'https://api.github.com';
+  const apiBaseUrl
+    = integrations.github.byUrl(url)?.config.apiBaseUrl ?? 'https://api.github.com';
   const octokit = new Octokit({ auth, baseUrl: apiBaseUrl });
   const { data } = await octokit.repos.get({ owner, repo });
   return data.default_branch;

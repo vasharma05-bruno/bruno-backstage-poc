@@ -40,7 +40,7 @@ export async function createConnectionStore(
 
   if (!(await client.schema.hasTable('bruno_connections'))) {
     try {
-      await client.schema.createTable('bruno_connections', table => {
+      await client.schema.createTable('bruno_connections', (table) => {
         table.text('entity_ref').primary();
         table.text('github_url').notNullable();
         table.text('collection_id').notNullable();
