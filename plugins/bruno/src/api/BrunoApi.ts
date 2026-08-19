@@ -41,7 +41,7 @@ export interface BrunoApi {
   getDashboard(): Promise<Dashboard>;
   /** POST /collections/import — import one or more collections (unlinked). */
   importCollections(
-    collections: Array<{ githubUrl: string; name: string }>
+    collections: Array<{ sourceUrl: string; name: string }>
   ): Promise<{ imported: number }>;
   /** GET /collections/imported — imported-but-unlinked collections. */
   getImportedCollections(): Promise<ImportedCollection[]>;

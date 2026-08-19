@@ -2,7 +2,7 @@ import type { DatabaseService } from '@backstage/backend-plugin-api';
 
 export interface ImportedCollectionRow {
   collectionId: string;
-  githubUrl: string;
+  sourceUrl: string;
   name: string;
   importedBy: string;
   updatedAt: string;
@@ -16,7 +16,7 @@ export interface CollectionsStore {
 
 type RawRow = {
   collection_id: string;
-  github_url: string;
+  source_url: string;
   name: string;
   imported_by: string;
   updated_at: string;
@@ -25,7 +25,7 @@ type RawRow = {
 function rowToModel(row: RawRow): ImportedCollectionRow {
   return {
     collectionId: row.collection_id,
-    githubUrl: row.github_url,
+    sourceUrl: row.source_url,
     name: row.name,
     importedBy: row.imported_by,
     updatedAt: row.updated_at
@@ -41,7 +41,7 @@ export async function createCollectionsStore(
     try {
       await client.schema.createTable('bruno_collections', (table) => {
         table.text('collection_id').primary();
-        table.text('github_url').notNullable();
+        table.text('source_url').notNullable();
         table.text('name').notNullable();
         table.text('imported_by').notNullable();
         table.text('updated_at').notNullable();
@@ -60,7 +60,7 @@ export async function createCollectionsStore(
       await client('bruno_collections')
         .insert({
           collection_id: row.collectionId,
-          github_url: row.githubUrl,
+          source_url: row.sourceUrl,
           name: row.name,
           imported_by: row.importedBy,
           updated_at: new Date().toISOString()

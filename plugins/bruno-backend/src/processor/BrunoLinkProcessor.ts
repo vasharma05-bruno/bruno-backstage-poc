@@ -17,7 +17,7 @@ const DEFAULT_CACHE_TTL_MS = 30_000;
 interface BrunoLink {
   entityRef: string;
   collectionId: string;
-  githubUrl: string;
+  sourceUrl: string;
 }
 
 /**
@@ -74,8 +74,8 @@ export class BrunoLinkProcessor implements CatalogProcessor {
         ...entity.metadata,
         annotations: {
           ...entity.metadata.annotations,
-          'bruno.dev/collection-path': link.githubUrl,
-          'bruno.dev/source-url': link.githubUrl,
+          'bruno.dev/collection-path': link.sourceUrl,
+          'bruno.dev/source-url': link.sourceUrl,
           'bruno.dev/collection-id': link.collectionId
         }
       }

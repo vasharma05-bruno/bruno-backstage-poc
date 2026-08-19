@@ -97,7 +97,7 @@ export function LinkPanel(props: {
       || picker.state.status === 'connecting';
 
   // Link a chosen imported collection directly (no scan): the imported row
-  // already carries the fully-qualified githubUrl. Silent-token first (no
+  // already carries the fully-qualified sourceUrl. Silent-token first (no
   // popup); import stored a public/private URL, connect tops up if a session
   // exists. Never logs the token.
   const linkImported = async () => {
@@ -115,7 +115,7 @@ export function LinkPanel(props: {
       const token
         = (await githubAuth.getAccessToken(['repo'], { optional: true }))
           || undefined;
-      await brunoApi.connect(selectedRef, chosen.githubUrl, token);
+      await brunoApi.connect(selectedRef, chosen.sourceUrl, token);
       setImportedLinked(true);
       emitConnectionChange(selectedRef);
       onLinked();
@@ -221,7 +221,7 @@ export function LinkPanel(props: {
                     color="textSecondary"
                     style={{ marginLeft: 8 }}
                   >
-                    {c.githubUrl}
+                    {c.sourceUrl}
                   </Typography>
                 </MenuItem>
               ))}

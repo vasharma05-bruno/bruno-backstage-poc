@@ -392,7 +392,7 @@ export async function createCollectionService(options: {
         continue;
       }
       try {
-        await connectFromUrl({ url: link.githubUrl });
+        await connectFromUrl({ url: link.sourceUrl });
       } catch {
         logger.warn(
           `Background refresh of connected collection ${link.collectionId} failed; keeping cached copy.`
@@ -476,13 +476,13 @@ export async function createCollectionService(options: {
         };
         const collection = parseCollection(source, sub, logger);
         const requestCount = countRequests(collection.items);
-        const githubUrl = composeCollectionUrl(normalized, rootPrefix, ref);
+        const sourceUrl = composeCollectionUrl(normalized, rootPrefix, ref);
         return {
           collectionPath: rootPrefix,
           name: collection.name,
           requestCount,
-          collectionId: collectionIdFromUrl(githubUrl),
-          githubUrl
+          collectionId: collectionIdFromUrl(sourceUrl),
+          sourceUrl
         };
       });
 

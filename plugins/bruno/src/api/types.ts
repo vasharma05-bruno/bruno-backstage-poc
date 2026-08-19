@@ -141,7 +141,7 @@ export interface DiscoveredCollection {
   name: string;
   requestCount: number;
   collectionId: string;
-  githubUrl: string;
+  sourceUrl: string;
 }
 
 /** POST /connections/discover response. */
@@ -153,7 +153,7 @@ export interface DiscoverResult {
 export interface ConnectionRecord {
   entityRef: string;
   collectionId: string;
-  githubUrl: string;
+  sourceUrl: string;
   connectedBy: string;
   updatedAt: string;
 }
@@ -179,7 +179,7 @@ export interface DashboardCollection {
 export interface ImportedCollection {
   collectionId: string;
   name: string;
-  githubUrl: string;
+  sourceUrl: string;
   importedBy: string;
   updatedAt: string;
 }

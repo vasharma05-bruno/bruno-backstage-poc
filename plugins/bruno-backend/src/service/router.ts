@@ -79,18 +79,18 @@ export async function createRouter(
     }
     let count = 0;
     for (const c of collections) {
-      if (!c?.githubUrl || !c?.name) {
-        throw new InputError('Each collection needs `githubUrl` and `name`.');
+      if (!c?.sourceUrl || !c?.name) {
+        throw new InputError('Each collection needs `sourceUrl` and `name`.');
       }
       let collectionId: string;
       try {
-        collectionId = collectionIdFromUrl(c.githubUrl);
+        collectionId = collectionIdFromUrl(c.sourceUrl);
       } catch {
-        throw new InputError(`Invalid githubUrl: ${c.githubUrl}`);
+        throw new InputError(`Invalid sourceUrl: ${c.sourceUrl}`);
       }
       await collectionsStore.upsert({
         collectionId,
-        githubUrl: c.githubUrl,
+        sourceUrl: c.sourceUrl,
         name: c.name,
         importedBy: userEntityRef
       });
@@ -106,7 +106,7 @@ export async function createRouter(
       rows.map((row) => ({
         collectionId: row.collectionId,
         name: row.name,
-        githubUrl: row.githubUrl,
+        sourceUrl: row.sourceUrl,
         importedBy: row.importedBy,
         updatedAt: row.updatedAt
       }))
@@ -179,13 +179,13 @@ export async function createRouter(
   router.post('/collections/:id/sync', async (req, res) => {
     await httpAuth.credentials(req, { allow: ['user'] });
     const id = req.params.id;
-    const userToken = githubTokenFromHeader(req);
+    const userToken = scmTokenFromHeader(req);
     // Resolve the GitHub source URL: a runtime connection row first, else the
     // cached collection's own sourceUrl. Local collections (no GitHub source)
     // cannot be synced.
     const rows = await connectionStore.listAll();
     const row = rows.find((r) => r.collectionId === id);
-    const url = row?.githubUrl ?? collectionService.getCollection(id)?.sourceUrl;
+    const url = row?.sourceUrl ?? collectionService.getCollection(id)?.sourceUrl;
     if (!url) {
       res
         .status(404)
@@ -218,12 +218,12 @@ export async function createRouter(
 
     const { collectionId, detail } = await collectionService.connectFromUrl({
       url,
-      userToken: githubTokenFromHeader(req)
+      userToken: scmTokenFromHeader(req)
     });
 
     await connectionStore.upsert({
       entityRef,
-      githubUrl: detail.sourceUrl!,
+      sourceUrl: detail.sourceUrl!,
       collectionId,
       connectedBy: userEntityRef
     });
@@ -246,7 +246,7 @@ export async function createRouter(
     res.json(
       await collectionService.discoverCollections({
         url,
-        userToken: githubTokenFromHeader(req)
+        userToken: scmTokenFromHeader(req)
       })
     );
   });
@@ -258,7 +258,7 @@ export async function createRouter(
       rows.map(row => ({
         entityRef: row.entityRef,
         collectionId: row.collectionId,
-        githubUrl: row.githubUrl,
+        sourceUrl: row.sourceUrl,
         connectedBy: row.connectedBy,
         updatedAt: row.updatedAt
       }))
@@ -277,7 +277,7 @@ export async function createRouter(
     res.json({
       entityRef: row.entityRef,
       collectionId: row.collectionId,
-      githubUrl: row.githubUrl,
+      sourceUrl: row.sourceUrl,
       connectedBy: row.connectedBy,
       updatedAt: row.updatedAt
     });
@@ -315,12 +315,12 @@ function escapeHtml(value: string): string {
 }
 
 /**
- * Reads the caller's GitHub OAuth token from the `x-bruno-github-token` request
+ * Reads the caller's SCM OAuth token from the `x-bruno-scm-token` request
  * header (the frontend sends it here, never in the JSON body). Returns
  * `undefined` when absent or empty. The token is never logged.
  */
-function githubTokenFromHeader(req: express.Request): string | undefined {
-  const raw = req.headers['x-bruno-github-token'];
+function scmTokenFromHeader(req: express.Request): string | undefined {
+  const raw = req.headers['x-bruno-scm-token'];
   const value = Array.isArray(raw) ? raw[0] : raw;
   return value ? value : undefined;
 }

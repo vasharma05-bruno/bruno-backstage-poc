@@ -251,7 +251,22 @@ column stays `github_url` forever. Then:
 So the break is **silent at boot and total at first use** — the worst failure
 shape. It cannot be left undocumented.
 
-### ✅ Recommendation: ship an idempotent guarded `renameColumn` in both stores
+### ⛔ SUPERSEDED — no migration shipped
+
+The user directed (2026-08-19): *"Re-write the DB if needed, I'll be starting the
+backend server from scratch only."* The database is always created fresh, so a
+migration branch would be dead code in the only workflow that exists. **P0 ships the
+renamed `createTable` schema and no migration.** This keeps the phase a genuinely
+pure rename.
+
+Consequence to carry forward: any future host with a **persistent** database (and any
+v1 publish, per B8/B9) will need a real migration, because `hasTable` returns true,
+the column is never renamed, and every write then fails. That is a v1 concern, not a
+POC one — record it when the plugin is prepared for publishing.
+
+The analysis below is retained for that future work.
+
+### ~~Recommendation: ship an idempotent guarded `renameColumn` in both stores~~
 
 Add an `else if` branch beside the existing `hasTable` guard, in the **same
 ad-hoc-guarded-DDL idiom the file already uses** (so no new abstraction, and no
@@ -260,7 +275,7 @@ migrations framework introduced):
 ```ts
 if (!(await client.schema.hasTable('bruno_connections'))) {
   try {
-    await client.schema.createTable('bruno_connections', table => {
+    await client.schema.createTable('bruno_connections', (table) => {
       table.text('entity_ref').primary();
       table.text('source_url').notNullable();
       // … unchanged
@@ -272,7 +287,7 @@ if (!(await client.schema.hasTable('bruno_connections'))) {
   }
 } else if (await client.schema.hasColumn('bruno_connections', 'github_url')) {
   try {
-    await client.schema.alterTable('bruno_connections', table => {
+    await client.schema.alterTable('bruno_connections', (table) => {
       table.renameColumn('github_url', 'source_url');
     });
   } catch (error) {
@@ -494,9 +509,18 @@ a silently-broken wire contract. Run `yarn tsc` only at the marked points.
 2. `yarn lint:bruno plugins/bruno plugins/bruno-backend` → **exactly** 1 error
    (`router.ts:258` arrow-parens) and **exactly** 5 warnings (`no-explicit-any`
    in `plugins/bruno-backend/src/types/*.d.ts`). No new error, no new warning.
-3. `grep -rn 'githubUrl' plugins | grep -v node_modules | grep -v 'lib/githubUrl'`
-   → **0 lines**.
-4. `grep -rn 'github_url' plugins | grep -v node_modules` → **0 lines**.
+3. `grep -rn 'githubUrl' plugins --include='*.ts' --include='*.tsx' | grep -v node_modules`
+   → **exactly these 3 lines**, all deliberate references to the
+   `lib/githubUrl` *module* rather than the renamed field:
+   - `plugins/bruno/src/components/BrunoCard/BrunoCard.tsx:16` — `from '../../lib/githubUrl'`
+   - `plugins/bruno/src/lib/brunoLink.ts:1` — `from './githubUrl'`
+   - `plugins/bruno-backend/src/provider/BrunoEntityProvider.ts:145` — comment naming the module
+   State the expected set explicitly; do **not** use a negative `grep -v` filter.
+   Every filter tried here was wrong: `lib/githubUrl` misses `brunoLink.ts`
+   (`from './githubUrl'`, no `lib/` prefix) and `githubUrl'` misses the
+   `BrunoEntityProvider` comment (ends `githubUrl.ts`, no quote).
+4. `grep -rn 'github_url' plugins | grep -v node_modules` → **0 lines** (no
+   migration is shipped; see the superseded migration section).
 5. `grep -rn 'x-bruno-github-token' plugins` → **0 lines**;
    `grep -rn 'x-bruno-scm-token' plugins` → **exactly 2** code lines
    (`BrunoClient.ts:18`, `router.ts:323`) plus 2 jsdoc lines.
@@ -506,8 +530,10 @@ a silently-broken wire contract. Run `yarn tsc` only at the marked points.
 8. `git diff --stat ef10756` touches **only** the 15 inventory files +
    `config.d.ts` (+ optionally `plugins/bruno-backend/README.md`). **No file
    under `packages/` is modified.**
-9. `git diff ef10756 -- plugins/bruno-backend/src/service/router.ts | grep 'httpAuth.credentials'`
-   → **0 lines** (no auth mode changed).
+9. `git diff ef10756 -- plugins/bruno-backend/src/service/router.ts | grep -E '^[+-].*httpAuth.credentials'`
+   → **0 lines** (no auth mode changed). The `^[+-]` anchor is required: an
+   unanchored grep matches an unchanged *context* line from the
+   `POST /collections/:id/sync` hunk and returns 1.
 10. `git diff ef10756 -- plugins/bruno-backend/src/plugin.ts` → **empty**.
 11. `grep -n "'local' | 'url'" plugins/bruno-backend/config.d.ts` → still present
     (the `type` union was **not** widened).
@@ -546,6 +572,15 @@ a silently-broken wire contract. Run `yarn tsc` only at the marked points.
 
 ---
 
+## Operational note — rolling deploys
+
+A straight column rename (decision D4, no alias column) means that during a rolling
+deploy the new replica renames `github_url` → `source_url` while old-code replicas
+are still live; those old replicas then fail every write against the missing column
+until they cycle out. Not fixable inside P0 under D4 — record it in the release
+notes for any host running more than one backend replica against a persistent
+database.
+
 ## Risks / open questions
 
 1. **The `BrunoLink` ↔ `GET /connections` contract breaks silently.**
@@ -562,15 +597,19 @@ a silently-broken wire contract. Run `yarn tsc` only at the marked points.
    know who has already deployed the POC" — which argues *for* the guarded
    `renameColumn`. If the orchestrator knows no such deployment exists, the
    README-note fallback becomes defensible.
-3. **`renameColumn` on sqlite is a table rebuild, not a true ALTER.** knex
-   emulates it (create-new/copy/drop/rename) for the sqlite3 dialect. It is a
-   no-op on every dev boot (fresh `:memory:` DB → `hasTable` false → the branch
-   never runs), so this is **untested-by-construction in dev**. **I could not
-   verify it against a real Postgres or a persistent sqlite file.** If the
-   guarded rename is adopted, the implementer should hand-verify it once against
-   a file-backed sqlite DB (`connection: ./tmp.sqlite`, boot on `ef10756`, then
-   boot on the P0 build and confirm connections survive) before claiming the
-   phase done. Flagging as the main **unverified** item.
+3. ~~**`renameColumn` on sqlite is a table rebuild, not a true ALTER.**~~
+   **RESOLVED — this claim was wrong, in the safer direction.** knex does *not*
+   emulate the rename: both the sqlite3 dialect
+   (`knex/lib/dialects/sqlite3/schema/sqlite-tablecompiler.js:307`) and postgres
+   (`.../postgres/schema/pg-tablecompiler.js:16`) emit a single native
+   `alter table <t> rename <a> to <b>`. No table rebuild, no data copy, no PK or
+   index loss. Verified twice by execution against this repo's own knex +
+   `better-sqlite3` on a file-backed DB seeded with the old schema and a row:
+   emitted SQL was the single native statement; the row survived verbatim;
+   `PRAGMA table_info` kept `entity_ref` as PK and `source_url` NOT NULL; a second
+   invocation was a no-op; and `onConflict('entity_ref').merge()` upserted
+   correctly afterwards. The "hand-verify before claiming done" prerequisite is
+   **discharged**.
 4. **`router.ts:258` is two lines from an edit site.** An implementer with
    editor-integrated ESLint autofix-on-save, or a reflexive `--fix`, will absorb
    it and pollute the diff. Acceptance check 2 catches it (error count drops to

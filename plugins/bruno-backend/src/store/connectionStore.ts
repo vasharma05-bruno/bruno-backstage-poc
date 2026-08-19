@@ -2,7 +2,7 @@ import type { DatabaseService } from '@backstage/backend-plugin-api';
 
 export interface BrunoConnectionRow {
   entityRef: string;
-  githubUrl: string;
+  sourceUrl: string;
   collectionId: string;
   connectedBy: string;
   updatedAt: string;
@@ -17,7 +17,7 @@ export interface ConnectionStore {
 
 type RawRow = {
   entity_ref: string;
-  github_url: string;
+  source_url: string;
   collection_id: string;
   connected_by: string;
   updated_at: string;
@@ -26,7 +26,7 @@ type RawRow = {
 function rowToModel(row: RawRow): BrunoConnectionRow {
   return {
     entityRef: row.entity_ref,
-    githubUrl: row.github_url,
+    sourceUrl: row.source_url,
     collectionId: row.collection_id,
     connectedBy: row.connected_by,
     updatedAt: row.updated_at
@@ -42,7 +42,7 @@ export async function createConnectionStore(
     try {
       await client.schema.createTable('bruno_connections', (table) => {
         table.text('entity_ref').primary();
-        table.text('github_url').notNullable();
+        table.text('source_url').notNullable();
         table.text('collection_id').notNullable();
         table.text('connected_by').notNullable();
         table.text('updated_at').notNullable();
@@ -61,7 +61,7 @@ export async function createConnectionStore(
       await client('bruno_connections')
         .insert({
           entity_ref: row.entityRef,
-          github_url: row.githubUrl,
+          source_url: row.sourceUrl,
           collection_id: row.collectionId,
           connected_by: row.connectedBy,
           updated_at: new Date().toISOString()

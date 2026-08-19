@@ -11,11 +11,11 @@ import type {
 } from './types';
 
 /**
- * Header carrying the caller's GitHub OAuth token to the backend. Sent as a
+ * Header carrying the caller's SCM OAuth token to the backend. Sent as a
  * header (never in the request body) so the token doesn't sit in JSON payloads
  * that are trivially visible in the browser's network inspector / logs.
  */
-const GITHUB_TOKEN_HEADER = 'x-bruno-github-token';
+const SCM_TOKEN_HEADER = 'x-bruno-scm-token';
 
 /**
  * Default {@link BrunoApi} implementation. Talks to the `bruno` backend plugin
@@ -88,7 +88,7 @@ export class BrunoClient implements BrunoApi {
       'Content-Type': 'application/json'
     };
     if (token) {
-      headers[GITHUB_TOKEN_HEADER] = token;
+      headers[SCM_TOKEN_HEADER] = token;
     }
     const res = await this.fetchApi.fetch(`${base}/connections`, {
       method: 'POST',
@@ -110,7 +110,7 @@ export class BrunoClient implements BrunoApi {
       'Content-Type': 'application/json'
     };
     if (token) {
-      headers[GITHUB_TOKEN_HEADER] = token;
+      headers[SCM_TOKEN_HEADER] = token;
     }
     const res = await this.fetchApi.fetch(`${base}/connections/discover`, {
       method: 'POST',
@@ -131,7 +131,7 @@ export class BrunoClient implements BrunoApi {
     const path = `/collections/${encodeURIComponent(collectionId)}/sync`;
     const headers: Record<string, string> = {};
     if (token) {
-      headers[GITHUB_TOKEN_HEADER] = token;
+      headers[SCM_TOKEN_HEADER] = token;
     }
     const res = await this.fetchApi.fetch(`${base}${path}`, {
       method: 'POST',
@@ -163,7 +163,7 @@ export class BrunoClient implements BrunoApi {
   }
 
   async importCollections(
-    collections: Array<{ githubUrl: string; name: string }>
+    collections: Array<{ sourceUrl: string; name: string }>
   ): Promise<{ imported: number }> {
     const base = await this.baseUrl();
     const res = await this.fetchApi.fetch(`${base}/collections/import`, {
