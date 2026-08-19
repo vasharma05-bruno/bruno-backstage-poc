@@ -1,6 +1,6 @@
 # MULTI-SCM — supporting GitLab / Bitbucket / others alongside GitHub · DRAFT
 
-**Status:** DRAFT — not locked. Written to answer three questions: does Backstage
+**Status:** DRAFT — revised after the P2 validation spike (findings folded in; corrections marked **[SPIKE]**). Not locked. Written to answer three questions: does Backstage
 support per-user auth for non-GitHub providers, is there a one-stop repo-traversal
 API, and what actually blocks shipping this as a **public** plugin that any host
 drops into their own Backstage app.
@@ -43,6 +43,62 @@ azure, gerrit, gitea, harness, awsCodeCommit, awsS3, azureBlobStorage`
   `@backstage/backend-defaults/urlReader` ships readers for GitHub, GitLab,
   Bitbucket Cloud, Bitbucket Server, Azure, Gerrit, Gitea, Harness, S3, Azure Blob.
 
+### 1.4 Per-request credentials — the mechanism, corrected **[SPIKE]**
+
+**An earlier draft of this plan claimed `readTree` has no credential option. That was
+wrong.** `UrlReaderServiceReadTreeOptions` and `UrlReaderServiceReadUrlOptions` both
+carry a `token?: string` field in the version this repo pins
+(`backend-plugin-api/dist/index.d.ts`, readTree options ending ~line 1354), documented
+verbatim as being for a token "maybe that's supplied by the user".
+
+Verified honoured, by experiment — an invalid token passed this way yields `401` on both
+providers, and the same reader without it succeeds:
+
+| Reader | Honours per-call `options.token`? |
+|---|---|
+| `GithubUrlReader` | **yes** — short-circuits `GithubCredentialsProvider`, sets `Authorization: Bearer` |
+| `GitlabUrlReader` | **yes** — destructured at line 73, threaded into `getGitLabRequestOptions(config, token)` |
+| `FetchUrlReader` | yes |
+| Bitbucket Cloud / Server, Gitea, Azure, Gerrit, Harness | **no** — integration config only |
+
+So for the two providers we actually have per-user OAuth for, the fix is one argument on
+the existing injected reader:
+
+```ts
+const tree = await reader.readTree(url, { token: userToken });   // no new reader, no config surgery
+```
+
+The Octokit fallback (`readUrlTreeViaOctokit`,
+[collectionService.ts:746](../plugins/bruno-backend/src/service/collectionService.ts#L746))
+is therefore not working around a platform gap — it is redundant. Deleting it also fixes
+a proxy-egress gap, since `UrlReader` honours Backstage's HTTP-proxy config and raw
+Octokit does not.
+
+**The synthesized-config route stays in the design, but demoted** to a future hook for the
+providers that ignore `options.token`. If it is ever built, two traps found by experiment:
+
+- **Never synthesize a bare `{host, token}` entry — clone the host's existing entry and
+  override the credential.** Minimal entries throw at *construction*:
+  `github [{host:'ghe.example.com', token}]` → "must configure an explicit apiBaseUrl or
+  rawBaseUrl"; `gitlab [{host:'gl.example.com', token}]` → "'undefined' is not a valid
+  apiBaseUrl". `github.com`/`gitlab.com` self-default — which is exactly why a naive
+  implementation passes local testing and breaks at the first enterprise adopter.
+- **Per-request reader construction is cheap (~0.3 ms) but drops the GitHub App
+  installation-token cache**, which lives per-`GithubUrlReader.factory` instance. On hosts
+  using `integrations.github[].apps` it would re-mint an App token every request.
+  Preferring `options.token` sidesteps this entirely.
+
+Two further mechanism facts that constrain the implementation:
+
+- **A `readTree` response is single-consumption.** Calling `files()` twice, or `dir()`
+  after `files()`, throws "Response has already been read". Code wanting both must
+  re-`readTree`.
+- `UrlReadersOptions = { config: RootConfigService; logger: LoggerService; factories?: ReaderFactory[] }`;
+  a `ConfigReader` satisfies it, and a synthesized config need not carry
+  `backend.workingDirectory` (the read-tree factory falls back to `os.tmpdir()`).
+
+---
+
 ### 1.5 Does Backstage use this internally? — partly, and the split matters
 
 | Concern | Unified? | Evidence |
@@ -63,35 +119,6 @@ actually needs (Bitbucket: workspace + project; Azure: organization + project).
 
 This is a real alternative to B1's six URL parsers, and it is what the platform
 itself chose. See **D6**.
-
-### 1.4 Why we ended up on Octokit anyway
-
-`UrlReaderServiceReadTreeOptions` has **no credential field** — only `filter`,
-`etag`, `signal` (`backend-plugin-api/dist/index.d.ts:1298`). The reader resolves
-credentials from static `integrations.*` config, so there is no way to say "read
-this tree as *this* user". That is the entire reason
-[`readUrlTreeViaOctokit`](../plugins/bruno-backend/src/service/collectionService.ts#L746)
-exists, and it is why the private-repo path is GitHub-only today.
-
-**The workaround that preserves one-stop-ness:** build a short-lived reader from
-a synthesized config.
-
-```ts
-import { UrlReaders } from '@backstage/backend-defaults/urlReader';
-
-const reader = UrlReaders.default({
-  logger,
-  config: withUserCredential(rootConfig, host, provider, userToken),
-});
-const tree = await reader.readTree(url);   // GitLab, Bitbucket, Gitea, …
-```
-
-`UrlReaders.default({ config, logger })` is public API
-(`backend-defaults/dist/urlReader.d.ts:417`). This deletes the Octokit path and
-fixes a side bug: `UrlReader` honours Backstage's HTTP-proxy config, raw Octokit
-does not — relevant for hosts with no direct egress.
-
----
 
 ## 2. Blockers, ranked
 
@@ -146,7 +173,8 @@ migration, not an in-place edit.
 only**, and `additionalScope.customScopes` accepts only those four keys
 (`integration-react/dist/index.d.ts:105-215`). Combined with §1.1: **Gitea,
 Gerrit, Harness, and AWS CodeCommit can never support the per-user private-repo
-path.** They work only via a host-configured service credential. State this in
+path** — not because their config cannot carry a token (per B4 **[SPIKE]**, Gitea's can),
+but because there is no published auth provider to *obtain* a per-user token from. They work only via a host-configured service credential. State this in
 the README as a support matrix rather than discovering it per-host.
 
 Scope names also differ per provider and we currently hardcode `['repo']` in five
@@ -154,42 +182,54 @@ call sites — GitHub `repo`, GitLab `read_api read_repository`, Bitbucket Cloud
 `account team pullrequest`, Bitbucket Server `PUBLIC_REPOS REPO_READ`. `ScmAuth`
 owns this mapping; we should stop owning it.
 
-### B4 — A user token cannot be injected uniformly into integration config · **blocker**
+### B4 — Integration-config credential shapes differ (and the plan had them wrong) · **[SPIKE]**
 
-The §1.4 workaround needs a per-provider adapter, because the credential fields
-are not the same shape:
+Only relevant if the synthesized-config route is ever built (see §1.4 — `options.token`
+covers GitHub and GitLab without it). Corrected by round-tripping a sentinel token
+through `ScmIntegrations.fromConfig` and reading each `get*RequestOptions`:
 
-| Provider | Credential fields in integration config |
-|---|---|
-| github | `token` |
-| gitlab | `token` |
-| bitbucketServer | `token`, `username` |
-| bitbucketCloud | `token`, or `username` + `appPassword` |
-| **gitea** | `username` + `password` only — **no `token` field** |
-| **azure** | `credentials[]` array |
+| Provider | Earlier claim | **Verified** |
+|---|---|---|
+| github | `token` | ✅ `token` → `Authorization: Bearer` |
+| gitlab | `token` | ✅ `token` |
+| bitbucketServer | `token` + `username` | ⚠️ **partly wrong** — `token` alone → `Bearer`, **or** `username`+`password` → `Basic`. `username` pairs with `password`, never with `token`. |
+| bitbucketCloud | `token`, or `username`+`appPassword` | ❌ **wrong** — a bare `token` is **silently dropped** (`if (username && (token ?? appPassword))`). Needs `username`+`token`, or `clientId`+`clientSecret` → OAuth. `appPassword` is deprecated in favour of `token`. |
+| gitea | `username`+`password` only; **cannot** carry a token | ❌ **conclusion wrong** — with `username` omitted, `getGiteaRequestOptions` sends `Authorization: token <password>`. Gitea *can* carry a bare PAT/OAuth token. |
+| azure | `credentials[]` | ✅ `credentials: [{personalAccessToken}]`. A scalar `token` **throws hard**, it is not ignored. |
+| gerrit | — | `username`+`password` |
+| harness | — | `token` (or `apiKey`) |
 
-Gitea therefore cannot accept an OAuth token through config at all (consistent
-with B3 — it has no auth provider either). Azure needs an array entry, not a
-scalar.
+The bitbucketCloud row is the dangerous one: a bare token produces `authed=false` and no
+header — a silent anonymous read, not an error.
 
-### B5 — No provider-neutral default-branch API · **friction**
+### B5 — Default-branch resolution — **mostly a non-issue** · **[SPIKE]**
 
-We currently call `octokit.repos.get().default_branch`
-([collectionService.ts:975](../plugins/bruno-backend/src/service/collectionService.ts#L975), `:751`).
-`@backstage/integration` provides `getBitbucketCloudDefaultBranch` and
-`getBitbucketServerDefaultBranch` — but **no GitHub or GitLab equivalent**. Either
-require an explicit `/tree/{ref}` in the URL (simple, worse UX) or hand-write one
-call per provider.
+`readTree` resolves the default branch itself on both GitHub (`/repos/{full}`) and GitLab
+(`project.default_branch`). Our `resolveRef` Octokit call
+([collectionService.ts:975](../plugins/bruno-backend/src/service/collectionService.ts#L975))
+exists only because we hand-roll the fetch; it disappears with the Octokit path. Do not
+build an adapter method for it on the read path.
 
-### B6 — `readTree` archive roots differ per provider · **latent bug**
+What is real, and belongs to B1 rather than here: `git-url-parse` mis-parses a GitLab URL
+that omits `/-/tree/<ref>/` — `…/-/tree/doc/api/graphql` yields `sha=doc` and a
+`NotFoundError`. So URL *composition* may still need per-provider ref knowledge even
+though *reading* does not.
 
-The archive top-level directory is `{repo}-{sha}/` on GitHub,
-`{repo}-{ref}-{sha}/` on GitLab, `{workspace}-{repo}-{hash}/` on Bitbucket. Our
-root detection
-([collectionService.ts:821](../plugins/bruno-backend/src/service/collectionService.ts#L821))
-is heuristic and has only ever run against GitHub. Host-side prerequisites also
-differ: Bitbucket Server `readTree` needs the archive endpoint available, Gerrit
-needs the gitiles plugin.
+### B6 — Archive roots — **refuted at the API level** · **[SPIKE]**
+
+`readTree` strips the archive root generically (`stripFirstDirectory`, documented at
+`backend-defaults/dist/urlReader.d.ts:95`; implemented in
+`.../urlReader/lib/tree/TarArchiveResponse.cjs.js`) plus the subpath, so returned paths are
+already relative and carry no provider prefix. Observed: GitHub → `echo json.bru`,
+`multiline/echo binary.bru` (15 files); GitLab → `_index.md`, … (19 files). The raw
+archives genuinely do differ (`usebruno-bruno-aa5d85f/` on GitHub), but `readTree` never
+exposes that.
+
+Consequence, and it inverts the original finding: this is **not** a per-provider adapter
+point. It is dead code in *our* tree — the root-detection heuristic around
+[collectionService.ts:809-826](../plugins/bruno-backend/src/service/collectionService.ts#L809)
+becomes unnecessary once every read goes through `readTree`. Leave it untouched in P1;
+remove it in P2.
 
 ### B7 — Error→state mapping is GitHub-shaped · **UX bug**
 
@@ -220,9 +260,19 @@ the wording and the `type` union before release, not after.
 ### B10 — The host prerequisite matrix multiplies · **needs a diagnostics surface**
 
 Per provider, a host may have: integration configured but no auth provider; an
-auth provider but insufficient scopes; or a self-hosted host absent from
+auth provider but insufficient scopes; or the host absent from
 `integrations` entirely — in which case `byUrl()` returns `undefined` and the
 reader falls through to `FetchUrlReader`, which fails on anything non-public.
+
+**This is worse than "self-hosted" implies.** `readGithubIntegrationConfigs`
+(`integration/dist/github/config.esm.js:40-50`) always appends a default `github.com`
+entry when none is configured — which is precisely why this plugin reads public GitHub
+today with no `integrations` config at all. **No other provider gets that default.**
+`byUrl()` is exact host matching returning `undefined` for anything unlisted
+(`helpers.esm.js:43-50`). So a host that configures nothing reads public GitHub fine and
+gets `undefined` for a public **gitlab.com** or **bitbucket.org** URL. Multi-provider
+support therefore requires hosts to add an `integrations.<provider>` block *even for
+public repos* — an onboarding step GitHub never exposed.
 With one provider these are three support tickets; with four they are twelve.
 The plugin needs to report which providers are actually usable up front instead
 of failing at click time.
@@ -257,6 +307,13 @@ There *is* an abstraction — `ScmIntegration.parseRateLimitInfo(response): Rate
 1. **ETag conditional requests** — `readUrl({ etag })` → 304 → `NotModifiedError`
    → skip processing. Used by `UrlReaderProcessor` and the techdocs url preparer.
    On GitHub, 304s do not count against the REST quota.
+   **[SPIKE] — but `readTree`'s ETag is not an HTTP 304.** It is a client-side commit-SHA
+   compare: GitHub spends 1 quota-counting call (`/commits/{ref}/status`, +1 to
+   `/repos/{full}` for a ref-less URL) and GitLab spends **2** (`/projects/{id}` then
+   `/repository/commits`) *before* comparing. So an ETag'd `readTree` still costs 1–3 API
+   calls per refresh — it saves the tarball download, not the quota hit. Budget refresh
+   loops on that basis. Separately, GitLab's `readUrl` returns **no ETag at all**, so on
+   GitLab the mitigation is `readTree`-only.
 2. **Archive endpoints instead of tree APIs** — `GithubUrlReader.readTree` fetches
    a **tarball**: one request per tree, not one per file.
 3. **Credential scoping** — GitHub App installation tokens carry their own
@@ -281,27 +338,33 @@ will do it for us.
 
 ---
 
-## 3. Target architecture
+## 3. Target architecture **[SPIKE-revised]**
 
 ```
-Frontend                          Backend
-────────                          ───────
-scmAuthApiRef (via useApiHolder)  ScmProvider adapter registry
-  .getCredentials({url})            .parseRepoUrl(url)
-        │                           .composeCollectionUrl(...)
-        │  x-bruno-scm-token        .repoRootFromUrl(url)
-        └──────────────────────►    .resolveDefaultBranch(url, auth)
-                                    .credentialConfigFor(host, token)
-scmIntegrationsApiRef                        │
-  .byUrl(url)  → validation                  ▼
-                                    UrlReaders.default({config: synthesized})
-                                             │
-                                             ▼
-                                       readTree(url)
+Frontend                              Backend
+────────                              ───────
+scmAuthApiRef (via useApiHolder)      ScmProvider adapter registry
+  .getCredentials({ url })              .parseRepoUrl(url)          ─┐ URL grammar
+        │                               .composeCollectionUrl(...)   │ only — see
+        │   x-bruno-scm-token           .repoRootFromUrl(url)         │ B5/B6: no
+        └────────────────────────►      .canonicalIdInput(url)      ─┘ default-branch
+                                                  │                    or archive-root
+scmIntegrationsApiRef                             │                    adapter points
+  .byUrl(url) → validation                        ▼
+                                        integrations.byUrl(url)?.type
+                                          → dispatch (+ defined
+                                             undefined-fallback, B10)
+                                                  │
+                                                  ▼
+                        reader.readTree(url, { token: userToken })
+                        the INJECTED UrlReaderService — no new reader,
+                        no synthesized config, no Octokit
 ```
 
 Two seams, one per side. The frontend stops knowing provider names; the backend
-knows them in exactly one place.
+knows them in exactly one place — and that place handles **URL grammar only**, because
+the reader already owns credentials (§1.4), default-branch resolution (B5), and
+archive-root stripping (B6).
 
 ---
 
@@ -327,14 +390,19 @@ Introduce the adapter interface from §3 and move today's GitHub logic behind it
 `grep -c github` in `collectionService.ts` drops to the adapter file only.
 Addresses B1 structurally.
 
-### MSCM-P2 — Replace Octokit with a synthesized-config `UrlReader`
-Implement `credentialConfigFor` per provider (B4 table), swap
-`readUrlTreeViaOctokit` for `UrlReaders.default`, drop `@octokit/rest`. Build the
-reader per authenticated request; never cache it under a user-derived key.
-**Acceptance:** private-repo fetch still works on GitHub via the new path; proxy
-config now honoured; `@octokit/rest` gone from `package.json`; tree fetches are
-tarball-based and `syncCollection`/`rebuildConnected` pass an `etag` and treat
-`NotModifiedError` as "unchanged". Addresses B4, B11, and the Octokit-proxy gap.
+### MSCM-P2 — Delete Octokit; pass `options.token` to the injected reader **[SPIKE-revised]**
+Replace `readUrlTreeWithCreds`/`readUrlTreeViaOctokit` with
+`reader.readTree(url, { token: userToken })` on the **existing injected**
+`UrlReaderService` — no new reader, no synthesized config, no per-request construction
+(§1.4). Drop `@octokit/rest`, `resolveRef`'s Octokit client, and the now-dead root-detection
+heuristic (B6). Leave a documented, unimplemented hook for the synthesized-config route,
+for the providers that ignore `options.token`.
+**Acceptance:** a **real** private-repo read succeeds through `options.token` (this needs
+one real PAT or a live OAuth session — see §7, it is the one thing the spike could not
+prove); proxy config honoured; `@octokit/rest` gone from `package.json`;
+`syncCollection`/`rebuildConnected` pass an `etag` and treat `NotModifiedError` as
+"unchanged"; no code calls `files()` twice on one `readTree` response. Addresses B5, B6,
+B11 and the Octokit-proxy gap.
 
 ### MSCM-P3 — Frontend `ScmAuth`
 Replace `githubAuthApiRef` in all five call sites with `scmAuthApiRef` obtained
@@ -383,6 +451,7 @@ Addresses B10.
 | D4 | Ship P0 renames as a breaking change, or alias? | Straight rename — do it before v1 and there is nothing to alias. |
 | D5 | Old frontend system support? | Out of scope for this plan; tracked separately. It gates adoption but is orthogonal to multi-SCM. |
 | D6 | Parse provider web URLs (B1), or adopt scaffolder-style structured `repoUrl` input (§1.6)? | **Hybrid.** Store canonically structured (`{provider, host, owner/workspace/project, repo, ref, path}`); accept a pasted web URL as a convenience parsed best-effort per provider. Paste is the whole UX of the connect flow, so we cannot drop it — but the *stored identity* should not be a URL string. This also defuses B2. |
+| D8 | Build the synthesized-config route at all? | **Not in P2.** `options.token` covers GitHub + GitLab, which is D1's whole v1 scope. Leave it a documented hook and build it only if a provider that ignores `options.token` enters scope. |
 | D7 | Who owns rate-limit backoff (B11)? | We do. Nothing upstream provides it uniformly. ETag-first refresh + our own throttle on `rebuildConnected`, plus documented `integrations.gitlab[].retry` guidance for hosts. |
 
 ## 6. Non-goals
@@ -394,3 +463,25 @@ Addresses B10.
 - Everything in `PRODUCTION-REVIEW.md` that is not provider-specific (permissions,
   cross-user cache exposure, knex migrations for the existing schema, the docs
   iframe cookie chain). Those block going public but are not multi-SCM work.
+
+---
+
+## 7. What the spike could NOT prove
+
+The P2 validation spike ran against real GitHub and GitLab, but `.env` in this repo holds
+only OAuth client id/secret for the login providers — no PAT, no GitLab token. So:
+
+- **No real private-repo read was ever performed.** Everything verified shows a credential
+  is *transmitted and evaluated by the server* (invalid token → `401`, absent token →
+  success). Nothing shows that a *valid* credential grants access anonymous access would be
+  denied. **That is P2's acceptance criterion and it needs one real token to close.**
+- Whether a GitHub **user OAuth** token (`gho_*`) behaves like a PAT on the `codeload`
+  tarball endpoint — only PAT-shaped, invalid strings were exercised.
+- Every provider other than GitHub and GitLab is unverified end-to-end: Bitbucket
+  Cloud/Server, Gitea, Azure, Gerrit, Harness were checked only at the config-resolution
+  and header-construction layer. No `readTree` was issued against any of them.
+- Proxy honouring, claimed as a P2 side benefit, was not exercised.
+- `integrations.gitlab[].retry` (B11) was not exercised.
+
+Re-runnable spike scripts are in the session scratchpad (`spike.js` … `spike5.js`); they
+resolve modules out of this worktree, so they run from any cwd.
