@@ -202,18 +202,31 @@ through `ScmIntegrations.fromConfig` and reading each `get*RequestOptions`:
 The bitbucketCloud row is the dangerous one: a bare token produces `authed=false` and no
 header — a silent anonymous read, not an error.
 
-### B5 — Default-branch resolution — **mostly a non-issue** · **[SPIKE]**
+### B5 — Default-branch resolution — needed for *identity*, not for reading · **[SPIKE]**
 
-`readTree` resolves the default branch itself on both GitHub (`/repos/{full}`) and GitLab
-(`project.default_branch`). Our `resolveRef` Octokit call
-([collectionService.ts:975](../plugins/bruno-backend/src/service/collectionService.ts#L975))
-exists only because we hand-roll the fetch; it disappears with the Octokit path. Do not
-build an adapter method for it on the read path.
+Half of the original claim dissolves: `readTree` resolves the default branch itself on
+GitHub (`/repos/{full}`) and GitLab (`project.default_branch`), so reading never needs a
+ref up front.
 
-What is real, and belongs to B1 rather than here: `git-url-parse` mis-parses a GitLab URL
-that omits `/-/tree/<ref>/` — `…/-/tree/doc/api/graphql` yields `sha=doc` and a
-`NotFoundError`. So URL *composition* may still need per-provider ref knowledge even
-though *reading* does not.
+**But the capability must survive, for a reason the first draft missed.** In
+`discoverCollections`, `resolveRef`
+([collectionService.ts:461](../plugins/bruno-backend/src/service/collectionService.ts#L461))
+runs *after* the tree has already been fetched, and its result feeds exactly one place:
+`composeCollectionUrl(normalized, rootPrefix, ref)` at
+[:479](../plugins/bruno-backend/src/service/collectionService.ts#L479). That composed URL
+becomes both the stored `sourceUrl` and, via `collectionIdFromUrl`, the **collection id**.
+So the ref is not a fetch precondition — it is an *identity* input, and `readTree` never
+hands back the ref it resolved internally. A per-provider `resolveDefaultBranch` therefore
+stays in the seam.
+
+Two consequences: `@backstage/integration` offers `getBitbucketCloudDefaultBranch` and
+`getBitbucketServerDefaultBranch` but **no GitHub or GitLab equivalent**, so this stays
+hand-written per provider; and it couples to **B2** — if a repo's default branch is renamed
+(`master` → `main`), the composed URL changes and the collection id changes with it. The
+versioned id scheme in P4 should decide whether identity pins a ref at all.
+
+Separately, and belonging to B1: `git-url-parse` mis-parses a GitLab URL that omits
+`/-/tree/<ref>/` — `…/-/tree/doc/api/graphql` yields `sha=doc` and a `NotFoundError`.
 
 ### B6 — Archive roots — **refuted at the API level** · **[SPIKE]**
 
