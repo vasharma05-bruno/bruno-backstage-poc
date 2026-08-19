@@ -113,7 +113,9 @@ export function useCollectionPicker(
       emitConnectionChange(entityRef);
       await onLinked(result);
     } catch (e) {
-      if (classifyLinkError(e) === 'notFound') {
+      // Ambiguous 404: only "not found" if a token was actually in play
+      // (see `scan`); without one, fall through to the Connect GitHub gate.
+      if (scanTokenRef.current && classifyLinkError(e) === 'notFound') {
         setState({ status: 'notFound' });
       } else if (scanTokenRef.current) {
         setState({
@@ -264,7 +266,9 @@ export function useCollectionPicker(
       }
       await onLinked(result);
     } catch (e) {
-      if (classifyLinkError(e) === 'notFound') {
+      // Ambiguous 404: only "not found" if a token was actually in play
+      // (see `scan`); without one, fall through to the Connect GitHub gate.
+      if (scanTokenRef.current && classifyLinkError(e) === 'notFound') {
         setState({ status: 'notFound' });
       } else if (scanTokenRef.current) {
         setState({

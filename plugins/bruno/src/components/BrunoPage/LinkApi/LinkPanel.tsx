@@ -14,6 +14,7 @@ import {
 import { brunoApiRef } from '../../../api/BrunoApi';
 import type { ImportedCollection } from '../../../api/types';
 import { emitConnectionChange } from '../../../lib/connectionEvents';
+import { classifyLinkError } from '../../../lib/linkErrors';
 
 /**
  * Right panel of the Link API tab: link the selected catalog API entity to a
@@ -52,6 +53,7 @@ export function LinkPanel(props: {
   const [importedBusy, setImportedBusy] = useState(false);
   const [importedError, setImportedError] = useState<string | undefined>();
   const [importedLinked, setImportedLinked] = useState(false);
+  const [importedNeedsGithub, setImportedNeedsGithub] = useState(false);
   const importInFlight = useRef(false);
 
   useEffect(() => {
@@ -96,31 +98,76 @@ export function LinkPanel(props: {
     = picker.state.status === 'scanning'
       || picker.state.status === 'connecting';
 
-  // Link a chosen imported collection directly (no scan): the imported row
-  // already carries the fully-qualified sourceUrl. Silent-token first (no
-  // popup); import stored a public/private URL, connect tops up if a session
-  // exists. Never logs the token.
-  const linkImported = async () => {
-    if (importInFlight.current || !selectedRef) {
-      return;
-    }
+  // Shared tail of the imported-link flow. `token` is whatever the caller
+  // already resolved, so this never awaits `getAccessToken` itself and can be
+  // called from either the silent or the gesture-bound path. Never logs the
+  // token.
+  const runLinkImported = async (entityRef: string, token?: string) => {
     const chosen = imported.find((c) => c.collectionId === chosenId);
     if (!chosen) {
       return;
     }
+    setImportedError(undefined);
+    setImportedNeedsGithub(false);
+    try {
+      await brunoApi.connect(entityRef, chosen.sourceUrl, token);
+      setImportedLinked(true);
+      emitConnectionChange(entityRef);
+      onLinked();
+    } catch (e) {
+      const kind = classifyLinkError(e);
+      // With no token in play a 404/403 is ambiguous: a private repo the
+      // anonymous read can't see is indistinguishable from a missing one. Offer
+      // the Connect GitHub action instead of dead-ending on the raw message.
+      if (!token && (kind === 'notFound' || kind === 'needsAuth')) {
+        setImportedNeedsGithub(true);
+      } else {
+        setImportedError(e instanceof Error ? e.message : String(e));
+      }
+    }
+  };
+
+  // Link a chosen imported collection directly (no scan): the imported row
+  // already carries the fully-qualified sourceUrl. Silent-token first (no
+  // popup); import stored a public/private URL, connect tops up if a session
+  // exists.
+  const linkImported = async () => {
+    if (importInFlight.current || !selectedRef) {
+      return;
+    }
     importInFlight.current = true;
     setImportedBusy(true);
-    setImportedError(undefined);
     try {
       const token
         = (await githubAuth.getAccessToken(['repo'], { optional: true }))
           || undefined;
-      await brunoApi.connect(selectedRef, chosen.sourceUrl, token);
-      setImportedLinked(true);
-      emitConnectionChange(selectedRef);
-      onLinked();
-    } catch (e) {
-      setImportedError(e instanceof Error ? e.message : String(e));
+      await runLinkImported(selectedRef, token);
+    } finally {
+      importInFlight.current = false;
+      setImportedBusy(false);
+    }
+  };
+
+  // Fired from the "Connect GitHub" button after an imported link failed with no
+  // token. `getAccessToken` MUST be the first await so the consent popup opens
+  // inside the click gesture; the token is reused for the retry.
+  const linkImportedWithGithub = async () => {
+    if (importInFlight.current || !selectedRef) {
+      return;
+    }
+    importInFlight.current = true;
+    try {
+      let token: string;
+      try {
+        token = await githubAuth.getAccessToken(['repo']);
+      } catch {
+        setImportedError(
+          'GitHub access needed for private repos — Connect GitHub.'
+        );
+        return;
+      }
+      setImportedBusy(true);
+      await runLinkImported(selectedRef, token);
     } finally {
       importInFlight.current = false;
       setImportedBusy(false);
@@ -236,6 +283,15 @@ export function LinkPanel(props: {
             </Grid>
           )}
 
+          {importedNeedsGithub && (
+            <Grid item xs={12}>
+              <Typography variant="body2" color="textSecondary">
+                Couldn't read that repository anonymously — it's most likely
+                private. Connect GitHub to link it with your own access.
+              </Typography>
+            </Grid>
+          )}
+
           {importedLinked && (
             <Grid item xs={12}>
               <Typography variant="body2" color="textSecondary">
@@ -246,14 +302,25 @@ export function LinkPanel(props: {
           )}
 
           <Grid item xs={12}>
-            <Button
-              variant="contained"
-              color="primary"
-              onClick={linkImported}
-              disabled={importedBusy || !chosenId}
-            >
-              Link this collection
-            </Button>
+            {importedNeedsGithub ? (
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={linkImportedWithGithub}
+                disabled={importedBusy || !chosenId}
+              >
+                Connect GitHub
+              </Button>
+            ) : (
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={linkImported}
+                disabled={importedBusy || !chosenId}
+              >
+                Link this collection
+              </Button>
+            )}
           </Grid>
         </Grid>
       )}
