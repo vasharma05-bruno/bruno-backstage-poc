@@ -240,7 +240,7 @@ exposes that.
 
 Consequence, and it inverts the original finding: this is **not** a per-provider adapter
 point. It is dead code in *our* tree — the root-detection heuristic around
-[collectionService.ts:809-826](../plugins/bruno-backend/src/service/collectionService.ts#L809)
+[`commonRootPrefix`, declared at collectionService.ts:1009](../plugins/bruno-backend/src/service/collectionService.ts#L1009) and called at [:827](../plugins/bruno-backend/src/service/collectionService.ts#L827) and [:1374](../plugins/bruno-backend/src/service/collectionService.ts#L1374)
 becomes unnecessary once every read goes through `readTree`. Leave it untouched in P1;
 remove it in P2.
 
@@ -254,8 +254,9 @@ returns 401. The private-repo funnel will mis-fire per provider.
 
 ### B8 — The provider name is baked into the published API surface · **do before v1**
 
-`githubUrl` appears in `DiscoveredCollection`, `ConnectionRecord`, and the
-`importCollections` payload
+`githubUrl` appears **42 times across 15 files** — of which 3 are `lib/githubUrl`
+module-path references, leaving **39 field edits**. It is in `DiscoveredCollection`,
+`ConnectionRecord`, and the `importCollections` payload
 ([api/types.ts:144,156,182](../plugins/bruno/src/api/types.ts#L144);
 [backend/types.ts:147,176](../plugins/bruno-backend/src/types.ts#L147)), in the DB
 columns, in the values written to `bruno.dev/collection-path` and
@@ -399,8 +400,12 @@ Introduce the adapter interface from §3 and move today's GitHub logic behind it
 (`parseGithubUrl`, `composeCollectionUrl`, `normalizeGithubUrl`,
 `resolveRef`, `repoRootFromCollectionUrl`). Dispatch on
 `integrations.byUrl(url)?.type`.
-**Acceptance:** pure refactor — all existing tests pass, zero behaviour change,
-`grep -c github` in `collectionService.ts` drops to the adapter file only.
+**Acceptance:** pure refactor, zero behaviour change. **This project has no test suite**,
+so equivalence must be shown mechanically instead: capture every collection id *before*
+the change and diff them after (ids are `sha256` of a normalized URL, so any drift in URL
+handling shows up immediately), plus a clean `yarn tsc`, a clean live boot, and one
+successful connect + sync against a public GitHub repo. A `grep`-based acceptance is NOT
+usable here — the Octokit path legitimately still mentions GitHub until P2.
 Addresses B1 structurally.
 
 ### MSCM-P2 — Delete Octokit; pass `options.token` to the injected reader **[SPIKE-revised]**
