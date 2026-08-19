@@ -4,7 +4,6 @@ import { InputError } from '@backstage/errors';
 import {
   DefaultGithubCredentialsProvider,
   ScmIntegrations,
-  type GithubCredentialsProvider,
   type ScmIntegrationRegistry
 } from '@backstage/integration';
 import { Octokit } from '@octokit/rest';
@@ -46,6 +45,8 @@ import type {
 } from '../types';
 import type { BrunoConnectionRow } from '../store/connectionStore';
 import type { ImportedCollectionRow } from '../store/collectionsStore';
+import { createScmProviderRegistry, type ScmProvider } from '../scm';
+import { githubNormalizeUrl } from '../scm/github';
 
 /**
  * A parsed .bru request as produced by `@usebruno/lang`'s `bruToJson`.
@@ -195,26 +196,15 @@ export function sanitizeName(id: string): string {
 }
 
 /**
- * Normalizes a GitHub collection URL to a stable identity. Lower-cases the
- * host, drops query/hash, collapses duplicate slashes and a single trailing
- * slash. `/tree/<branch>/<subpath>` is preserved (distinct subpaths are
- * distinct collections).
+ * Derives the stable cache key / collection id from a collection URL.
+ * Normalization is per-provider; callers without a resolved provider fall back
+ * to GitHub normalization, which is what every caller did before the seam.
  */
-export function normalizeGithubUrl(url: string): string {
-  const u = new URL(url.trim());
-  u.hostname = u.hostname.toLowerCase();
-  u.hash = '';
-  u.search = '';
-  let normalizedPath = u.pathname.replace(/\/{2,}/g, '/');
-  if (normalizedPath.length > 1 && normalizedPath.endsWith('/')) {
-    normalizedPath = normalizedPath.slice(0, -1);
-  }
-  return `${u.protocol}//${u.host}${normalizedPath}`;
-}
-
-/** Derives the stable cache key / collection id from a GitHub URL. */
-export function collectionIdFromUrl(url: string): string {
-  const normalized = normalizeGithubUrl(url);
+export function collectionIdFromUrl(
+  url: string,
+  provider?: Pick<ScmProvider, 'normalizeUrl'>
+): string {
+  const normalized = provider ? provider.normalizeUrl(url) : githubNormalizeUrl(url);
   return createHash('sha256').update(normalized).digest('hex').slice(0, 16);
 }
 
@@ -238,11 +228,10 @@ export async function createCollectionService(options: {
   const discoverCache = new Map<string, DiscoverEntry>();
   let failures: SourceFailure[] = [];
   const integrations = ScmIntegrations.fromConfig(config);
-  // Resolves GitHub credentials the same way the UrlReader does, so the host
-  // may configure either a PAT (`integrations.github.token`) or a GitHub App
-  // (`integrations.github.apps`) — the provider yields a usable token for both.
-  const githubCredentials
-    = DefaultGithubCredentialsProvider.fromIntegrations(integrations);
+  const providers = createScmProviderRegistry({
+    integrations,
+    githubCredentials: DefaultGithubCredentialsProvider.fromIntegrations(integrations)
+  });
 
   async function loadSource(
     source: BrunoSourceConfig
@@ -307,11 +296,13 @@ export async function createCollectionService(options: {
     url: string;
     userToken?: string;
   }): Promise<{ collectionId: string; detail: CollectionDetail }> {
-    const normalized = normalizeGithubUrl(input.url);
-    const collectionId = collectionIdFromUrl(normalized);
+    const provider = providers.byUrl(input.url);
+    const normalized = provider.normalizeUrl(input.url);
+    const collectionId = collectionIdFromUrl(normalized, provider);
     const tree = await readUrlTreeWithCreds(
       reader,
       integrations,
+      provider,
       normalized,
       logger,
       { userToken: input.userToken }
@@ -446,7 +437,8 @@ export async function createCollectionService(options: {
       url: string;
       userToken?: string;
     }): Promise<DiscoverResult> {
-      const normalized = normalizeGithubUrl(input.url);
+      const provider = providers.byUrl(input.url);
+      const normalized = provider.normalizeUrl(input.url);
       const cached = lruTouch(discoverCache, normalized);
       if (cached && Date.now() - cached.fetchedAt <= DISCOVER_TTL_MS) {
         return cached.result;
@@ -454,16 +446,12 @@ export async function createCollectionService(options: {
       const tree = await readUrlTreeWithCreds(
         reader,
         integrations,
+        provider,
         normalized,
         logger,
         { userToken: input.userToken }
       );
-      const ref = await resolveRef(
-        integrations,
-        githubCredentials,
-        normalized,
-        input.userToken
-      );
+      const ref = await resolveRef(provider, normalized, input.userToken);
       const roots = findAllCollectionRoots(tree);
 
       const collections: DiscoveredCollection[] = roots.map((rootPrefix) => {
@@ -476,12 +464,12 @@ export async function createCollectionService(options: {
         };
         const collection = parseCollection(source, sub, logger);
         const requestCount = countRequests(collection.items);
-        const sourceUrl = composeCollectionUrl(normalized, rootPrefix, ref);
+        const sourceUrl = provider.composeCollectionUrl(normalized, rootPrefix, ref);
         return {
           collectionPath: rootPrefix,
           name: collection.name,
           requestCount,
-          collectionId: collectionIdFromUrl(sourceUrl),
+          collectionId: collectionIdFromUrl(sourceUrl, provider),
           sourceUrl
         };
       });
@@ -691,6 +679,7 @@ async function readUrlTree(
 async function readUrlTreeWithCreds(
   reader: UrlReaderService,
   integrations: ScmIntegrationRegistry,
+  provider: ScmProvider,
   url: string,
   logger: LoggerService,
   opts?: { userToken?: string }
@@ -702,6 +691,7 @@ async function readUrlTreeWithCreds(
       logger.info('Service reader failed; retrying with user OAuth token.');
       return await readUrlTreeViaOctokit(
         integrations,
+        provider,
         url,
         opts.userToken,
         logger
@@ -711,32 +701,6 @@ async function readUrlTreeWithCreds(
   }
 }
 
-type ParsedGithubUrl = {
-  owner: string;
-  repo: string;
-  ref?: string;
-  subpath: string;
-};
-
-/** Parses `owner/repo` and an optional `/tree/<ref>/<subpath>` from a URL. */
-function parseGithubUrl(url: string): ParsedGithubUrl {
-  const segments = new URL(url).pathname.split('/').filter((s) => s !== '');
-  const owner = segments[0];
-  const repo = segments[1];
-  if (!owner || !repo) {
-    throw new Error(`Unsupported GitHub URL: ${url}`);
-  }
-  if (segments[2] === 'tree' && segments[3]) {
-    return {
-      owner,
-      repo,
-      ref: segments[3],
-      subpath: segments.slice(4).join('/')
-    };
-  }
-  return { owner, repo, subpath: '' };
-}
-
 /**
  * Reads a GitHub collection tree via Octokit using a user-supplied token. Used
  * as a fallback when the service reader has no credentials for the repo. The
@@ -744,11 +708,12 @@ function parseGithubUrl(url: string): ParsedGithubUrl {
  */
 async function readUrlTreeViaOctokit(
   integrations: ScmIntegrationRegistry,
+  provider: ScmProvider,
   url: string,
   userToken: string,
   logger: LoggerService
 ): Promise<FileTree> {
-  const { owner, repo, ref: parsedRef, subpath } = parseGithubUrl(url);
+  const { owner, repo, ref: parsedRef, subpath } = provider.parseRepoUrl(url);
   const apiBaseUrl
     = integrations.github.byUrl(url)?.config.apiBaseUrl
       ?? 'https://api.github.com';
@@ -936,62 +901,20 @@ function sliceTreeAtRoot(tree: FileTree, rootPrefix: string): FileTree {
 }
 
 /**
- * Composes the fully-qualified GitHub URL for a discovered collection root.
- * Joins the input URL's subpath with the root's prefix within that subtree, and
- * yields `https://<host>/<owner>/<repo>/tree/<ref>/<fullSubpath>`. When both the
- * input subpath and the root are empty, reduces to the plain repo URL.
- */
-function composeCollectionUrl(
-  normalizedRepoUrl: string,
-  rootPrefixWithinInput: string,
-  ref: string
-): string {
-  const u = new URL(normalizedRepoUrl);
-  const { subpath: inputSubpath } = parseGithubUrl(normalizedRepoUrl);
-  const fullSubpath = joinPosix(inputSubpath, rootPrefixWithinInput);
-  const segments = u.pathname.split('/').filter((s) => s !== '');
-  const owner = segments[0];
-  const repo = segments[1];
-  if (fullSubpath === '') {
-    return `${u.protocol}//${u.host}/${owner}/${repo}`;
-  }
-  return `${u.protocol}//${u.host}/${owner}/${repo}/tree/${ref}/${fullSubpath}`;
-}
-
-/**
- * Resolves the git ref for a URL: the explicit `/tree/<ref>` if present,
- * otherwise the repo's default branch via Octokit. The Octokit client is built
- * with the host credential resolved via the GitHub credentials provider (a PAT
- * or a GitHub App installation token, whichever the host configured), falling
- * back to the caller's user OAuth token, plus the integration's `apiBaseUrl`.
+ * Resolves the git ref for a URL: the explicit ref carried by the URL if
+ * present, otherwise the repo's default branch via the provider adapter.
  * The token is never logged.
  */
 async function resolveRef(
-  integrations: ScmIntegrationRegistry,
-  credentials: GithubCredentialsProvider,
+  provider: ScmProvider,
   url: string,
   userToken?: string
 ): Promise<string> {
-  const { owner, repo, ref } = parseGithubUrl(url);
+  const { ref } = provider.parseRepoUrl(url);
   if (ref) {
     return ref;
   }
-  let auth: string | undefined;
-  try {
-    // `|| undefined` so a blank token from a tokenless (anonymous) integration
-    // never shadows the user's OAuth token below — a private repo must fall
-    // through to the caller's credentials, not resolve anonymously and 404.
-    auth = (await credentials.getCredentials({ url })).token || undefined;
-  } catch {
-    // No host credential for this repo (e.g. a GitHub App not installed there);
-    // fall back to the caller's user OAuth token below.
-  }
-  auth = auth ?? userToken;
-  const apiBaseUrl
-    = integrations.github.byUrl(url)?.config.apiBaseUrl ?? 'https://api.github.com';
-  const octokit = new Octokit({ auth, baseUrl: apiBaseUrl });
-  const { data } = await octokit.repos.get({ owner, repo });
-  return data.default_branch;
+  return provider.resolveDefaultBranch(url, { userToken });
 }
 
 /** Finds the collection-root README (case-insensitive) at `rootPrefix`. */
