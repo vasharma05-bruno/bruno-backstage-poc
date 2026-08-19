@@ -330,7 +330,7 @@ export function BrunoCard() {
                     'noopener,noreferrer'
                   )}
               >
-                Run in Bruno
+                View collection
               </Button>
             </Box>
           </Grid>

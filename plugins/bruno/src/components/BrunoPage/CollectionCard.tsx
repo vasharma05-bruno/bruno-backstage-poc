@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { InfoCard, LinkButton } from '@backstage/core-components';
 import { parseEntityRef } from '@backstage/catalog-model';
+import type { CompoundEntityRef } from '@backstage/catalog-model';
+import { EntityRefLink } from '@backstage/plugin-catalog-react';
 import { githubAuthApiRef, useApi } from '@backstage/core-plugin-api';
 import Avatar from '@material-ui/core/Avatar';
 import Box from '@material-ui/core/Box';
@@ -41,6 +43,12 @@ const useStyles = makeStyles((theme) => ({
     gap: theme.spacing(2),
     marginBottom: theme.spacing(1)
   },
+  linkedEntity: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: theme.spacing(0.5),
+    marginBottom: theme.spacing(1)
+  },
   actions: {
     marginTop: theme.spacing(1),
     display: 'flex',
@@ -48,28 +56,13 @@ const useStyles = makeStyles((theme) => ({
   }
 }));
 
-/** Deep-link to the catalog entity's Bruno docs tab, or a disabled action. */
-function OpenAction(props: { entityRef?: string }): JSX.Element {
-  const { entityRef } = props;
+/** Deep-link straight to the standalone full-screen Bruno docs page. */
+function OpenAction(props: { collectionId?: string }): JSX.Element {
+  const { collectionId } = props;
 
-  // Resolve a catalog docs-tab link. Guard `parseEntityRef` — a malformed
-  // stored entityRef (the connect route doesn't validate its format) would
-  // otherwise throw during render and crash the card.
-  let target: string | undefined;
-  if (entityRef) {
-    try {
-      const { kind, namespace, name } = parseEntityRef(entityRef);
-      target = `/catalog/${namespace.toLowerCase()}/${kind.toLowerCase()}/${encodeURIComponent(
-        name
-      )}/bruno-docs`;
-    } catch {
-      target = undefined;
-    }
-  }
-
-  if (!target) {
+  if (!collectionId) {
     return (
-      <Tooltip title="Not linked to a catalog entity">
+      <Tooltip title="No collection to open">
         <span>
           <Button variant="outlined" size="small" disabled>
             OPEN
@@ -80,7 +73,11 @@ function OpenAction(props: { entityRef?: string }): JSX.Element {
   }
 
   return (
-    <LinkButton to={target} variant="outlined" size="small">
+    <LinkButton
+      to={`/bruno/docs/${encodeURIComponent(collectionId)}`}
+      variant="outlined"
+      size="small"
+    >
       OPEN
     </LinkButton>
   );
@@ -101,6 +98,18 @@ export function CollectionCard(props: {
   // Imported-but-unlinked stub: no entityRef, so no OPEN target — render a
   // "Link" action (in-page deep-link) instead. See D4/D9.
   const isImportedStub = Boolean(collection.imported) && !collection.linked;
+
+  // Parse the linked entity ref for display. Guard `parseEntityRef` — a
+  // malformed stored ref (the connect route doesn't validate its format)
+  // would otherwise throw during render and crash the card.
+  let linkedEntityRef: CompoundEntityRef | undefined;
+  if (collection.linked && collection.entityRef) {
+    try {
+      linkedEntityRef = parseEntityRef(collection.entityRef);
+    } catch {
+      linkedEntityRef = undefined;
+    }
+  }
 
   const onUnlink = async () => {
     if (!collection.entityRef) {
@@ -175,6 +184,15 @@ export function CollectionCard(props: {
         )}
       </Box>
 
+      {linkedEntityRef && (
+        <Box className={classes.linkedEntity}>
+          <Typography variant="body2" color="textSecondary">
+            Linked to
+          </Typography>
+          <EntityRefLink entityRef={linkedEntityRef} />
+        </Box>
+      )}
+
       <Box className={classes.meta}>
         <Typography variant="body2" color="textSecondary">
           {collection.requestCount} requests
@@ -210,7 +228,7 @@ export function CollectionCard(props: {
           </>
         ) : (
           <>
-            <OpenAction entityRef={collection.entityRef} />
+            <OpenAction collectionId={collection.id} />
             {collection.linked && (
               <Button
                 variant="outlined"

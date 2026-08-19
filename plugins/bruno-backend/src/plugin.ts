@@ -73,17 +73,22 @@ export const brunoPlugin = createBackendPlugin({
           })
         );
 
-        // POC: allow unauthenticated access to the read-only endpoints so the
-        // docs can be linked out / embedded without a Backstage session. The
-        // GitHub token used server-side by the UrlReader is never exposed here
-        // (RISK #1) — these responses contain only parsed collection data.
+        // `/health` is a liveness probe with no data — keep it open.
         httpRouter.addAuthPolicy({
           path: '/health',
           allow: 'unauthenticated'
         });
+        // The docs page is loaded as an iframe `src` — a browser GET with NO
+        // Authorization header — so it cannot use bearer auth. Allow the
+        // Backstage limited-access USER-COOKIE on this exact route only. Path
+        // matching is prefix-based (path-to-regexp `end:false`) and additive,
+        // so this matches `/collections/<id>/docs*` and NOTHING ELSE under
+        // `/collections`: the sibling read routes (list, :id, opencollection.yml)
+        // fall through to the default credentials barrier and require a full
+        // user/service token. See docs/execution/DOCS-AUTH-P1-plan.md.
         httpRouter.addAuthPolicy({
-          path: '/collections',
-          allow: 'unauthenticated'
+          path: '/collections/:id/docs',
+          allow: 'user-cookie'
         });
       }
     });

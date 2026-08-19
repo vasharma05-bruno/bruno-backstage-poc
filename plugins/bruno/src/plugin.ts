@@ -4,7 +4,6 @@ import {
   brunoCard,
   brunoCollectionTreeCard,
   brunoCollectionOverviewCard,
-  brunoDocsContent,
   brunoPage,
   brunoDocsPage
 } from './extensions';
@@ -22,11 +21,12 @@ import {
  *  - brunoCard             -> entity card on kind:api + spec.type:bruno-collection
  *  - brunoCollectionOverviewCard -> collection-root README card on kind:api
  *  - brunoCollectionTreeCard -> read-only collection tree card on kind:api
- *  - brunoDocsContent      -> "API Docs" tab at /bruno-docs on the same filter
  *  - brunoPage             -> standalone Bruno page at /bruno (auto-registered
  *                             in the sidebar via routeRef + title + icon)
- *  - brunoDocsPage         -> chrome-less full-screen docs page at /bruno/docs
- *                             (no title/icon, kept out of the sidebar)
+ *  - brunoDocsPage         -> chrome-less full-screen docs page at
+ *                             /bruno/docs/:collectionId (no title/icon, kept out
+ *                             of the sidebar); the OPEN action on the dashboard
+ *                             and the entity Bruno card link straight here
  */
 export const brunoPlugin = createFrontendPlugin({
   pluginId: 'bruno',
@@ -35,7 +35,6 @@ export const brunoPlugin = createFrontendPlugin({
     brunoCard,
     brunoCollectionOverviewCard,
     brunoCollectionTreeCard,
-    brunoDocsContent,
     brunoPage,
     brunoDocsPage
   ]
