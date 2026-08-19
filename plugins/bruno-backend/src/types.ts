@@ -143,8 +143,8 @@ export interface DiscoveredCollection {
   name: string;
   requestCount: number;
   collectionId: string;
-  /** Fully-qualified GitHub URL to pass verbatim to `POST /connections`. */
-  githubUrl: string;
+  /** Fully-qualified source URL to pass verbatim to `POST /connections`. */
+  sourceUrl: string;
 }
 
 /** The full payload returned by `POST /connections/discover`. */
@@ -173,7 +173,7 @@ export interface DashboardCollection {
 export interface ImportedCollection {
   collectionId: string;
   name: string;
-  githubUrl: string;
+  sourceUrl: string;
   importedBy: string;
   updatedAt: string;
 }

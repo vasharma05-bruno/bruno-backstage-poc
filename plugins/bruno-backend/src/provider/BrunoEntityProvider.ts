@@ -1,6 +1,10 @@
 import type { LoggerService, SchedulerServiceTaskRunner } from '@backstage/backend-plugin-api';
 import type { Config } from '@backstage/config';
 import type { ApiEntity, EntityLink } from '@backstage/catalog-model';
+import {
+  DefaultGithubCredentialsProvider,
+  ScmIntegrations
+} from '@backstage/integration';
 import type {
   EntityProvider,
   EntityProviderConnection
@@ -11,6 +15,7 @@ import {
   readBrunoSources,
   sanitizeName
 } from '../service/collectionService';
+import { createScmProviderRegistry, type ScmProviderRegistry } from '../scm';
 import type { BrunoSourceConfig } from '../types';
 
 const LOCATION_TYPE = 'bruno-provider';
@@ -25,6 +30,7 @@ const LOCATION_TYPE = 'bruno-provider';
  */
 export class BrunoEntityProvider implements EntityProvider {
   private connection?: EntityProviderConnection;
+  private readonly scmProviders: ScmProviderRegistry;
 
   constructor(
     private readonly options: {
@@ -33,7 +39,13 @@ export class BrunoEntityProvider implements EntityProvider {
       collectionService: CollectionService;
       taskRunner: SchedulerServiceTaskRunner;
     }
-  ) {}
+  ) {
+    const integrations = ScmIntegrations.fromConfig(options.config);
+    this.scmProviders = createScmProviderRegistry({
+      integrations,
+      githubCredentials: DefaultGithubCredentialsProvider.fromIntegrations(integrations)
+    });
+  }
 
   getProviderName(): string {
     return 'bruno-entity-provider';
@@ -97,7 +109,7 @@ export class BrunoEntityProvider implements EntityProvider {
     if (source.type === 'url') {
       annotations['bruno.dev/source-url'] = source.target;
       links.push({
-        url: brunoDeepLink(source.target),
+        url: brunoDeepLink(source.target, this.scmProviders),
         title: 'Open in Bruno',
         icon: 'code'
       });
@@ -135,23 +147,11 @@ export class BrunoEntityProvider implements EntityProvider {
 // Mirrors buildBrunoDeepLink in plugins/bruno/src/lib/brunoLink.ts — keep the
 // format (`https://fetch.usebruno.com/?url=<repo-root>`) in sync. We send only
 // the repo root, not the deeper /tree/<ref>/<subpath> collection path.
-function brunoDeepLink(sourceUrl: string): string {
+function brunoDeepLink(
+  sourceUrl: string,
+  providers: ScmProviderRegistry
+): string {
   return `https://fetch.usebruno.com/?url=${encodeURIComponent(
-    repoRootFromCollectionUrl(sourceUrl)
+    providers.byUrl(sourceUrl).repoRootFromUrl(sourceUrl)
   )}`;
-}
-
-/** Reduce a collection URL to its repo-root `https://<host>/<owner>/<repo>`.
- *  Mirrors repoRootFromCollectionUrl in plugins/bruno/src/lib/githubUrl.ts. */
-function repoRootFromCollectionUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    const seg = u.pathname.split('/').filter(Boolean);
-    if (seg.length < 2) {
-      return url;
-    }
-    return `${u.origin}/${seg[0]}/${seg[1]}`;
-  } catch {
-    return url;
-  }
 }

@@ -71,7 +71,7 @@ export function BrunoCard() {
         status: 'connected',
         detail,
         collectionId: result.collectionId,
-        sourceUrl: rec?.githubUrl
+        sourceUrl: rec?.sourceUrl
       });
     }
   });
@@ -123,7 +123,7 @@ export function BrunoCard() {
               status: 'connected',
               detail: d,
               collectionId: record.collectionId,
-              sourceUrl: record.githubUrl
+              sourceUrl: record.sourceUrl
             });
           }
         });

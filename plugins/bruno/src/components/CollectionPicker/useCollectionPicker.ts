@@ -108,7 +108,7 @@ export function useCollectionPicker(
     }
     setState({ status: 'connecting' });
     try {
-      const result = await brunoApi.connect(entityRef, chosen.githubUrl, token);
+      const result = await brunoApi.connect(entityRef, chosen.sourceUrl, token);
       setState({ status: 'linked' });
       emitConnectionChange(entityRef);
       await onLinked(result);
@@ -257,7 +257,7 @@ export function useCollectionPicker(
             || undefined;
         scanTokenRef.current = token;
       }
-      const result = await brunoApi.connect(entityRef, chosen.githubUrl, token);
+      const result = await brunoApi.connect(entityRef, chosen.sourceUrl, token);
       setState({ status: 'linked' });
       if (entityRef) {
         emitConnectionChange(entityRef);
@@ -318,7 +318,7 @@ export function useCollectionPicker(
       }
       const linked = await brunoApi.connect(
         entityRef,
-        chosen.githubUrl,
+        chosen.sourceUrl,
         token
       );
       setState({ status: 'linked' });

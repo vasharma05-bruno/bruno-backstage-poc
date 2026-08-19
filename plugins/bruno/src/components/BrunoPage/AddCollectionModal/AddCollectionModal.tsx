@@ -184,7 +184,7 @@ export function AddCollectionModal(props: {
     try {
       await brunoApi.importCollections(
         selectedCollections.map((c) => ({
-          githubUrl: c.githubUrl,
+          sourceUrl: c.sourceUrl,
           name: c.name
         }))
       );

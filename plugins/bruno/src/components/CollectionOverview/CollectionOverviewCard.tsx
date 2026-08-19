@@ -8,11 +8,11 @@ import type { CollectionDetail } from '../../api/types';
 import { getCollectionId } from '../../lib/annotations';
 import { subscribeConnectionChange } from '../../lib/connectionEvents';
 
-type State =
-  | { status: 'loading' }
-  | { status: 'hidden' }
-  | { status: 'ready'; detail: CollectionDetail }
-  | { status: 'error' };
+type State
+  = | { status: 'loading' }
+    | { status: 'hidden' }
+    | { status: 'ready'; detail: CollectionDetail }
+    | { status: 'error' };
 
 /**
  * Right-column entity card rendering the connected Bruno collection's root
