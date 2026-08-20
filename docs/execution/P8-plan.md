@@ -71,4 +71,4 @@ Backend: `types.ts` (+1 field), `collectionService.ts` (3 filters, 1 helper, 2 p
 ## Executor watch-list
 1. `readme?` must be added to BOTH `NormalizedCollection` definitions (backend + frontend) or the frontend won't type-check the new field.
 2. Card returns `null` (not an empty InfoCard) when no README.
-3. Verify: `yarn workspace @usebruno/plugin-bruno-backend build` AND `yarn workspace @usebruno/plugin-bruno build`. No tests.
+3. Verify: `yarn workspace @usebruno/bruno-backend-plugin-poc build` AND `yarn workspace @usebruno/bruno-plugin-poc build`. No tests.

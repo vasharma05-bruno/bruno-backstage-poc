@@ -47,4 +47,4 @@ No `plugin.ts`/`router.ts`/store/provider changes. No new deps (all present; `fe
 1. `preProcessEntity` must RETURN the entity in every branch (mutated or not); never throw for skip/fetch-fail.
 2. Lookup key via `stringifyEntityRef(entity)` — matches how the frontend wrote the row.
 3. Idempotency + kind:API gate before any fetch work where possible (but link lookup needs the map; gate on kind + existing-annotation first).
-4. Build: `yarn workspace @usebruno/plugin-bruno-backend build`. No tests.
+4. Build: `yarn workspace @usebruno/bruno-backend-plugin-poc build`. No tests.

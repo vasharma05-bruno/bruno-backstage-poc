@@ -1,8 +1,8 @@
 /**
- * @usebruno/plugin-bruno — Bruno for Backstage frontend plugin.
+ * @usebruno/bruno-plugin-poc — Bruno for Backstage frontend plugin.
  *
  * Default-exports the plugin so the app can do:
- *   import brunoPlugin from '@usebruno/plugin-bruno';
+ *   import brunoPlugin from '@usebruno/bruno-plugin-poc';
  *   createApp({ features: [..., brunoPlugin] });
  */
 export { brunoPlugin, default } from './plugin';

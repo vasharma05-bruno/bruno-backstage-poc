@@ -3,10 +3,8 @@ import type { Config } from '@backstage/config';
 import { InputError } from '@backstage/errors';
 import {
   DefaultGithubCredentialsProvider,
-  ScmIntegrations,
-  type ScmIntegrationRegistry
+  ScmIntegrations
 } from '@backstage/integration';
-import { Octokit } from '@octokit/rest';
 import { createHash } from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
@@ -45,8 +43,12 @@ import type {
 } from '../types';
 import type { BrunoConnectionRow } from '../store/connectionStore';
 import type { ImportedCollectionRow } from '../store/collectionsStore';
-import { createScmProviderRegistry, type ScmProvider } from '../scm';
-import { githubNormalizeUrl } from '../scm/github';
+import {
+  createScmProviderRegistry,
+  normalizePathStyleUrl,
+  readTreeViaUrlReader,
+  type ScmProvider
+} from '../scm';
 
 /**
  * A parsed .bru request as produced by `@usebruno/lang`'s `bruToJson`.
@@ -197,14 +199,20 @@ export function sanitizeName(id: string): string {
 
 /**
  * Derives the stable cache key / collection id from a collection URL.
- * Normalization is per-provider; callers without a resolved provider fall back
- * to GitHub normalization, which is what every caller did before the seam.
+ *
+ * Normalization is per-provider. Callers without a resolved provider fall back
+ * to the shared path-style normalization — which is the same algorithm all three
+ * implemented providers use, so the fallback is exact for GitHub, GitLab, and
+ * Bitbucket Cloud alike. It would be wrong only for a query-string-ref provider
+ * (Bitbucket Server, Azure); adding one means giving those callers a provider.
  */
 export function collectionIdFromUrl(
   url: string,
   provider?: Pick<ScmProvider, 'normalizeUrl'>
 ): string {
-  const normalized = provider ? provider.normalizeUrl(url) : githubNormalizeUrl(url);
+  const normalized = provider
+    ? provider.normalizeUrl(url)
+    : normalizePathStyleUrl(url);
   return createHash('sha256').update(normalized).digest('hex').slice(0, 16);
 }
 
@@ -297,11 +305,11 @@ export async function createCollectionService(options: {
     userToken?: string;
   }): Promise<{ collectionId: string; detail: CollectionDetail }> {
     const provider = providers.byUrl(input.url);
+    provider.assertConfigured(input.url);
     const normalized = provider.normalizeUrl(input.url);
     const collectionId = collectionIdFromUrl(normalized, provider);
     const tree = await readUrlTreeWithCreds(
       reader,
-      integrations,
       provider,
       normalized,
       logger,
@@ -344,7 +352,8 @@ export async function createCollectionService(options: {
     url: string;
     userToken?: string;
   }): Promise<CollectionDetail> {
-    // Re-fetch + re-parse from GitHub. connectFromUrl refreshes connectedCache
+    // Re-fetch + re-parse from the SCM host. connectFromUrl refreshes
+    // connectedCache
     // under collectionIdFromUrl(url) — the same key runtime-connected
     // collections already use, so their cache is updated in place.
     const { detail } = await connectFromUrl({
@@ -438,6 +447,7 @@ export async function createCollectionService(options: {
       userToken?: string;
     }): Promise<DiscoverResult> {
       const provider = providers.byUrl(input.url);
+      provider.assertConfigured(input.url);
       const normalized = provider.normalizeUrl(input.url);
       const cached = lruTouch(discoverCache, normalized);
       if (cached && Date.now() - cached.fetchedAt <= DISCOVER_TTL_MS) {
@@ -445,7 +455,6 @@ export async function createCollectionService(options: {
       }
       const tree = await readUrlTreeWithCreds(
         reader,
-        integrations,
         provider,
         normalized,
         logger,
@@ -523,7 +532,8 @@ export async function createCollectionService(options: {
           activeEnv: c.collection.environments[0]?.name,
           specType: 'bruno-collection',
           linked: link !== undefined,
-          entityRef: link?.entityRef ?? `api:default/${sanitizeName(c.id)}`
+          entityRef: link?.entityRef ?? `api:default/${sanitizeName(c.id)}`,
+          sourceUrl: c.sourceUrl
         });
       }
 
@@ -535,7 +545,8 @@ export async function createCollectionService(options: {
           envCount: 0,
           specType: undefined,
           linked: false,
-          imported: true
+          imported: true,
+          sourceUrl: row.sourceUrl
           // entityRef intentionally omitted for stubs (D4)
         });
       }
@@ -640,45 +651,33 @@ async function walkLocal(
 /**
  * Reads a collection tree from a URL via Backstage's `UrlReaderService`.
  *
- * RISK #1 (credential isolation): credentials come from Backstage's
- * `integrations.github` config and are applied server-side by the UrlReader.
- * The token is NEVER exposed to the browser or included in any response — the
- * only egress is Backstage -> GitHub. Do not log or return the raw token.
+ * RISK #1 (credential isolation): credentials come from the host's
+ * `integrations.*` config and are applied server-side by the UrlReader. The
+ * token is NEVER exposed to the browser or included in any response — the only
+ * egress is Backstage -> the SCM host. Do not log or return the raw token.
  */
 async function readUrlTree(
   reader: UrlReaderService,
   url: string,
   logger: LoggerService
 ): Promise<FileTree> {
-  logger.info(`Reading Bruno collection tree via UrlReader: ${url}`);
-  const response = await reader.readTree(url);
-  const treeFiles = await response.files();
-
-  const files = new Map<string, string>();
-  for (const file of treeFiles) {
-    // `file.path` is relative to the tree root.
-    const rel = toPosix(file.path);
-    if (
-      rel.endsWith('.bru')
-      || rel.endsWith('bruno.json')
-      || rel.endsWith('.yml')
-      || /(^|\/)readme\.md$/i.test(rel)
-    ) {
-      const buffer = await file.content();
-      files.set(rel, buffer.toString('utf8'));
-    }
-  }
-  return { files };
+  return { files: await readTreeViaUrlReader({ reader, url, logger }) };
 }
 
 /**
- * Reads a collection tree, preferring the Backstage service reader. If that
- * fails and a user OAuth token is supplied, retries via Octokit using the
- * user's own credentials. The user token is never logged, returned, or stored.
+ * Reads a collection tree, preferring the host's service credential via the
+ * Backstage reader. If that fails and the caller supplied their own SCM OAuth
+ * token, retries through the provider adapter's user-token read.
+ *
+ * Which providers have that second tier is a platform fact, not a choice: the
+ * GitHub and GitLab readers accept a per-call token, Bitbucket Cloud's ignores
+ * it and its integration config silently drops a bare one. An adapter without
+ * `readTreeWithUserToken` therefore gets an explicit error naming the fix rather
+ * than a retry that would read anonymously and look like a "not found". The user
+ * token is never logged, returned, or stored.
  */
 async function readUrlTreeWithCreds(
   reader: UrlReaderService,
-  integrations: ScmIntegrationRegistry,
   provider: ScmProvider,
   url: string,
   logger: LoggerService,
@@ -687,84 +686,30 @@ async function readUrlTreeWithCreds(
   try {
     return await readUrlTree(reader, url, logger);
   } catch (error) {
-    if (opts?.userToken) {
-      logger.info('Service reader failed; retrying with user OAuth token.');
-      return await readUrlTreeViaOctokit(
-        integrations,
-        provider,
-        url,
-        opts.userToken,
-        logger
+    if (!opts?.userToken) {
+      throw error;
+    }
+    if (!provider.readTreeWithUserToken) {
+      throw new Error(
+        `${provider.label} cannot use your personal access token for this read: `
+        + `its Backstage reader accepts only the host's configured credential. `
+        + `A private ${provider.label} repository needs an `
+        + `\`integrations.${provider.type}\` entry with credentials. `
+        + `(Underlying error: ${(error as Error).message})`
       );
     }
-    throw error;
-  }
-}
-
-/**
- * Reads a GitHub collection tree via Octokit using a user-supplied token. Used
- * as a fallback when the service reader has no credentials for the repo. The
- * token is passed only to the Octokit client and never logged or returned.
- */
-async function readUrlTreeViaOctokit(
-  integrations: ScmIntegrationRegistry,
-  provider: ScmProvider,
-  url: string,
-  userToken: string,
-  logger: LoggerService
-): Promise<FileTree> {
-  const { owner, repo, ref: parsedRef, subpath } = provider.parseRepoUrl(url);
-  const apiBaseUrl
-    = integrations.github.byUrl(url)?.config.apiBaseUrl
-      ?? 'https://api.github.com';
-  const octokit = new Octokit({ auth: userToken, baseUrl: apiBaseUrl });
-
-  let ref = parsedRef;
-  if (!ref) {
-    const { data } = await octokit.repos.get({ owner, repo });
-    ref = data.default_branch;
-  }
-
-  const { data: tree } = await octokit.git.getTree({
-    owner,
-    repo,
-    tree_sha: ref,
-    recursive: 'true'
-  });
-
-  if (tree.truncated) {
-    logger.warn(
-      `GitHub tree for ${owner}/${repo} was truncated; some files may be missing.`
+    logger.info(
+      `Service reader failed; retrying with the caller's ${provider.label} OAuth token.`
     );
+    return {
+      files: await provider.readTreeWithUserToken({
+        url,
+        userToken: opts.userToken,
+        reader,
+        logger
+      })
+    };
   }
-
-  const prefix = subpath === '' ? '' : `${subpath}/`;
-  const files = new Map<string, string>();
-  for (const entry of tree.tree) {
-    if (entry.type !== 'blob' || !entry.path || !entry.sha) {
-      continue;
-    }
-    if (prefix !== '' && !entry.path.startsWith(prefix)) {
-      continue;
-    }
-    const rel = entry.path.slice(prefix.length);
-    if (
-      !rel.endsWith('.bru')
-      && !rel.endsWith('bruno.json')
-      && !rel.endsWith('.yml')
-      && !/(^|\/)readme\.md$/i.test(rel)
-    ) {
-      continue;
-    }
-    const { data: blob } = await octokit.git.getBlob({
-      owner,
-      repo,
-      file_sha: entry.sha
-    });
-    const text = Buffer.from(blob.content, 'base64').toString('utf8');
-    files.set(rel, text);
-  }
-  return { files };
 }
 
 /* -------------------------------------------------------------------------- */

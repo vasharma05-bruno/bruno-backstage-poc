@@ -48,4 +48,4 @@ Only `collectionService.ts`: 3 filter disjuncts, 1 branch in `parseCollection`, 
 1. Alias the filestore `parseCollection` import (name collision with the local one).
 2. Wrap every filestore call in try/catch (it throws on `folder`/unknown types and re-throws parse errors; it also `console.error`s — that stderr noise is acceptable, don't wrap console).
 3. Do NOT modify any `.bru` function or `NormalizedCollection`.
-4. Verify: `yarn workspace @usebruno/plugin-bruno-backend build`. No tests.
+4. Verify: `yarn workspace @usebruno/bruno-backend-plugin-poc build`. No tests.

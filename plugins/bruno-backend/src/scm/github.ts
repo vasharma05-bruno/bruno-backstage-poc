@@ -3,34 +3,14 @@ import type {
   ScmIntegrationRegistry
 } from '@backstage/integration';
 import { Octokit } from '@octokit/rest';
-import type { ParsedRepoUrl, ScmProvider } from './types';
-
-/**
- * Normalizes a GitHub collection URL to a stable identity. Lower-cases the
- * host, drops query/hash, collapses duplicate slashes and a single trailing
- * slash. `/tree/<branch>/<subpath>` is preserved (distinct subpaths are
- * distinct collections).
- *
- * Exported standalone so `collectionIdFromUrl` — a module-level function with
- * no access to the registry — can keep normalizing GitHub-shaped URLs.
- */
-export function githubNormalizeUrl(url: string): string {
-  const u = new URL(url.trim());
-  u.hostname = u.hostname.toLowerCase();
-  u.hash = '';
-  u.search = '';
-  let normalizedPath = u.pathname.replace(/\/{2,}/g, '/');
-  if (normalizedPath.length > 1 && normalizedPath.endsWith('/')) {
-    normalizedPath = normalizedPath.slice(0, -1);
-  }
-  return `${u.protocol}//${u.host}${normalizedPath}`;
-}
-
-// Duplicated from collectionService.ts so nothing under `scm/` imports from
-// `service/` — that edge would be a cycle.
-function joinPosix(...parts: string[]): string {
-  return parts.filter((p) => p !== '').join('/');
-}
+import { joinPosix, normalizePathStyleUrl, originPlusSegments } from './normalize';
+import { isCollectionFile } from './treeFilter';
+import type {
+  ParsedRepoUrl,
+  ScmFileTree,
+  ScmProvider,
+  ScmUserTokenReadArgs
+} from './types';
 
 /** Parses `owner/repo` and an optional `/tree/<ref>/<subpath>` from a URL. */
 function parseRepoUrl(url: string): ParsedRepoUrl {
@@ -62,10 +42,15 @@ export function createGithubScmProvider(options: {
 }): ScmProvider {
   const { integrations, githubCredentials } = options;
 
+  const apiBaseUrlFor = (url: string): string =>
+    integrations.github.byUrl(url)?.config.apiBaseUrl ?? 'https://api.github.com';
+
   return {
     type: 'github',
 
-    normalizeUrl: githubNormalizeUrl,
+    label: 'GitHub',
+
+    normalizeUrl: normalizePathStyleUrl,
 
     parseRepoUrl,
 
@@ -78,31 +63,28 @@ export function createGithubScmProvider(options: {
      */
     composeCollectionUrl(normalizedRepoUrl, rootPrefixWithinInput, ref) {
       const u = new URL(normalizedRepoUrl);
-      const { subpath: inputSubpath } = parseRepoUrl(normalizedRepoUrl);
+      const { owner, repo, subpath: inputSubpath }
+        = parseRepoUrl(normalizedRepoUrl);
       const fullSubpath = joinPosix(inputSubpath, rootPrefixWithinInput);
-      const segments = u.pathname.split('/').filter((s) => s !== '');
-      const owner = segments[0];
-      const repo = segments[1];
       if (fullSubpath === '') {
         return `${u.protocol}//${u.host}/${owner}/${repo}`;
       }
       return `${u.protocol}//${u.host}/${owner}/${repo}/tree/${ref}/${fullSubpath}`;
     },
 
-    /** Total: never throws. Mirrors `repoRootFromCollectionUrl` in
-     *  plugins/bruno/src/lib/githubUrl.ts — keep both in step (P3 unifies them). */
+    /** Total: never throws. */
     repoRootFromUrl(url) {
-      try {
-        const u = new URL(url);
-        const seg = u.pathname.split('/').filter(Boolean);
-        if (seg.length < 2) {
-          return url;
-        }
-        return `${u.origin}/${seg[0]}/${seg[1]}`;
-      } catch {
-        return url;
-      }
+      return originPlusSegments(url, 2);
     },
+
+    /**
+     * No-op for GitHub alone: `readGithubIntegrationConfigs` always appends a
+     * default `github.com` entry when the host configured none, which is why
+     * public GitHub reads work with no `integrations` block at all. A GitHub
+     * Enterprise host still needs its own entry, but then `byUrl` resolves it
+     * and there is nothing to assert here.
+     */
+    assertConfigured() {},
 
     /**
      * Resolves the repo's default branch via Octokit. The client is built with
@@ -125,11 +107,73 @@ export function createGithubScmProvider(options: {
         // there); fall back to the caller's user OAuth token below.
       }
       auth = auth ?? opts?.userToken;
-      const apiBaseUrl
-        = integrations.github.byUrl(url)?.config.apiBaseUrl ?? 'https://api.github.com';
-      const octokit = new Octokit({ auth, baseUrl: apiBaseUrl });
+      const octokit = new Octokit({ auth, baseUrl: apiBaseUrlFor(url) });
       const { data } = await octokit.repos.get({ owner, repo });
       return data.default_branch;
+    },
+
+    /**
+     * Reads a private tree with the caller's own GitHub OAuth token via the
+     * GitHub REST API.
+     *
+     * This predates the discovery that `GithubUrlReader.readTree` honours a
+     * per-call `options.token` and is therefore redundant, but it is the path
+     * that has been exercised against real private repos, so it stays until
+     * MSCM-P2 retires it deliberately. Its cost is a recursive tree call plus
+     * one blob call per file — the worst available pattern for rate limits, and
+     * another reason P2 should land. The token reaches only the Octokit client:
+     * never logged, returned, or stored.
+     */
+    async readTreeWithUserToken(
+      args: ScmUserTokenReadArgs
+    ): Promise<ScmFileTree> {
+      const { url, userToken, logger } = args;
+      const { owner, repo, ref: parsedRef, subpath } = parseRepoUrl(url);
+      const octokit = new Octokit({
+        auth: userToken,
+        baseUrl: apiBaseUrlFor(url)
+      });
+
+      let ref = parsedRef;
+      if (!ref) {
+        const { data } = await octokit.repos.get({ owner, repo });
+        ref = data.default_branch;
+      }
+
+      const { data: tree } = await octokit.git.getTree({
+        owner,
+        repo,
+        tree_sha: ref,
+        recursive: 'true'
+      });
+
+      if (tree.truncated) {
+        logger.warn(
+          `GitHub tree for ${owner}/${repo} was truncated; some files may be missing.`
+        );
+      }
+
+      const prefix = subpath === '' ? '' : `${subpath}/`;
+      const files: ScmFileTree = new Map();
+      for (const entry of tree.tree) {
+        if (entry.type !== 'blob' || !entry.path || !entry.sha) {
+          continue;
+        }
+        if (prefix !== '' && !entry.path.startsWith(prefix)) {
+          continue;
+        }
+        const rel = entry.path.slice(prefix.length);
+        if (!isCollectionFile(rel)) {
+          continue;
+        }
+        const { data: blob } = await octokit.git.getBlob({
+          owner,
+          repo,
+          file_sha: entry.sha
+        });
+        files.set(rel, Buffer.from(blob.content, 'base64').toString('utf8'));
+      }
+      return files;
     }
   };
 }

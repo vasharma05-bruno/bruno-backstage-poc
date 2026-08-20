@@ -12,7 +12,7 @@ import './loadEnv';
 import { createBackend } from '@backstage/backend-defaults';
 // Bruno for Backstage — catalog module that emits kind: API entities for
 // discovered Bruno collections (BrunoEntityProvider).
-import { brunoCatalogModule } from '@usebruno/plugin-bruno-backend';
+import { brunoCatalogModule } from '@usebruno/bruno-backend-plugin-poc';
 
 const backend = createBackend();
 
@@ -45,7 +45,7 @@ backend.add(import('@backstage/plugin-auth-backend-module-gitlab-provider'));
 backend.add(import('@backstage/plugin-auth-backend-module-bitbucket-provider'));
 
 // Bruno for Backstage — backend plugin (serves /api/bruno/*) + catalog module
-backend.add(import('@usebruno/plugin-bruno-backend'));
+backend.add(import('@usebruno/bruno-backend-plugin-poc'));
 backend.add(brunoCatalogModule);
 
 // catalog plugin

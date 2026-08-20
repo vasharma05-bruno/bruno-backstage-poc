@@ -46,4 +46,4 @@ Update the route-list doc comment. No new router imports.
 ## Executor watch-list
 1. `getDashboard` stays synchronous + pure over in-memory maps + passed links; router does the async `listAll()`.
 2. Don't alter `/collections` behavior or `loadSource`'s existing log+return.
-3. Build: `yarn workspace @usebruno/plugin-bruno-backend build`. No tests.
+3. Build: `yarn workspace @usebruno/bruno-backend-plugin-poc build`. No tests.

@@ -50,4 +50,4 @@
 2. `routeRef` + `title` + `icon` all set on the PageBlueprint (nav depends on all three).
 3. Icon import is `Http` (NOT `Api`).
 4. Cards handle undefined `activeEnv`/`specType`/`entityRef`.
-5. Build: `yarn workspace @usebruno/plugin-bruno build`. No tests.
+5. Build: `yarn workspace @usebruno/bruno-plugin-poc build`. No tests.

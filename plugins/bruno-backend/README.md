@@ -1,4 +1,4 @@
-# @usebruno/plugin-bruno-backend
+# @usebruno/bruno-backend-plugin-poc
 
 Backend plugin for the **Bruno for Backstage** POC. It loads Bruno collections
 (from the local filesystem or a GitHub URL), parses `.bru` files with
@@ -15,10 +15,10 @@ This package is wired into `packages/backend/src/index.ts`:
 
 ```ts
 // The Bruno backend plugin (serves /api/bruno/*)
-backend.add(import('@usebruno/plugin-bruno-backend'));
+backend.add(import('@usebruno/bruno-backend-plugin-poc'));
 
 // The catalog module that materializes API entities from Bruno sources
-import { brunoCatalogModule } from '@usebruno/plugin-bruno-backend';
+import { brunoCatalogModule } from '@usebruno/bruno-backend-plugin-poc';
 backend.add(brunoCatalogModule);
 ```
 

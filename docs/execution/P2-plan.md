@@ -167,4 +167,4 @@ This id is the cache key and `:id` path param, so `GET /collections/:id` + `/:id
 3. Check `git.getTree` `data.truncated` and warn.
 4. `httpAuth.credentials({allow:['user']})` requires the P1 auth harness to issue user tokens; guest may not qualify — that is expected (connect needs a real session). Do not weaken the guard to accommodate guest.
 5. Match existing error style; `throw new InputError`/`NotFoundError` flows through the existing `middleware.error()`.
-6. Verify `plugins/bruno-backend` builds (`yarn workspace @usebruno/plugin-bruno-backend build`) — no tests.
+6. Verify `plugins/bruno-backend` builds (`yarn workspace @usebruno/bruno-backend-plugin-poc build`) — no tests.

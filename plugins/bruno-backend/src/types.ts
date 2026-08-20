@@ -167,6 +167,12 @@ export interface DashboardCollection {
    * a stub card with a Link action.
    */
   imported?: boolean;
+  /**
+   * The collection's source repo/tree URL, when it has one (absent for `local`
+   * sources). The dashboard sends it back on sync so the frontend can resolve
+   * credentials for the right SCM provider.
+   */
+  sourceUrl?: string;
 }
 
 /** An imported-but-unlinked collection (GET /collections/imported). */

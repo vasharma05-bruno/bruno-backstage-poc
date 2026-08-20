@@ -56,4 +56,4 @@ New `lib/connectionEvents.ts`; edits to `BrunoCard.tsx` (import + up to 3 emit c
 ## Executor watch-list
 1. The subscribe effect's dep is `[entityRef]` only (not the fetch deps) so it isn't torn down on every refetch.
 2. `emitConnectionChange` must fire on BOTH connect paths (`onConnect`, `onConnectGithub`) and on disconnect.
-3. Verify: `yarn workspace @usebruno/plugin-bruno build`. No tests.
+3. Verify: `yarn workspace @usebruno/bruno-plugin-poc build`. No tests.

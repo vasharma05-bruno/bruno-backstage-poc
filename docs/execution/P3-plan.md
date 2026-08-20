@@ -58,4 +58,4 @@ disconnect(entityRef: string): Promise<void>;
 2. Body key is `userGithubToken`; omit when no token.
 3. `getAccessToken(['repo'])` must run inside the button `onClick` (user gesture) for the popup.
 4. Never render/log the user token.
-5. Verify: `yarn workspace @usebruno/plugin-bruno build` (typecheck) + `yarn workspace @usebruno/plugin-bruno lint`. No tests.
+5. Verify: `yarn workspace @usebruno/bruno-plugin-poc build` (typecheck) + `yarn workspace @usebruno/bruno-plugin-poc lint`. No tests.

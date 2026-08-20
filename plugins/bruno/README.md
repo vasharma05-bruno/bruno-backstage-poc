@@ -1,4 +1,4 @@
-# @usebruno/plugin-bruno
+# @usebruno/bruno-plugin-poc
 
 Bruno for Backstage — **frontend** plugin (POC). Built on the **new Backstage
 frontend system** (Backstage v1.53.0) using blueprints from
@@ -54,7 +54,7 @@ Add the default export to `features`:
 ```ts
 import { createApp } from '@backstage/frontend-defaults';
 import catalogPlugin from '@backstage/plugin-catalog/alpha';
-import brunoPlugin from '@usebruno/plugin-bruno';
+import brunoPlugin from '@usebruno/bruno-plugin-poc';
 import { navModule } from './modules/nav';
 
 export default createApp({

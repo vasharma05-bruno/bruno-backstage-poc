@@ -66,4 +66,4 @@ export const brunoCollectionTreeCard = EntityCardBlueprint.make({
 ## Executor watch-list
 1. Return `null` (not an empty `InfoCard`) for loading/hidden/error — verify no empty card slot appears on an unrelated API entity.
 2. Reuse `MethodBadge` + the two type guards; do not duplicate badge/color logic.
-3. Verify: `yarn workspace @usebruno/plugin-bruno build` (typecheck). No tests.
+3. Verify: `yarn workspace @usebruno/bruno-plugin-poc build` (typecheck). No tests.

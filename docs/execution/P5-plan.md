@@ -44,4 +44,4 @@ Runtime-connected (externally-owned) entities cannot be annotated by this `type:
 
 ## Executor watch-list
 - Empty `links` for local sources; do not build an "Open in Bruno" link from a filesystem path.
-- Verify: `yarn workspace @usebruno/plugin-bruno-backend build`. No tests.
+- Verify: `yarn workspace @usebruno/bruno-backend-plugin-poc build`. No tests.

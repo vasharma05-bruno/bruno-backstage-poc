@@ -55,4 +55,4 @@
 ## Executor watch-list
 1. Verify goes in `connectFromUrl` ONLY.
 2. Bulk route registered before the `:entityRef` route; `allow:['user','service']`.
-3. Build: `yarn workspace @usebruno/plugin-bruno-backend build`. No tests.
+3. Build: `yarn workspace @usebruno/bruno-backend-plugin-poc build`. No tests.
