@@ -146,6 +146,26 @@ auth:
           resolvers:
             - resolver: emailLocalPartMatchingUserEntityName
               dangerouslyAllowSignInWithoutUserInCatalog: true
+    gitlab:
+      development:
+        clientId: ${AUTH_GITLAB_CLIENT_ID}
+        clientSecret: ${AUTH_GITLAB_CLIENT_SECRET}
+        # Self-hosted GitLab only — must match the instance base URL exactly:
+        # audience: https://gitlab.company.com
+        signIn:
+          resolvers:
+            - resolver: usernameMatchingUserEntityName
+              dangerouslyAllowSignInWithoutUserInCatalog: true
+    # Bitbucket *Cloud* only. Data Center needs the `bitbucketServer` provider
+    # plus @backstage/plugin-auth-backend-module-bitbucket-server-provider.
+    bitbucket:
+      development:
+        clientId: ${AUTH_BITBUCKET_CLIENT_ID}
+        clientSecret: ${AUTH_BITBUCKET_CLIENT_SECRET}
+        signIn:
+          resolvers:
+            - resolver: userIdMatchingUserEntityAnnotation
+              dangerouslyAllowSignInWithoutUserInCatalog: true
   # see https://backstage.io/docs/ai/mcp-actions#client-id-metadata-documents
   # to learn more about client id metadata documents
   clientIdMetadataDocuments:

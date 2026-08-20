@@ -1,14 +1,21 @@
 import { ApiBlueprint } from '@backstage/frontend-plugin-api';
 import { SignInPageBlueprint } from '@backstage/plugin-app-react';
 import {
+  bitbucketAuthApiRef,
   configApiRef,
   createApiFactory,
   discoveryApiRef,
   githubAuthApiRef,
+  gitlabAuthApiRef,
   googleAuthApiRef,
   oauthRequestApiRef,
 } from '@backstage/core-plugin-api';
-import { GithubAuth, GoogleAuth } from '@backstage/core-app-api';
+import {
+  BitbucketAuth,
+  GithubAuth,
+  GitlabAuth,
+  GoogleAuth,
+} from '@backstage/core-app-api';
 
 /**
  * APP-SIDE test harness only (see docs/NEXT-STEPS.md §4). The new frontend
@@ -66,7 +73,59 @@ export const googleAuthApi = ApiBlueprint.make({
     ),
 });
 
-// Sign-in page offering GitHub + Google, with Guest kept for local dev.
+// GitLab OAuth client API. `read_user` is the login default; broader scopes
+// (`read_api`, `read_repository`) are requested on demand for private-repo
+// connect, mirroring the GitHub `repo` escalation above.
+export const gitlabAuthApi = ApiBlueprint.make({
+  name: 'gitlab-auth',
+  params: define =>
+    define(
+      createApiFactory({
+        api: gitlabAuthApiRef,
+        deps: {
+          discoveryApi: discoveryApiRef,
+          oauthRequestApi: oauthRequestApiRef,
+          configApi: configApiRef,
+        },
+        factory: ({ discoveryApi, oauthRequestApi, configApi }) =>
+          GitlabAuth.create({
+            configApi,
+            discoveryApi,
+            oauthRequestApi,
+            defaultScopes: ['read_user'],
+            environment: configApi.getOptionalString('auth.environment'),
+          }),
+      }),
+    ),
+});
+
+// Bitbucket Cloud OAuth client API. `account` is the login default; the
+// `repository` scope is requested on demand for private-repo connect.
+export const bitbucketAuthApi = ApiBlueprint.make({
+  name: 'bitbucket-auth',
+  params: define =>
+    define(
+      createApiFactory({
+        api: bitbucketAuthApiRef,
+        deps: {
+          discoveryApi: discoveryApiRef,
+          oauthRequestApi: oauthRequestApiRef,
+          configApi: configApiRef,
+        },
+        factory: ({ discoveryApi, oauthRequestApi, configApi }) =>
+          BitbucketAuth.create({
+            configApi,
+            discoveryApi,
+            oauthRequestApi,
+            defaultScopes: ['account'],
+            environment: configApi.getOptionalString('auth.environment'),
+          }),
+      }),
+    ),
+});
+
+// Sign-in page offering GitHub + Google + GitLab + Bitbucket, with Guest kept
+// for local dev.
 export const signInPage = SignInPageBlueprint.make({
   params: {
     loader: async () => {
@@ -87,6 +146,18 @@ export const signInPage = SignInPageBlueprint.make({
               title: 'Google',
               message: 'Sign in using Google',
               apiRef: googleAuthApiRef,
+            },
+            {
+              id: 'gitlab-auth-provider',
+              title: 'GitLab',
+              message: 'Sign in using GitLab',
+              apiRef: gitlabAuthApiRef,
+            },
+            {
+              id: 'bitbucket-auth-provider',
+              title: 'Bitbucket',
+              message: 'Sign in using Bitbucket',
+              apiRef: bitbucketAuthApiRef,
             },
           ]}
         />

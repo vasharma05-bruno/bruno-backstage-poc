@@ -38,6 +38,11 @@ backend.add(import('@backstage/plugin-auth-backend-module-guest-provider'));
 // GitHub also grants the `repo` scope the plugin reuses for private-repo connect.
 backend.add(import('@backstage/plugin-auth-backend-module-github-provider'));
 backend.add(import('@backstage/plugin-auth-backend-module-google-provider'));
+// Multi-SCM login: GitLab (gitlab.com) + Bitbucket Cloud. Same role as the
+// GitHub provider above — user login, distinct from `integrations.*` service
+// credentials. Bitbucket *Server*/Data Center is a separate provider module.
+backend.add(import('@backstage/plugin-auth-backend-module-gitlab-provider'));
+backend.add(import('@backstage/plugin-auth-backend-module-bitbucket-provider'));
 
 // Bruno for Backstage — backend plugin (serves /api/bruno/*) + catalog module
 backend.add(import('@usebruno/plugin-bruno-backend'));
