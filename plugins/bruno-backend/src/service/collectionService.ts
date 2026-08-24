@@ -252,6 +252,11 @@ export async function createCollectionService(options: {
         tree = await readLocalTree(source.target, workingDir, logger);
       } else {
         sourceUrl = source.target;
+        // Same diagnostic the connect/discover paths get: a self-hosted target
+        // with no matching `integrations` entry otherwise fails with the
+        // FetchUrlReader's error, which names neither the cause nor the fix.
+        // The message lands in `failures` and surfaces on the dashboard.
+        providers.byUrl(source.target).assertConfigured(source.target);
         tree = await readUrlTree(reader, source.target, logger);
       }
 

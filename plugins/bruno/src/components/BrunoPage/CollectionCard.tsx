@@ -3,7 +3,7 @@ import { InfoCard, LinkButton } from '@backstage/core-components';
 import { parseEntityRef } from '@backstage/catalog-model';
 import type { CompoundEntityRef } from '@backstage/catalog-model';
 import { EntityRefLink } from '@backstage/plugin-catalog-react';
-import { githubAuthApiRef, useApi } from '@backstage/core-plugin-api';
+import { useApi } from '@backstage/core-plugin-api';
 import Avatar from '@material-ui/core/Avatar';
 import Box from '@material-ui/core/Box';
 import Button from '@material-ui/core/Button';
@@ -13,6 +13,7 @@ import Typography from '@material-ui/core/Typography';
 import { makeStyles } from '@material-ui/core/styles';
 import { brunoApiRef } from '../../api/BrunoApi';
 import { emitConnectionChange } from '../../lib/connectionEvents';
+import { useScmToken } from '../../lib/useScmToken';
 import type { DashboardCollection } from '../../api/types';
 
 const useStyles = makeStyles((theme) => ({
@@ -92,7 +93,7 @@ export function CollectionCard(props: {
   const classes = useStyles();
   const { collection, onRequestLink, onChanged } = props;
   const brunoApi = useApi(brunoApiRef);
-  const githubAuth = useApi(githubAuthApiRef);
+  const tokens = useScmToken();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   // Imported-but-unlinked stub: no entityRef, so no OPEN target — render a
@@ -135,9 +136,12 @@ export function CollectionCard(props: {
     setBusy(true);
     setError(undefined);
     try {
-      const token
-        = (await githubAuth.getAccessToken(['repo'], { optional: true }))
-          || undefined;
+      // Credentials follow the collection's own host, so a dashboard mixing
+      // GitHub, GitLab and Bitbucket collections syncs each against the right
+      // provider. `sourceUrl` is absent for `local` sources, which never sync.
+      const token = collection.sourceUrl
+        ? await tokens.silent(collection.sourceUrl)
+        : undefined;
       await brunoApi.sync(collection.id, token);
       onChanged?.();
     } catch (e) {

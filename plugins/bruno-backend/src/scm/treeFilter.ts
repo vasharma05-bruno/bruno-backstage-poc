@@ -3,9 +3,11 @@
  * request/environment files, the `bruno.json` manifest, OpenCollection YAML, and
  * the collection README.
  *
- * One definition shared by every read path (UrlReader and the per-provider
+ * Shared by every REMOTE read path (the UrlReader and the per-provider
  * user-token readers) so no provider can drift into fetching a different file
- * set than another.
+ * set than another. The local-filesystem walker in `collectionService` matches
+ * on directory entries rather than relative paths and keeps its own equivalent
+ * check.
  */
 export function isCollectionFile(relPath: string): boolean {
   return (

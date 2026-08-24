@@ -41,6 +41,7 @@
     "@backstage/ui": "^0.17.0",
     "@material-ui/core": "^4.12.2",
     "@material-ui/icons": "^4.9.1",
+    "@usebruno/bruno-plugin": "0.1.0",
     "@usebruno/bruno-plugin-poc": "workspace:^",
     "react": "^18.0.2",
     "react-dom": "^18.0.2",

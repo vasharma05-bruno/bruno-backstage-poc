@@ -7,15 +7,11 @@ import { createGithubScmProvider } from './github';
 import { createGitlabScmProvider } from './gitlab';
 import type { ScmProvider } from './types';
 
-export type {
-  ScmProvider,
-  ParsedRepoUrl,
-  ScmFileTree,
-  ScmUserTokenReadArgs
-} from './types';
+// Only what consumers outside `scm/` actually use. Everything else in the seam
+// is imported directly by its sibling modules.
+export type { ScmProvider } from './types';
 export { normalizePathStyleUrl } from './normalize';
 export { readTreeViaUrlReader } from './readTree';
-export { isCollectionFile } from './treeFilter';
 
 export interface ScmProviderRegistry {
   byUrl(url: string): ScmProvider;
@@ -24,14 +20,16 @@ export interface ScmProviderRegistry {
 /**
  * Best-effort provider type for a host with no `integrations` entry.
  *
- * Reached only when `integrations.byUrl` found nothing, which means the read
- * itself is going to fail (`assertConfigured`). Its job is therefore not to make
- * the read work — it is to pick the adapter whose grammar matches the URL, so
- * the user gets "no GitLab integration is configured for gitlab.com" instead of
- * a GitHub-shaped parse of a GitLab URL failing somewhere further down.
+ * Reached only when `integrations.byUrl` found nothing. Since the three public
+ * hosts all self-default an integration entry, that means a SELF-HOSTED host,
+ * and the read is going to fail. Its job is therefore not to make the read work
+ * — it is to pick the adapter whose grammar matches the URL, so the user gets
+ * "no GitLab integration is configured for gitlab.company.com" instead of a
+ * GitHub-shaped parse of a GitLab URL failing somewhere further down.
  *
- * Matches the public hosts exactly, plus the common self-hosted convention of
- * naming the first hostname label after the product (`gitlab.company.com`).
+ * Matches the public hosts exactly (cheap and exact, even if usually redundant),
+ * plus the common self-hosted convention of naming the first hostname label
+ * after the product (`gitlab.company.com`).
  */
 function inferTypeFromHost(url: string): string | undefined {
   let hostname: string;

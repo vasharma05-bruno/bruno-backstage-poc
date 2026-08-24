@@ -8,9 +8,9 @@ import type { CollectionPickerApi } from './useCollectionPicker';
 /**
  * Presentational, host-agnostic fields for the collection picker. Renders the
  * URL input, busy indicator, status messages, the >1 dropdown and the 1-found
- * summary — driven entirely by the hook api. The SCAN/LINK/Connect-GitHub
- * buttons stay host-side so their gesture handlers wire directly to
- * `picker.scanWithGithub` / `picker.linkWithGithub`.
+ * summary — driven entirely by the hook api. The SCAN/LINK/Connect buttons stay
+ * host-side so their gesture handlers wire directly to `picker.scanWithAuth` /
+ * `picker.linkWithAuth`.
  */
 export function CollectionPickerFields(props: {
   picker: CollectionPickerApi;
@@ -27,12 +27,15 @@ export function CollectionPickerFields(props: {
       <Grid item xs={12}>
         <TextField
           fullWidth
-          label="GitHub repository URL"
+          label="Repository URL"
           placeholder="https://github.com/owner/repo"
           value={picker.url}
           onChange={(e) => picker.setUrl(e.target.value)}
           error={Boolean(picker.urlError)}
-          helperText={picker.urlError}
+          helperText={
+            picker.urlError
+            ?? 'A GitHub, GitLab or Bitbucket repository or subtree URL.'
+          }
           disabled={busy || disabled}
         />
       </Grid>
@@ -46,11 +49,12 @@ export function CollectionPickerFields(props: {
         </Grid>
       )}
 
-      {state.status === 'needsGithubScan' && (
+      {state.status === 'needsAuthScan' && (
         <Grid item xs={12}>
           <Typography variant="body2" color="textSecondary">
             Couldn't access this repository with the portal's credentials.
-            If it's private, connect your GitHub account to continue.
+            If it's private, connect your {picker.providerLabel} account to
+            continue.
           </Typography>
         </Grid>
       )}
@@ -108,11 +112,11 @@ export function CollectionPickerFields(props: {
         </Grid>
       )}
 
-      {state.status === 'needsGithubLink' && (
+      {state.status === 'needsAuthLink' && (
         <Grid item xs={12}>
           <Typography variant="body2" color="textSecondary">
             Couldn't link with the portal's credentials. If the repository is
-            private, connect your GitHub account to continue.
+            private, connect your {picker.providerLabel} account to continue.
           </Typography>
         </Grid>
       )}

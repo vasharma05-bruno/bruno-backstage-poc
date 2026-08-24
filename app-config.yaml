@@ -65,6 +65,51 @@ integrations:
     #   apiBaseUrl: https://ghe.example.net/api/v3
     #   token: ${GHE_TOKEN}
 
+  ### Multi-SCM: GitLab and Bitbucket Cloud service credentials.
+  ###
+  ### NOT required to read PUBLIC repos on gitlab.com / bitbucket.org —
+  ### @backstage/integration appends a default entry for all three public hosts,
+  ### so the plugin reads them anonymously with no config at all. These blocks
+  ### are what a PRIVATE repo needs when the reader should use a shared service
+  ### credential rather than each user's own OAuth token.
+  ###
+  ### Left commented on purpose: a partial entry is worse than none. Bitbucket
+  ### Cloud THROWS AT STARTUP for a `username` with no `token`/`appPassword`,
+  ### and silently drops a `token` with no `username` — an anonymous read that
+  ### looks like a permissions bug. Uncomment only with both halves set.
+  # gitlab:
+  #   - host: gitlab.com
+  #     token: ${GITLAB_TOKEN}
+  #   ### Self-hosted GitLab needs apiBaseUrl AND baseUrl:
+  #   # - host: gitlab.company.com
+  #   #   apiBaseUrl: https://gitlab.company.com/api/v4
+  #   #   baseUrl: https://gitlab.company.com
+  #   #   token: ${GITLAB_SELF_HOSTED_TOKEN}
+  ###
+  ### ACTIVE: Bitbucket Cloud is the one host where a private repo has no
+  ### user-token fallback at all — `BitbucketCloudUrlReader` ignores a per-call
+  ### token, so without this entry a private repo 404s. `clientId`/`clientSecret`
+  ### use Bitbucket's client_credentials grant, i.e. the reader authenticates AS
+  ### THE OAUTH CONSUMER (the same consumer as `auth.providers.bitbucket` may be
+  ### reused). No `host` key here: @backstage/integration hardcodes
+  ### bitbucket.org for this integration type and errors on unknown keys.
+  ###
+  ### A BLANK value is fatal, not ignored: ConfigReader rejects empty-string
+  ### ("got empty-string, wanted string"), and since every `core.urlReader`
+  ### consumer builds ScmIntegrations at init, that fails the whole backend —
+  ### techdocs, catalog, scaffolder and bruno all refuse to start. Comment this
+  ### block back out rather than leaving the vars empty.
+  bitbucketCloud:
+    - clientId: ${BITBUCKET_CLIENT_ID}
+      clientSecret: ${BITBUCKET_CLIENT_SECRET}
+      ### Alternative (needs BOTH halves, per the note above):
+      # username: ${BITBUCKET_USERNAME}
+      # token: ${BITBUCKET_TOKEN}
+  ###
+  ### Bitbucket Server / Data Center is a DIFFERENT provider
+  ### (`integrations.bitbucketServer`) and has no adapter yet: its web URLs carry
+  ### the ref in the query string, which the current normalization drops.
+
 proxy:
   ### Example for how to add a proxy endpoint for the frontend.
   ### A typical reason to do this is to handle HTTPS and CORS for internal services.
@@ -150,6 +195,11 @@ auth:
       development:
         clientId: ${AUTH_GITLAB_CLIENT_ID}
         clientSecret: ${AUTH_GITLAB_CLIENT_SECRET}
+        # The plugin requests `read_user read_api read_repository` on demand via
+        # ScmAuth when a private project needs the user's own token. Enable those
+        # scopes on the GitLab OAuth application or the consent popup will fail.
+        # They are not listed as additionalScopes here so sign-in stays cheap —
+        # the escalation happens in the "Connect GitLab" gesture instead.
         # Self-hosted GitLab only — must match the instance base URL exactly:
         # audience: https://gitlab.company.com
         signIn:
@@ -162,6 +212,15 @@ auth:
       development:
         clientId: ${AUTH_BITBUCKET_CLIENT_ID}
         clientSecret: ${AUTH_BITBUCKET_CLIENT_SECRET}
+        # ScmAuth requests `account` on demand — narrowed from the stock
+        # `account team pullrequest snippet issue project` in scmAuth.ts, since
+        # the plugin cannot use a Bitbucket user token for reads anyway.
+        # NOTE: a Bitbucket Cloud user token still cannot read a private repo
+        # through this plugin — neither its UrlReader nor its integration config
+        # accepts a per-user bearer token, so private Bitbucket needs the
+        # `integrations.bitbucketCloud` service credential above. The consent
+        # popup is offered for symmetry, but the read falls back with an explicit
+        # message saying so. See plugins/bruno-backend/src/scm/bitbucketCloud.ts.
         signIn:
           resolvers:
             - resolver: userIdMatchingUserEntityAnnotation

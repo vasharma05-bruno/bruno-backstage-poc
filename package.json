@@ -61,7 +61,9 @@
   },
   "resolutions": {
     "@types/react": "^18",
-    "@types/react-dom": "^18"
+    "@types/react-dom": "^18",
+    "@usebruno/bruno-plugin": "portal:/Users/vasharma05_bruno/Projects/backstage/bruno-backstage-plugin/packages/bruno",
+    "@usebruno/bruno-backend-plugin": "portal:/Users/vasharma05_bruno/Projects/backstage/bruno-backstage-plugin/packages/bruno-backend"
   },
   "prettier": "@backstage/cli/config/prettier",
   "lint-staged": {

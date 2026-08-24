@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { InfoCard } from '@backstage/core-components';
-import { useApi, githubAuthApiRef } from '@backstage/core-plugin-api';
+import { useApi } from '@backstage/core-plugin-api';
 import Grid from '@material-ui/core/Grid';
 import Typography from '@material-ui/core/Typography';
 import Button from '@material-ui/core/Button';
@@ -15,16 +15,18 @@ import { brunoApiRef } from '../../../api/BrunoApi';
 import type { ImportedCollection } from '../../../api/types';
 import { emitConnectionChange } from '../../../lib/connectionEvents';
 import { classifyLinkError } from '../../../lib/linkErrors';
+import { scmProviderLabel } from '../../../lib/scmProviders';
+import { useScmToken } from '../../../lib/useScmToken';
 
 /**
  * Right panel of the Link API tab: link the selected catalog API entity to a
- * Bruno collection by GitHub URL. Reuses BrunoCard's gesture-safe two-step
- * connect — public path first, then an explicit "Connect GitHub" that opens the
+ * Bruno collection by repository URL. Reuses BrunoCard's gesture-safe two-step
+ * connect — public path first, then an explicit "Connect <provider>" that opens the
  * OAuth popup within the click gesture for private repos.
  *
  * The flow is SCAN → pick → LINK: SCAN walks the repo for every collection root,
  * the user picks one (auto-selected when there's exactly one), and LINK stores
- * the connection for the chosen collection's fully-qualified GitHub URL.
+ * the connection for the chosen collection's fully-qualified source URL.
  */
 export function LinkPanel(props: {
   selectedRef?: string;
@@ -39,21 +41,21 @@ export function LinkPanel(props: {
     preselectImportedCollectionId
   } = props;
   const brunoApi = useApi(brunoApiRef);
-  const githubAuth = useApi(githubAuthApiRef);
+  const tokens = useScmToken();
   const picker = useCollectionPicker({
     entityRef: selectedRef,
     onLinked: () => onLinked()
   });
 
   // D10 additive path: link an already-imported collection directly by its
-  // stored GitHub URL (no scan). Fetched once on mount; independent of the
+  // stored source URL (no scan). Fetched once on mount; independent of the
   // manual-URL picker above, which is left untouched.
   const [imported, setImported] = useState<ImportedCollection[]>([]);
   const [chosenId, setChosenId] = useState('');
   const [importedBusy, setImportedBusy] = useState(false);
   const [importedError, setImportedError] = useState<string | undefined>();
   const [importedLinked, setImportedLinked] = useState(false);
-  const [importedNeedsGithub, setImportedNeedsGithub] = useState(false);
+  const [importedNeedsAuth, setImportedNeedsAuth] = useState(false);
   const importInFlight = useRef(false);
 
   useEffect(() => {
@@ -98,8 +100,15 @@ export function LinkPanel(props: {
     = picker.state.status === 'scanning'
       || picker.state.status === 'connecting';
 
+  // The imported-collection path has its own URL (the stored `sourceUrl` of the
+  // row picked in the dropdown), so its provider is independent of the one in
+  // the manual-URL picker above.
+  const importedProviderLabel = scmProviderLabel(
+    imported.find((c) => c.collectionId === chosenId)?.sourceUrl
+  );
+
   // Shared tail of the imported-link flow. `token` is whatever the caller
-  // already resolved, so this never awaits `getAccessToken` itself and can be
+  // already resolved, so this never requests a token itself and can be
   // called from either the silent or the gesture-bound path. Never logs the
   // token.
   const runLinkImported = async (entityRef: string, token?: string) => {
@@ -108,7 +117,7 @@ export function LinkPanel(props: {
       return;
     }
     setImportedError(undefined);
-    setImportedNeedsGithub(false);
+    setImportedNeedsAuth(false);
     try {
       await brunoApi.connect(entityRef, chosen.sourceUrl, token);
       setImportedLinked(true);
@@ -118,9 +127,9 @@ export function LinkPanel(props: {
       const kind = classifyLinkError(e);
       // With no token in play a 404/403 is ambiguous: a private repo the
       // anonymous read can't see is indistinguishable from a missing one. Offer
-      // the Connect GitHub action instead of dead-ending on the raw message.
+      // the connect action instead of dead-ending on the raw message.
       if (!token && (kind === 'notFound' || kind === 'needsAuth')) {
-        setImportedNeedsGithub(true);
+        setImportedNeedsAuth(true);
       } else {
         setImportedError(e instanceof Error ? e.message : String(e));
       }
@@ -138,9 +147,8 @@ export function LinkPanel(props: {
     importInFlight.current = true;
     setImportedBusy(true);
     try {
-      const token
-        = (await githubAuth.getAccessToken(['repo'], { optional: true }))
-          || undefined;
+      const chosen = imported.find((c) => c.collectionId === chosenId);
+      const token = chosen ? await tokens.silent(chosen.sourceUrl) : undefined;
       await runLinkImported(selectedRef, token);
     } finally {
       importInFlight.current = false;
@@ -148,21 +156,28 @@ export function LinkPanel(props: {
     }
   };
 
-  // Fired from the "Connect GitHub" button after an imported link failed with no
-  // token. `getAccessToken` MUST be the first await so the consent popup opens
-  // inside the click gesture; the token is reused for the retry.
-  const linkImportedWithGithub = async () => {
+  // Fired from the "Connect <provider>" button after an imported link failed
+  // with no token. `tokens.interactive` MUST be the first await so the consent
+  // popup opens inside the click gesture; the token is reused for the retry.
+  const linkImportedWithAuth = async () => {
     if (importInFlight.current || !selectedRef) {
+      return;
+    }
+    const chosen = imported.find((c) => c.collectionId === chosenId);
+    if (!chosen) {
       return;
     }
     importInFlight.current = true;
     try {
       let token: string;
       try {
-        token = await githubAuth.getAccessToken(['repo']);
-      } catch {
+        token = await tokens.interactive(chosen.sourceUrl);
+      } catch (e) {
         setImportedError(
-          'GitHub access needed for private repos — Connect GitHub.'
+          e instanceof Error && e.message.includes('No SCM authentication')
+            ? e.message
+            : `${importedProviderLabel} access is needed for private `
+              + `repositories — connect ${importedProviderLabel}.`
         );
         return;
       }
@@ -184,9 +199,9 @@ export function LinkPanel(props: {
         <Grid container spacing={2}>
           <Grid item xs={12}>
             <Typography variant="body2" color="textSecondary">
-              What linking does: SCAN walks the given GitHub repository for Bruno
-              collections, then we store a connection from this API entity to the
-              one you pick. On the next catalog refresh the Bruno processor
+              What linking does: SCAN walks the given GitHub, GitLab or
+              Bitbucket repository for Bruno collections, then we store a
+              connection from this API entity to the one you pick. On the next catalog refresh the Bruno processor
               injects the collection-path annotation and the collection surfaces
               on the entity — no pull request required.
             </Typography>
@@ -195,13 +210,13 @@ export function LinkPanel(props: {
           <CollectionPickerFields picker={picker} />
 
           <Grid item xs={12}>
-            {picker.state.status === 'needsGithubScan' ? (
+            {picker.state.status === 'needsAuthScan' ? (
               <Button
                 variant="contained"
                 color="primary"
-                onClick={picker.scanWithGithub}
+                onClick={picker.scanWithAuth}
               >
-                Connect GitHub
+                Connect {picker.providerLabel}
               </Button>
             ) : picker.state.status === 'scanned' ? (
               <Button
@@ -212,13 +227,13 @@ export function LinkPanel(props: {
               >
                 LINK
               </Button>
-            ) : picker.state.status === 'needsGithubLink' ? (
+            ) : picker.state.status === 'needsAuthLink' ? (
               <Button
                 variant="contained"
                 color="primary"
-                onClick={picker.linkWithGithub}
+                onClick={picker.linkWithAuth}
               >
-                Connect GitHub
+                Connect {picker.providerLabel}
               </Button>
             ) : (
               <Button
@@ -283,11 +298,12 @@ export function LinkPanel(props: {
             </Grid>
           )}
 
-          {importedNeedsGithub && (
+          {importedNeedsAuth && (
             <Grid item xs={12}>
               <Typography variant="body2" color="textSecondary">
                 Couldn't read that repository anonymously — it's most likely
-                private. Connect GitHub to link it with your own access.
+                private. Connect {importedProviderLabel} to link it with your
+                own access.
               </Typography>
             </Grid>
           )}
@@ -302,14 +318,14 @@ export function LinkPanel(props: {
           )}
 
           <Grid item xs={12}>
-            {importedNeedsGithub ? (
+            {importedNeedsAuth ? (
               <Button
                 variant="contained"
                 color="primary"
-                onClick={linkImportedWithGithub}
+                onClick={linkImportedWithAuth}
                 disabled={importedBusy || !chosenId}
               >
-                Connect GitHub
+                Connect {importedProviderLabel}
               </Button>
             ) : (
               <Button

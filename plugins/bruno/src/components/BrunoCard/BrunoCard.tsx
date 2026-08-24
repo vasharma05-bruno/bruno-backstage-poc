@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { InfoCard, Link, Progress } from '@backstage/core-components';
-import { githubAuthApiRef, useApi } from '@backstage/core-plugin-api';
+import { useApi } from '@backstage/core-plugin-api';
 import { useEntity } from '@backstage/plugin-catalog-react';
 import { stringifyEntityRef } from '@backstage/catalog-model';
 import Grid from '@material-ui/core/Grid';
@@ -11,9 +11,14 @@ import LaunchIcon from '@material-ui/icons/Launch';
 import { makeStyles } from '@material-ui/core/styles';
 import { brunoApiRef } from '../../api/BrunoApi';
 import type { CollectionDetail } from '../../api/types';
-import { getCollectionId, getSourceUrl } from '../../lib/annotations';
+import {
+  getCollectionId,
+  getSourceUrl,
+  isProviderManaged
+} from '../../lib/annotations';
 import { emitConnectionChange } from '../../lib/connectionEvents';
-import { repoRootFromCollectionUrl } from '../../lib/githubUrl';
+import { repoRootFromCollectionUrl } from '../../lib/scmUrl';
+import { useScmToken } from '../../lib/useScmToken';
 import { CollectionPickerFields, useCollectionPicker } from '../CollectionPicker';
 import { OpenInBruno } from '../OpenInBruno';
 
@@ -39,22 +44,30 @@ const useStyles = makeStyles((theme) => ({
 /**
  * Entity card for an API entity.
  *
- * When the entity carries the `bruno.dev/collection-id` annotation it is
- * provider-materialized: the collection is fetched and rendered directly (no
- * Disconnect). Otherwise it is a runtime candidate — on mount we look up any
- * existing connection (`getConnection`) and either render it (with Disconnect)
- * or show the collection picker to scan, pick and link a GitHub collection.
+ * When the entity carries the `bruno.dev/collection-id` annotation the
+ * collection is fetched and rendered directly; otherwise it is a runtime
+ * candidate and on mount we look up any existing connection (`getConnection`)
+ * and either render it or show the collection picker to scan, pick and link a
+ * collection from any configured SCM provider.
+ *
+ * Whether the Disconnect / Change collection actions render is a SEPARATE
+ * question, answered by provenance (`isProviderManaged`) rather than by the
+ * annotation — see the note there.
  */
 export function BrunoCard() {
   const classes = useStyles();
   const { entity } = useEntity();
   const brunoApi = useApi(brunoApiRef);
-  const githubAuth = useApi(githubAuthApiRef);
+  const tokens = useScmToken();
 
   const entityRef = stringifyEntityRef(entity);
   const annotationCollectionId = getCollectionId(entity);
   const annotationSourceUrl = getSourceUrl(entity);
-  const hasAnnotation = Boolean(annotationCollectionId);
+  // Whether the USER owns this link. Deliberately NOT "does the entity carry a
+  // bruno.dev annotation": BrunoLinkProcessor injects the same annotations onto
+  // runtime-connected entities, so that test flipped to true ~30s after any
+  // connect and silently removed Disconnect / Change collection from the card.
+  const userOwnsLink = !isProviderManaged(entity);
 
   const [state, setState] = useState<State>({ status: 'loading' });
   const [syncing, setSyncing] = useState(false);
@@ -171,9 +184,9 @@ export function BrunoCard() {
     setSyncing(true);
     setSyncError(undefined);
     try {
-      const token
-        = (await githubAuth.getAccessToken(['repo'], { optional: true }))
-          || undefined;
+      const token = state.sourceUrl
+        ? await tokens.silent(state.sourceUrl)
+        : undefined;
       await brunoApi.sync(state.collectionId, token);
       const d = await brunoApi.getCollection(state.collectionId);
       setState({
@@ -228,21 +241,21 @@ export function BrunoCard() {
         <Grid container spacing={2}>
           <Grid item xs={12}>
             <Typography variant="body2" color="textSecondary">
-              Scan a GitHub repository for Bruno collections, then pick one to
-              connect to this entity.
+              Scan a GitHub, GitLab or Bitbucket repository for Bruno
+              collections, then pick one to connect to this entity.
             </Typography>
           </Grid>
 
           <CollectionPickerFields picker={picker} />
 
           <Grid item xs={12}>
-            {picker.state.status === 'needsGithubScan' ? (
+            {picker.state.status === 'needsAuthScan' ? (
               <Button
                 variant="contained"
                 color="primary"
-                onClick={picker.scanWithGithub}
+                onClick={picker.scanWithAuth}
               >
-                Connect GitHub
+                Connect {picker.providerLabel}
               </Button>
             ) : picker.state.status === 'scanned' ? (
               <Button
@@ -253,13 +266,13 @@ export function BrunoCard() {
               >
                 Link
               </Button>
-            ) : picker.state.status === 'needsGithubLink' ? (
+            ) : picker.state.status === 'needsAuthLink' ? (
               <Button
                 variant="contained"
                 color="primary"
-                onClick={picker.linkWithGithub}
+                onClick={picker.linkWithAuth}
               >
-                Connect GitHub
+                Connect {picker.providerLabel}
               </Button>
             ) : (
               <Button
@@ -343,7 +356,7 @@ export function BrunoCard() {
               >
                 Sync
               </Button>
-              {!hasAnnotation && (
+              {userOwnsLink && (
                 <>
                   <Button variant="outlined" onClick={onDisconnect}>
                     Disconnect

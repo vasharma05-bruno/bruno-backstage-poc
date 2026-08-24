@@ -113,10 +113,15 @@ export class BrunoEntityProvider implements EntityProvider {
         title: 'Open in Bruno',
         icon: 'code'
       });
+      // Backstage ships a `github` icon but none for GitLab or Bitbucket, so
+      // anything else gets the generic source icon rather than a wrong logo.
       links.push({
         url: source.target,
         title: 'Bruno collection (source)',
-        icon: 'github'
+        icon:
+          this.scmProviders.byUrl(source.target).type === 'github'
+            ? 'github'
+            : 'code'
       });
     }
 

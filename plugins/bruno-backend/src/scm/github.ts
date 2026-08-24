@@ -3,7 +3,12 @@ import type {
   ScmIntegrationRegistry
 } from '@backstage/integration';
 import { Octokit } from '@octokit/rest';
-import { joinPosix, normalizePathStyleUrl, originPlusSegments } from './normalize';
+import {
+  assertSingleSegmentRef,
+  joinPosix,
+  normalizePathStyleUrl,
+  originPlusSegments
+} from './normalize';
 import { isCollectionFile } from './treeFilter';
 import type {
   ParsedRepoUrl,
@@ -69,6 +74,7 @@ export function createGithubScmProvider(options: {
       if (fullSubpath === '') {
         return `${u.protocol}//${u.host}/${owner}/${repo}`;
       }
+      assertSingleSegmentRef(ref, 'GitHub');
       return `${u.protocol}//${u.host}/${owner}/${repo}/tree/${ref}/${fullSubpath}`;
     },
 
@@ -78,38 +84,53 @@ export function createGithubScmProvider(options: {
     },
 
     /**
-     * No-op for GitHub alone: `readGithubIntegrationConfigs` always appends a
-     * default `github.com` entry when the host configured none, which is why
-     * public GitHub reads work with no `integrations` block at all. A GitHub
-     * Enterprise host still needs its own entry, but then `byUrl` resolves it
-     * and there is nothing to assert here.
+     * No-op. `readGithubIntegrationConfigs` always appends a default
+     * `github.com` entry when the host configured none, which is why public
+     * GitHub reads work with no `integrations` block at all.
+     *
+     * Deliberately not extended to GitHub Enterprise: an unconfigured GHE host
+     * still resolves to this adapter via the default `github.com` entry's
+     * absence of host matching, and asserting here would newly reject URLs the
+     * plugin accepts today. GHE without an entry fails at read time, as before.
      */
     assertConfigured() {},
 
     /**
-     * Resolves the repo's default branch via Octokit. The client is built with
-     * the host credential resolved via the GitHub credentials provider (a PAT
-     * or a GitHub App installation token, whichever the host configured),
-     * falling back to the caller's user OAuth token, plus the integration's
-     * `apiBaseUrl`. The token is never logged.
+     * Resolves the repo's default branch via Octokit, in the same two tiers as
+     * the tree read: the host credential first (a PAT or a GitHub App
+     * installation token, whichever was configured), then a retry with the
+     * caller's own OAuth token.
+     *
+     * The retry matters because a host credential that merely EXISTS is not
+     * necessarily authorized — a PAT scoped to one org 404s on a repo the caller
+     * can see perfectly well, and without the retry discovery would fail on a
+     * repo `readTreeWithUserToken` could have read. Neither token is logged.
      */
     async resolveDefaultBranch(url, opts) {
       const { owner, repo } = parseRepoUrl(url);
-      let auth: string | undefined;
+      let hostToken: string | undefined;
       try {
         // `|| undefined` so a blank token from a tokenless (anonymous)
-        // integration never shadows the user's OAuth token below — a private
-        // repo must fall through to the caller's credentials, not resolve
-        // anonymously and 404.
-        auth = (await githubCredentials.getCredentials({ url })).token || undefined;
+        // integration is treated as "no host credential" rather than as one.
+        hostToken
+          = (await githubCredentials.getCredentials({ url })).token || undefined;
       } catch {
         // No host credential for this repo (e.g. a GitHub App not installed
-        // there); fall back to the caller's user OAuth token below.
+        // there); the caller's token below is the only option.
       }
-      auth = auth ?? opts?.userToken;
-      const octokit = new Octokit({ auth, baseUrl: apiBaseUrlFor(url) });
-      const { data } = await octokit.repos.get({ owner, repo });
-      return data.default_branch;
+      const readDefaultBranch = async (auth?: string): Promise<string> => {
+        const octokit = new Octokit({ auth, baseUrl: apiBaseUrlFor(url) });
+        const { data } = await octokit.repos.get({ owner, repo });
+        return data.default_branch;
+      };
+      try {
+        return await readDefaultBranch(hostToken);
+      } catch (error) {
+        if (!opts?.userToken || opts.userToken === hostToken) {
+          throw error;
+        }
+        return await readDefaultBranch(opts.userToken);
+      }
     },
 
     /**

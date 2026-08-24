@@ -1,18 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
-import { useApi, githubAuthApiRef } from '@backstage/core-plugin-api';
+import { useApi } from '@backstage/core-plugin-api';
 import { brunoApiRef } from '../../api/BrunoApi';
 import type { ConnectResult, DiscoveredCollection } from '../../api/types';
 import { emitConnectionChange } from '../../lib/connectionEvents';
 import { classifyLinkError } from '../../lib/linkErrors';
+import { scmProviderLabel, validateScmRepoUrl } from '../../lib/scmProviders';
+import { useScmToken } from '../../lib/useScmToken';
 
 export type State
   = | { status: 'idle' }
     | { status: 'scanning' }
-    | { status: 'needsGithubScan' }
+    | { status: 'needsAuthScan' }
     | { status: 'scanned'; collections: DiscoveredCollection[] }
     | { status: 'noCollections' }
     | { status: 'connecting' }
-    | { status: 'needsGithubLink' }
+    | { status: 'needsAuthLink' }
     | { status: 'notFound' }
     | { status: 'linked' }
     | { status: 'error'; errorMsg: string };
@@ -31,26 +33,36 @@ export interface CollectionPickerApi {
   urlError?: string;
   selectedCollectionId: string;
   setSelectedCollectionId: (id: string) => void;
+  /**
+   * Display name of the SCM provider for the URL currently entered ('GitHub',
+   * 'GitLab', 'Bitbucket'), for host-side button and message copy. Falls back to
+   * a neutral phrase for an empty or unrecognized URL.
+   */
+  providerLabel: string;
   scan: (overrideUrl?: string) => Promise<void>;
-  scanWithGithub: () => Promise<void>;
+  scanWithAuth: () => Promise<void>;
   link: () => Promise<void>;
-  linkWithGithub: () => Promise<void>;
+  linkWithAuth: () => Promise<void>;
   reset: (nextUrl?: string) => void;
 }
 
 /**
  * The shared SCAN → pick → LINK state machine, including the gesture-safe OAuth
- * flow. `scan`/`link` try a silent (`{ optional: true }`) token first so an
- * already-connected GitHub session works with no popup; `scanWithGithub`/
- * `linkWithGithub` are the explicit gesture paths whose popup-opening
- * `getAccessToken(['repo'])` MUST be the first await of the click handler.
+ * flow. `scan`/`link` try a silent token first so an already-connected SCM
+ * session works with no popup; `scanWithAuth`/`linkWithAuth` are the explicit
+ * gesture paths whose popup-opening `tokens.interactive(url)` MUST be the first
+ * await of the click handler.
+ *
+ * Provider-agnostic: which OAuth provider is used follows from the URL's host
+ * (see `useScmToken`), so GitHub, GitLab and Bitbucket all take the same path
+ * through this machine.
  */
 export function useCollectionPicker(
   options: UseCollectionPickerOptions
 ): CollectionPickerApi {
   const { entityRef, initialUrl, onLinked } = options;
   const brunoApi = useApi(brunoApiRef);
-  const githubAuth = useApi(githubAuthApiRef);
+  const tokens = useScmToken();
 
   const [state, setState] = useState<State>({ status: 'idle' });
   const [url, setUrl] = useState(initialUrl ?? '');
@@ -74,31 +86,20 @@ export function useCollectionPicker(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entityRef]);
 
-  const validateUrl = (value: string): string | undefined => {
-    let parsed: URL;
-    try {
-      parsed = new URL(value);
-    } catch {
-      return 'Enter a valid URL.';
-    }
-    if (!parsed.hostname.includes('github')) {
-      return 'Enter a GitHub repository URL.';
-    }
-    if (parsed.pathname.includes('/blob/')) {
-      return 'Enter a repository URL, not a file (/blob/) URL.';
-    }
-    const segments = parsed.pathname.split('/').filter(Boolean);
-    if (segments.length < 2) {
-      return 'URL must include owner and repository (owner/repo).';
-    }
-    return undefined;
-  };
+  // A provider/configuration failure is TERMINAL: no token and no amount of
+  // OAuth consent can fix "this host has no integration configured" or "this
+  // provider cannot use your token". Surface its message rather than the connect
+  // gate (which would loop) or the not-found copy (which would bury it).
+  const terminalError = (e: unknown) => ({
+    status: 'error' as const,
+    errorMsg: e instanceof Error ? e.message : String(e)
+  });
 
   // Connects a single discovered collection without a fresh user gesture,
   // reusing the token already held for the running scan. Called only from inside
-  // scan/scanWithGithub, so `inFlight.current` is still true (the enclosing
-  // `finally` owns it) and no new first-await is introduced — never calls
-  // `getAccessToken`.
+  // scan/scanWithAuth, so `inFlight.current` is still true (the enclosing
+  // `finally` owns it) and no new first-await is introduced — it never requests
+  // a token itself.
   const autoLink = async (
     chosen: DiscoveredCollection,
     token?: string
@@ -113,17 +114,17 @@ export function useCollectionPicker(
       emitConnectionChange(entityRef);
       await onLinked(result);
     } catch (e) {
+      const kind = classifyLinkError(e);
       // Ambiguous 404: only "not found" if a token was actually in play
-      // (see `scan`); without one, fall through to the Connect GitHub gate.
-      if (scanTokenRef.current && classifyLinkError(e) === 'notFound') {
+      // (see `scan`); without one, fall through to the connect gate.
+      if (kind === 'configError') {
+        setState(terminalError(e));
+      } else if (scanTokenRef.current && kind === 'notFound') {
         setState({ status: 'notFound' });
       } else if (scanTokenRef.current) {
-        setState({
-          status: 'error',
-          errorMsg: e instanceof Error ? e.message : String(e)
-        });
+        setState(terminalError(e));
       } else {
-        setState({ status: 'needsGithubLink' });
+        setState({ status: 'needsAuthLink' });
       }
     }
   };
@@ -150,9 +151,10 @@ export function useCollectionPicker(
   };
 
   // Step 1: silent-token path. The FIRST await is an optional token fetch that
-  // never opens a popup (returns '' when there's no session). A live token is
-  // reused for a private repo with no popup; otherwise we try unauthenticated
-  // and, on failure, surface the explicit "Connect GitHub" action.
+  // never opens a popup (yields undefined when there's no session, no registered
+  // SCM auth API, or no provider for this host). A live token is reused for a
+  // private repo with no popup; otherwise we try unauthenticated and, on
+  // failure, surface the explicit "Connect <provider>" action.
   const scan = async (overrideUrl?: string) => {
     if (inFlight.current || !entityRef) {
       return;
@@ -160,7 +162,7 @@ export function useCollectionPicker(
     // `overrideUrl` lets a caller (e.g. "Change collection") scan a URL it just
     // computed without waiting for the `setUrl` state update to flush.
     const trimmed = (overrideUrl ?? url).trim();
-    const validationError = validateUrl(trimmed);
+    const validationError = validateScmRepoUrl(trimmed);
     if (validationError) {
       setUrlError(validationError);
       return;
@@ -169,9 +171,7 @@ export function useCollectionPicker(
     inFlight.current = true;
     setState({ status: 'scanning' });
     try {
-      const token = await githubAuth.getAccessToken(['repo'], {
-        optional: true
-      });
+      const token = await tokens.silent(trimmed);
       let result;
       if (token) {
         scanTokenRef.current = token;
@@ -180,27 +180,41 @@ export function useCollectionPicker(
         scanTokenRef.current = undefined;
         result = await brunoApi.discover(trimmed);
       }
-      await resolveScan(result.collections, token || undefined);
+      await resolveScan(result.collections, token);
     } catch (e) {
-      // A 404 without a token is ambiguous: GitHub returns 404 for a private
-      // repo the anonymous read can't see, not just for a genuinely missing
-      // one. Only treat it as "not found" once we actually used a token;
-      // otherwise offer the Connect GitHub path so private repos stay reachable.
-      if (scanTokenRef.current && classifyLinkError(e) === 'notFound') {
-        setState({ status: 'notFound' });
+      // A 404/403 without a token is ambiguous: every provider hides a private
+      // repo behind a "missing" response of some kind (GitHub 404s, GitLab 404s
+      // on hidden projects and 403s elsewhere, Bitbucket 403s). Only treat it as
+      // "not found" once we actually used a token; otherwise offer the connect
+      // path so private repos stay reachable.
+      //
+      // With a token already in play, anything that is NOT a "not found" is a
+      // real failure and its message is the useful thing to show — offering the
+      // connect gate again would loop the user through a popup that cannot help.
+      // That is the path a private Bitbucket Cloud repo takes, since its reader
+      // cannot use a per-user token at all. Mirrors `link` below.
+      const kind = classifyLinkError(e);
+      if (kind === 'configError') {
+        setState(terminalError(e));
+      } else if (scanTokenRef.current) {
+        setState(
+          kind === 'notFound'
+            ? { status: 'notFound' }
+            : terminalError(e)
+        );
       } else {
-        setState({ status: 'needsGithubScan' });
+        setState({ status: 'needsAuthScan' });
       }
     } finally {
       inFlight.current = false;
     }
   };
 
-  // Step 1 (private): fired directly from the "Connect GitHub" button so the
-  // OAuth popup opens within the user gesture. `getAccessToken` MUST be the
-  // first await — it opens the consent popup when GitHub isn't connected and
-  // rejects if the user declines. The token is held for the subsequent LINK.
-  const scanWithGithub = async () => {
+  // Step 1 (private): fired directly from the "Connect <provider>" button so the
+  // OAuth popup opens within the user gesture. `tokens.interactive` MUST be the
+  // first await — it opens the consent popup when the provider isn't connected
+  // and rejects if the user declines. The token is held for the subsequent LINK.
+  const scanWithAuth = async () => {
     if (inFlight.current || !entityRef) {
       return;
     }
@@ -209,12 +223,9 @@ export function useCollectionPicker(
     try {
       let token: string;
       try {
-        token = await githubAuth.getAccessToken(['repo']);
-      } catch {
-        setState({
-          status: 'error',
-          errorMsg: 'GitHub access needed for private repos — Connect GitHub.'
-        });
+        token = await tokens.interactive(trimmed);
+      } catch (e) {
+        setState({ status: 'error', errorMsg: connectErrorMessage(trimmed, e) });
         return;
       }
       scanTokenRef.current = token;
@@ -222,23 +233,20 @@ export function useCollectionPicker(
       const result = await brunoApi.discover(trimmed, token);
       await resolveScan(result.collections, token);
     } catch (e) {
-      if (classifyLinkError(e) === 'notFound') {
-        setState({ status: 'notFound' });
-      } else {
-        setState({
-          status: 'error',
-          errorMsg: e instanceof Error ? e.message : String(e)
-        });
-      }
+      setState(
+        classifyLinkError(e) === 'notFound'
+          ? { status: 'notFound' }
+          : terminalError(e)
+      );
     } finally {
       inFlight.current = false;
     }
   };
 
   // Step 2: link the chosen collection. Reuses the private-scan token if any;
-  // otherwise tops up with a silent (`optional`) token as the first await (no
-  // popup). If the link fails without a token, the repo likely needs GitHub
-  // access — surface the Connect GitHub action.
+  // otherwise tops up with a silent token as the first await (no popup). If the
+  // link fails without a token, the repo likely needs the user's own SCM
+  // access — surface the connect action.
   const link = async () => {
     if (inFlight.current || !entityRef || state.status !== 'scanned') {
       return;
@@ -254,9 +262,7 @@ export function useCollectionPicker(
     try {
       let token = scanTokenRef.current;
       if (!token) {
-        token
-          = (await githubAuth.getAccessToken(['repo'], { optional: true }))
-            || undefined;
+        token = await tokens.silent(chosen.sourceUrl);
         scanTokenRef.current = token;
       }
       const result = await brunoApi.connect(entityRef, chosen.sourceUrl, token);
@@ -266,46 +272,43 @@ export function useCollectionPicker(
       }
       await onLinked(result);
     } catch (e) {
+      const kind = classifyLinkError(e);
       // Ambiguous 404: only "not found" if a token was actually in play
-      // (see `scan`); without one, fall through to the Connect GitHub gate.
-      if (scanTokenRef.current && classifyLinkError(e) === 'notFound') {
+      // (see `scan`); without one, fall through to the connect gate.
+      if (kind === 'configError') {
+        setState(terminalError(e));
+      } else if (scanTokenRef.current && kind === 'notFound') {
         setState({ status: 'notFound' });
       } else if (scanTokenRef.current) {
-        setState({
-          status: 'error',
-          errorMsg: e instanceof Error ? e.message : String(e)
-        });
+        setState(terminalError(e));
       } else {
-        setState({ status: 'needsGithubLink' });
+        setState({ status: 'needsAuthLink' });
       }
     } finally {
       inFlight.current = false;
     }
   };
 
-  // Fired from the "Connect GitHub" button after a link failed without a token.
-  // `getAccessToken` MUST be the first await so the popup stays within the click
-  // gesture. The token is reused for the retry.
-  const linkWithGithub = async () => {
-    if (inFlight.current || !entityRef || state.status !== 'needsGithubLink') {
+  // Fired from the "Connect <provider>" button after a link failed without a
+  // token. `tokens.interactive` MUST be the first await so the popup stays
+  // within the click gesture. The token is reused for the retry.
+  const linkWithAuth = async () => {
+    if (inFlight.current || !entityRef || state.status !== 'needsAuthLink') {
       return;
     }
     inFlight.current = true;
     try {
+      const trimmed = url.trim();
       let token: string;
       try {
-        token = await githubAuth.getAccessToken(['repo']);
-      } catch {
-        setState({
-          status: 'error',
-          errorMsg: 'GitHub access needed for private repos — Connect GitHub.'
-        });
+        token = await tokens.interactive(trimmed);
+      } catch (e) {
+        setState({ status: 'error', errorMsg: connectErrorMessage(trimmed, e) });
         return;
       }
       scanTokenRef.current = token;
-      // Re-scan with the token so we have the chosen collection's github URL,
+      // Re-scan with the token so we have the chosen collection's source URL,
       // then link it. The scan is cheap and keeps the chosen path valid.
-      const trimmed = url.trim();
       setState({ status: 'connecting' });
       const result = await brunoApi.discover(trimmed, token);
       const chosen = result.collections.find(
@@ -331,14 +334,11 @@ export function useCollectionPicker(
       }
       await onLinked(linked);
     } catch (e) {
-      if (classifyLinkError(e) === 'notFound') {
-        setState({ status: 'notFound' });
-      } else {
-        setState({
-          status: 'error',
-          errorMsg: e instanceof Error ? e.message : String(e)
-        });
-      }
+      setState(
+        classifyLinkError(e) === 'notFound'
+          ? { status: 'notFound' }
+          : terminalError(e)
+      );
     } finally {
       inFlight.current = false;
     }
@@ -360,10 +360,25 @@ export function useCollectionPicker(
     urlError,
     selectedCollectionId,
     setSelectedCollectionId,
+    providerLabel: scmProviderLabel(url),
     scan,
-    scanWithGithub,
+    scanWithAuth,
     link,
-    linkWithGithub,
+    linkWithAuth,
     reset
   };
+}
+
+/**
+ * Message for a failed credential request. `tokens.interactive` rejects both
+ * when the user declines consent and when the host registered no SCM auth API at
+ * all — the second case carries an actionable message of its own, so pass it
+ * through rather than flattening both into "access needed".
+ */
+function connectErrorMessage(url: string, e: unknown): string {
+  const label = scmProviderLabel(url);
+  const detail = e instanceof Error ? e.message : String(e);
+  return detail.includes('No SCM authentication is configured')
+    ? detail
+    : `${label} access is needed for private repositories — connect ${label}.`;
 }

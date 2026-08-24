@@ -49,6 +49,26 @@ export function originPlusSegments(url: string, depth: number): string {
   }
 }
 
+/**
+ * Rejects a ref that cannot be represented unambiguously in a path-style URL.
+ *
+ * Every provider grammar here carries the ref as a SINGLE path segment, so a ref
+ * like `release/1.x` is indistinguishable from a ref plus a subpath. Composing
+ * one anyway yields a stored `sourceUrl` that re-parses as a different
+ * ref/subpath pair, and the next sync silently reads the wrong path — so fail
+ * loudly at compose time instead. Reached mainly via `resolveDefaultBranch`,
+ * where the ref is the repo's default branch and not the user's choice.
+ */
+export function assertSingleSegmentRef(ref: string, provider: string): void {
+  if (ref.includes('/')) {
+    throw new Error(
+      `${provider} ref "${ref}" contains a slash, which this URL grammar cannot `
+      + `represent unambiguously. Use a ref without a slash, or point the `
+      + `collection at a repository whose default branch has none.`
+    );
+  }
+}
+
 /** Host of `url`, or the raw string when it will not parse. For messages only. */
 export function safeHost(url: string): string {
   try {

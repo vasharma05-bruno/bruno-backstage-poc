@@ -40,7 +40,7 @@ export interface RouterOptions {
  *   GET /collections/:id        -> CollectionDetail (404 if unknown)
  *   GET /collections/:id/docs   -> text/html (self-contained Scenario-B docs)
  *   GET /collections/:id/opencollection.yml -> text/yaml (OpenCollection export)
- *   POST /collections/:id/sync  -> live re-pull from GitHub, refresh the cache
+ *   POST /collections/:id/sync  -> live re-pull from the SCM host, refresh cache
  *   GET /dashboard              -> Dashboard (stats + cards + failed sources)
  *   POST /connections/discover  -> DiscoverResult (all collection roots in a repo)
  *   POST /refresh               -> re-reads and re-parses all sources
@@ -180,16 +180,16 @@ export async function createRouter(
     await httpAuth.credentials(req, { allow: ['user'] });
     const id = req.params.id;
     const userToken = scmTokenFromHeader(req);
-    // Resolve the GitHub source URL: a runtime connection row first, else the
-    // cached collection's own sourceUrl. Local collections (no GitHub source)
-    // cannot be synced.
+    // Resolve the source URL: a runtime connection row first, else the cached
+    // collection's own sourceUrl. Local collections (no remote source) cannot
+    // be synced.
     const rows = await connectionStore.listAll();
     const row = rows.find((r) => r.collectionId === id);
     const url = row?.sourceUrl ?? collectionService.getCollection(id)?.sourceUrl;
     if (!url) {
       res
         .status(404)
-        .json({ error: `No syncable GitHub source for collection: ${id}` });
+        .json({ error: `No syncable remote source for collection: ${id}` });
       return;
     }
     const detail = await collectionService.syncCollection({ id, url, userToken });

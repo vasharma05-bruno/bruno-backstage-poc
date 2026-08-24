@@ -1,9 +1,15 @@
 import {
   getGitLabIntegrationRelativePath,
   getGitLabRequestOptions,
+  type GitLabIntegration,
   type ScmIntegrationRegistry
 } from '@backstage/integration';
-import { joinPosix, normalizePathStyleUrl, safeHost } from './normalize';
+import {
+  assertSingleSegmentRef,
+  joinPosix,
+  normalizePathStyleUrl,
+  safeHost
+} from './normalize';
 import { readTreeViaUrlReader } from './readTree';
 import type {
   ParsedRepoUrl,
@@ -27,8 +33,10 @@ import type {
  *
  * Refs containing slashes (`release/1.x`) are ambiguous against the subpath and
  * resolve as a single segment, exactly as the GitHub adapter does with
- * `/tree/<ref>/`. Paste a `/-/tree/` URL whose ref has no slash, or the project
- * root, to stay unambiguous.
+ * `/tree/<ref>/`. `composeCollectionUrl` therefore refuses to build an identity
+ * around one (`assertSingleSegmentRef`) rather than storing a URL that re-parses
+ * differently — which matters most for a project-root paste, where the ref is
+ * the repo's default branch and not the user's choice.
  */
 function parseRepoUrl(url: string): ParsedRepoUrl {
   const segments = new URL(url).pathname.split('/').filter((s) => s !== '');
@@ -90,6 +98,7 @@ export function createGitlabScmProvider(options: {
       if (fullSubpath === '') {
         return `${u.protocol}//${u.host}/${projectPath}`;
       }
+      assertSingleSegmentRef(ref, 'GitLab');
       return `${u.protocol}//${u.host}/${projectPath}/-/tree/${ref}/${fullSubpath}`;
     },
 
@@ -118,19 +127,22 @@ export function createGitlabScmProvider(options: {
         const host = safeHost(url);
         throw new Error(
           `No GitLab integration is configured for ${host}. Add an `
-          + `\`integrations.gitlab\` entry with \`host: ${host}\` to the Backstage `
-          + `config — GitLab needs one even for public projects, because only `
-          + `github.com gets a default integration entry.`
+          + `\`integrations.gitlab\` entry with \`host: ${host}\` (and an `
+          + `\`apiBaseUrl\`, which is required for self-hosted instances) to the `
+          + `Backstage config. Only gitlab.com is configured by default.`
         );
       }
     },
 
     /**
      * Resolves the project's default branch from the GitLab projects API.
-     * Prefers the caller's OAuth token when one was supplied (a private project
-     * is invisible to an anonymous or under-scoped service token), otherwise
-     * falls back to the integration's own token via `getGitLabRequestOptions`.
-     * The token is never logged.
+     *
+     * Two tiers, in the same order as the tree read: the host's integration
+     * credential (or anonymous, when none is configured) first, and only on
+     * failure a retry with the caller's own OAuth token. The order matters —
+     * preferring the caller's token makes a stale or under-scoped GitLab session
+     * break discovery on a PUBLIC project that anonymous access reads fine.
+     * Neither token is ever logged.
      */
     async resolveDefaultBranch(url, opts) {
       const integration = integrations.gitlab.byUrl(url);
@@ -144,23 +156,14 @@ export function createGitlabScmProvider(options: {
         joinPosix(owner, repo),
         getGitLabIntegrationRelativePath(config)
       );
-      const response = await fetch(
-        `${config.apiBaseUrl}/projects/${encodeURIComponent(projectPath)}`,
-        getGitLabRequestOptions(config, opts?.userToken)
-      );
-      if (!response.ok) {
-        throw new Error(
-          `Failed to resolve the default branch for ${projectPath} `
-          + `(${response.status} ${response.statusText})`
-        );
+      try {
+        return await fetchDefaultBranch(integration, projectPath);
+      } catch (error) {
+        if (!opts?.userToken) {
+          throw error;
+        }
+        return await fetchDefaultBranch(integration, projectPath, opts.userToken);
       }
-      const project = (await response.json()) as { default_branch?: string };
-      if (!project.default_branch) {
-        throw new Error(
-          `GitLab project ${projectPath} reported no default branch.`
-        );
-      }
-      return project.default_branch;
     },
 
     /**
@@ -195,3 +198,35 @@ function stripInstanceRelativePath(
     : projectPath;
 }
 
+/**
+ * Reads `default_branch` for one project. `token` overrides the integration's
+ * own credential when given; omitted, `getGitLabRequestOptions` falls back to
+ * `config.token`, or to anonymous when the host configured none.
+ *
+ * Issued through `integration.fetch`, not the global `fetch`, so the host's
+ * proxy and agent configuration applies — the same call `GitlabUrlReader` makes.
+ * Using bare `fetch` here would let a proxied host read trees fine and fail only
+ * on default-branch resolution.
+ */
+async function fetchDefaultBranch(
+  integration: GitLabIntegration,
+  projectPath: string,
+  token?: string
+): Promise<string> {
+  const { config } = integration;
+  const response = await integration.fetch(
+    `${config.apiBaseUrl}/projects/${encodeURIComponent(projectPath)}`,
+    getGitLabRequestOptions(config, token)
+  );
+  if (!response.ok) {
+    throw new Error(
+      `Failed to resolve the default branch for ${projectPath} `
+      + `(${response.status} ${response.statusText})`
+    );
+  }
+  const project = (await response.json()) as { default_branch?: string };
+  if (!project.default_branch) {
+    throw new Error(`GitLab project ${projectPath} reported no default branch.`);
+  }
+  return project.default_branch;
+}

@@ -1,4 +1,4 @@
-import { repoRootFromCollectionUrl } from './githubUrl';
+import { repoRootFromCollectionUrl } from './scmUrl';
 
 /**
  * Helpers for the "Open in Bruno" action.
@@ -33,21 +33,20 @@ export function buildBrunoDeepLink(sourceUrl: string): string {
 }
 
 /**
- * Best-effort conversion of a GitHub tree/blob URL into the repo clone URL.
- * Falls back to returning the input unchanged when we can't parse it.
+ * Converts a collection URL into its HTTPS clone URL.
+ *
+ * `repoRootFromCollectionUrl` already strips each provider's in-repo view
+ * (`/tree/`, `/-/tree/`, `/src/`), and all three then take the same
+ * `<repo-root>.git` clone form — so this needs no provider branch. Returns the
+ * input unchanged when the URL cannot be reduced to a repo root.
  */
 export function toCloneUrl(sourceUrl: string): string {
-  try {
-    const u = new URL(sourceUrl);
-    // https://github.com/<org>/<repo>/tree/<ref>/<path...>
-    const match = u.pathname.match(/^\/([^/]+)\/([^/]+)/);
-    if (u.hostname.includes('github') && match) {
-      return `${u.protocol}//${u.hostname}/${match[1]}/${match[2]}.git`;
-    }
-  } catch {
-    // ignore, fall through
-  }
-  return sourceUrl;
+  const root = repoRootFromCollectionUrl(sourceUrl);
+  // It returns its input unchanged when it cannot find a `<namespace>/<repo>`
+  // pair — an unparseable URL, or a host with too few path segments — and
+  // appending `.git` to that would produce nonsense.
+  const isRepoRoot = /^https?:\/\/[^/]+(\/[^/]+){2,}$/.test(root);
+  return isRepoRoot ? `${root}.git` : sourceUrl;
 }
 
 /**

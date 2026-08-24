@@ -73,10 +73,16 @@ export interface ScmProvider {
   /**
    * Throws when this host is not usable — i.e. it has no `integrations.<type>`
    * entry, so the UrlReader would fall through to `FetchUrlReader` and fail on
-   * anything non-public with an error that names neither the cause nor the fix.
-   * Only `github.com` self-defaults an integration entry; every other provider
-   * requires an explicit config block even for public repos
-   * (docs/MULTI-SCM-PLAN.md B10). Called before the first read of a URL.
+   * anything non-public with an error naming neither the cause nor the fix.
+   * Called before the first read of a URL.
+   *
+   * Verified against @backstage/integration@2.0.3: the three PUBLIC hosts
+   * (`github.com`, `gitlab.com`, `bitbucket.org`) each get a default integration
+   * entry when the host configures none, so public repos on them need no config
+   * block at all. This therefore fires only for SELF-HOSTED instances
+   * (`gitlab.company.com`, Bitbucket Server, GHE). That is narrower than
+   * docs/MULTI-SCM-PLAN.md B10 predicted — B10 claimed only github.com
+   * self-defaults, which is not true of this version.
    */
   assertConfigured(url: string): void;
 

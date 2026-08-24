@@ -19,7 +19,7 @@ type State
  * Link API tab: left column lists catalog `kind:API` entities that lack the
  * Bruno collection-path annotation (client-side drop — the catalog has no
  * server-side annotation-absent filter); the right column links the selected
- * entity to a Bruno collection by GitHub URL.
+ * entity to a Bruno collection by repository URL.
  */
 export function LinkApiTab(props: {
   preselectImportedCollectionId?: string;

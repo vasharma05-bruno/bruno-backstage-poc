@@ -6,10 +6,11 @@ import {
   googleAuthApi,
   signInPage,
 } from './signInPage';
+import { scmAuthApi } from './scmAuth';
 
-// Registers the GitHub/Google/GitLab/Bitbucket OAuth client APIs and the custom
-// SignInPage on the built-in `app` plugin. Test scaffolding only — no Bruno
-// feature logic.
+// Registers the GitHub/Google/GitLab/Bitbucket OAuth client APIs, the ScmAuth
+// API that routes between them by repository host, and the custom SignInPage on
+// the built-in `app` plugin. Test scaffolding only — no Bruno feature logic.
 export const authModule = createFrontendModule({
   pluginId: 'app',
   extensions: [
@@ -18,5 +19,6 @@ export const authModule = createFrontendModule({
     googleAuthApi,
     gitlabAuthApi,
     bitbucketAuthApi,
+    scmAuthApi,
   ],
 });

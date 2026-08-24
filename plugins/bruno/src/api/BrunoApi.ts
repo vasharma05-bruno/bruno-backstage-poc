@@ -27,11 +27,11 @@ export interface BrunoApi {
   getDocsUrl(id: string, theme: 'light' | 'dark'): Promise<string>;
   /** GET /collections/:id/opencollection.yml — raw OpenCollection YAML text. */
   getOpenCollectionYaml(id: string): Promise<string>;
-  /** POST /connections — link an entity to a GitHub collection URL. */
+  /** POST /connections — link an entity to a collection's source URL. */
   connect(entityRef: string, url: string, token?: string): Promise<ConnectResult>;
   /** POST /connections/discover — list all collection roots in a repo. */
   discover(url: string, token?: string): Promise<DiscoverResult>;
-  /** POST /collections/:id/sync — live re-pull from GitHub, refresh the cache. */
+  /** POST /collections/:id/sync — live re-pull from the SCM host, refresh cache. */
   sync(collectionId: string, token?: string): Promise<ConnectResult>;
   /** GET /connections/:entityRef — resolves to undefined on 404. */
   getConnection(entityRef: string): Promise<ConnectionRecord | undefined>;

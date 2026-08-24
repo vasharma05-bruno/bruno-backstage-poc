@@ -3,6 +3,7 @@ import {
   type ScmIntegrationRegistry
 } from '@backstage/integration';
 import {
+  assertSingleSegmentRef,
   joinPosix,
   normalizePathStyleUrl,
   originPlusSegments,
@@ -72,6 +73,7 @@ export function createBitbucketCloudScmProvider(options: {
       if (fullSubpath === '') {
         return `${u.protocol}//${u.host}/${owner}/${repo}`;
       }
+      assertSingleSegmentRef(ref, 'Bitbucket Cloud');
       return `${u.protocol}//${u.host}/${owner}/${repo}/src/${ref}/${fullSubpath}`;
     },
 
@@ -86,8 +88,9 @@ export function createBitbucketCloudScmProvider(options: {
         throw new Error(
           `No Bitbucket Cloud integration is configured for ${host}. Add an `
           + `\`integrations.bitbucketCloud\` entry with \`host: ${host}\` to the `
-          + `Backstage config — Bitbucket needs one even for public repositories, `
-          + `because only github.com gets a default integration entry.`
+          + `Backstage config. Only bitbucket.org is configured by default; a `
+          + `Bitbucket Server / Data Center host is a different provider `
+          + `(\`integrations.bitbucketServer\`) and is not supported yet.`
         );
       }
     },
