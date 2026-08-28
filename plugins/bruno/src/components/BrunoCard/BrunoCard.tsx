@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { InfoCard, Link, Progress } from '@backstage/core-components';
+import { Link, Progress } from '@backstage/core-components';
 import { useApi } from '@backstage/core-plugin-api';
 import { useEntity } from '@backstage/plugin-catalog-react';
 import { stringifyEntityRef } from '@backstage/catalog-model';
@@ -19,6 +19,8 @@ import {
 import { emitConnectionChange } from '../../lib/connectionEvents';
 import { repoRootFromCollectionUrl } from '../../lib/scmUrl';
 import { useScmToken } from '../../lib/useScmToken';
+import { useBrandStyles } from '../../theme/brandStyles';
+import { BrunoInfoCard } from '../BrunoInfoCard';
 import { CollectionPickerFields, useCollectionPicker } from '../CollectionPicker';
 import { OpenInBruno } from '../OpenInBruno';
 
@@ -37,7 +39,13 @@ type State
 const useStyles = makeStyles((theme) => ({
   actionRow: {
     display: 'flex',
+    flexWrap: 'wrap',
     gap: theme.spacing(1)
+  },
+  metricLabel: {
+    display: 'block',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase'
   }
 }));
 
@@ -56,6 +64,7 @@ const useStyles = makeStyles((theme) => ({
  */
 export function BrunoCard() {
   const classes = useStyles();
+  const brandClasses = useBrandStyles();
   const { entity } = useEntity();
   const brunoApi = useApi(brunoApiRef);
   const tokens = useScmToken();
@@ -219,7 +228,7 @@ export function BrunoCard() {
   );
 
   return (
-    <InfoCard title="Bruno Collection">
+    <BrunoInfoCard title="Bruno Collection">
       {state.status === 'loading' && <Progress />}
 
       {state.status === 'connecting' && (
@@ -298,15 +307,23 @@ export function BrunoCard() {
             </Typography>
           </Grid>
           <Grid item xs={6}>
-            <Typography variant="caption" color="textSecondary">
+            <Typography
+              variant="caption"
+              color="textSecondary"
+              className={classes.metricLabel}
+            >
               Requests
             </Typography>
-            <Typography variant="h6">
+            <Typography variant="h5" className={brandClasses.accentFigure}>
               {state.detail?.requestCount ?? '—'}
             </Typography>
           </Grid>
           <Grid item xs={6}>
-            <Typography variant="caption" color="textSecondary">
+            <Typography
+              variant="caption"
+              color="textSecondary"
+              className={classes.metricLabel}
+            >
               Repo
             </Typography>
             <Typography variant="body2">
@@ -334,7 +351,7 @@ export function BrunoCard() {
               <OpenInBruno sourceUrl={state.sourceUrl} />
               <Button
                 variant="outlined"
-                color="primary"
+                className={brandClasses.accentOutlinedButton}
                 startIcon={<LaunchIcon />}
                 onClick={() =>
                   window.open(
@@ -385,7 +402,7 @@ export function BrunoCard() {
           </Grid>
         </Grid>
       )}
-    </InfoCard>
+    </BrunoInfoCard>
   );
 }
 

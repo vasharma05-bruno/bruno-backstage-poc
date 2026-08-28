@@ -22,7 +22,10 @@
     "lint:bruno": "eslint",
     "lint:bruno:fix": "eslint --fix",
     "prettier:check": "prettier --check .",
-    "new": "backstage-cli new"
+    "new": "backstage-cli new",
+    "bruno:catalog": "node scripts/bruno-catalog/generate.mjs",
+    "bruno:catalog:check": "node scripts/bruno-catalog/generate.mjs --check",
+    "bruno:catalog:validate": "node scripts/bruno-catalog/validate.mjs"
   },
   "backstage": {
     "cli": {
@@ -38,6 +41,7 @@
     "plugins/*"
   ],
   "devDependencies": {
+    "@apidevtools/openapi-schemas": "^2.1.0",
     "@backstage/cli": "^0.36.4",
     "@backstage/cli-defaults": "^0.1.4",
     "@backstage/e2e-test-utils": "^0.1.2",
@@ -49,6 +53,7 @@
     "@types/jest": "^30.0.0",
     "@typescript-eslint/eslint-plugin": "^8.65.0",
     "@typescript-eslint/parser": "^8.39.0",
+    "ajv-draft-04": "^1.0.0",
     "eslint": "^9.21.0",
     "eslint-plugin-import": "^2.32.0",
     "eslint-plugin-react-hooks": "^5.1.0",

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { InfoCard, MarkdownContent } from '@backstage/core-components';
+import { MarkdownContent } from '@backstage/core-components';
 import { useApi } from '@backstage/core-plugin-api';
 import { useEntity } from '@backstage/plugin-catalog-react';
 import { stringifyEntityRef } from '@backstage/catalog-model';
@@ -7,6 +7,7 @@ import { brunoApiRef } from '../../api/BrunoApi';
 import type { CollectionDetail } from '../../api/types';
 import { getCollectionId } from '../../lib/annotations';
 import { subscribeConnectionChange } from '../../lib/connectionEvents';
+import { BrunoInfoCard } from '../BrunoInfoCard';
 
 type State
   = | { status: 'loading' }
@@ -95,8 +96,8 @@ export function CollectionOverviewCard(): JSX.Element | null {
   }
 
   return (
-    <InfoCard title="Collection Overview">
+    <BrunoInfoCard title="Collection Overview">
       <MarkdownContent content={readme} dialect="gfm" />
-    </InfoCard>
+    </BrunoInfoCard>
   );
 }

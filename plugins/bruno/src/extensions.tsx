@@ -1,10 +1,13 @@
 import type { Entity } from '@backstage/catalog-model';
-import { EntityCardBlueprint } from '@backstage/plugin-catalog-react/alpha';
+import {
+  EntityCardBlueprint,
+  EntityContentBlueprint
+} from '@backstage/plugin-catalog-react/alpha';
 import {
   PageBlueprint,
   createRouteRef
 } from '@backstage/frontend-plugin-api';
-import Http from '@material-ui/icons/Http';
+import { BrunoIcon } from './components/BrunoLogo';
 
 /**
  * Filter selecting any API entity. Used as the card/content filter so
@@ -64,6 +67,41 @@ export const brunoCollectionOverviewCard = EntityCardBlueprint.make({
 });
 
 /**
+ * Catalog entity tab rendering the linked collection's OpenCollection API docs,
+ * at `/catalog/<ns>/<kind>/<name>/bruno`.
+ *
+ * Filtered on `isApiEntity`, deliberately NOT on the `bruno.dev/collection-id`
+ * annotation. The annotation is only stamped when the CATALOG re-processes the
+ * entity (`BrunoLinkProcessor`), and with no `catalog.processingInterval`
+ * configured that is Backstage's multi-minute default — so an annotation-gated
+ * tab stays missing for minutes after the user connects a collection, which
+ * reads as the feature being broken. The component resolves the connection over
+ * the API instead, exactly as `BrunoCard` does, and shows a connect prompt when
+ * there is nothing linked.
+ *
+ * `title` is the tab's label in the entity tab strip and `EntityContentBlueprint`
+ * types it as a plain `string` — the value is resolved once, at extension
+ * registration, with no entity in hand, and both tab renderers sort grouped tabs
+ * by `label.localeCompare(...)`. So the strip reads "Bruno" and the component
+ * puts the `Bruno:<collection-name>` heading on the content (and on the browser
+ * tab title) where the entity IS available.
+ *
+ * Ungrouped on purpose: a `group` would fold it into one of the entity page's
+ * tab dropdowns instead of giving it a tab of its own.
+ */
+export const brunoDocsContent = EntityContentBlueprint.make({
+  name: 'docs',
+  params: {
+    path: '/bruno',
+    title: 'Bruno',
+    icon: <BrunoIcon fontSize="inherit" />,
+    filter: isApiEntity,
+    loader: () =>
+      import('./components/BrunoDocsContent').then((m) => <m.BrunoDocsContent />)
+  }
+});
+
+/**
  * Route ref for the standalone Bruno page. Setting `routeRef` + `title` + `icon`
  * on the PageBlueprint below is what makes the nav item appear: the custom
  * Sidebar renders `nav.rest({ sortBy: 'title' })`, which auto-discovers pages
@@ -74,15 +112,17 @@ const brunoPageRouteRef = createRouteRef();
 
 /**
  * Standalone Bruno page at `/bruno`. The component renders content only (the
- * PageLayout supplies the header). Icon is `Http` — `@material-ui/icons/Api` is
- * missing in this version, so importing it would break the build.
+ * PageLayout supplies the header). The icon is the Bruno mark, so the sidebar
+ * entry and the page header both carry the brand; it is an `SvgIcon`, so
+ * `fontSize="inherit"` sizes it exactly like the stock Material-UI icons around
+ * it.
  */
 export const brunoPage = PageBlueprint.make({
   name: 'bruno',
   params: {
     path: '/bruno',
     title: 'Bruno',
-    icon: <Http fontSize="inherit" />,
+    icon: <BrunoIcon fontSize="inherit" />,
     routeRef: brunoPageRouteRef,
     loader: () =>
       import('./components/BrunoPage').then((m) => <m.BrunoPage />)

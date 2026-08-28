@@ -1,0 +1,1 @@
+export { BrunoIcon } from './BrunoLogo';

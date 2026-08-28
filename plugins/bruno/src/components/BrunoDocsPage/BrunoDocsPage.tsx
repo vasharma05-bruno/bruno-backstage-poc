@@ -3,7 +3,6 @@ import { makeStyles, useTheme } from '@material-ui/core/styles';
 import Box from '@material-ui/core/Box';
 import Button from '@material-ui/core/Button';
 import Typography from '@material-ui/core/Typography';
-import Http from '@material-ui/icons/Http';
 import LaunchIcon from '@material-ui/icons/Launch';
 import { Progress } from '@backstage/core-components';
 import type { DiscoveryApi, FetchApi } from '@backstage/core-plugin-api';
@@ -16,6 +15,9 @@ import {
 import { PageLayout, useRouteRefParams } from '@backstage/frontend-plugin-api';
 import { brunoApiRef } from '../../api/BrunoApi';
 import { brunoDocsPageRouteRef } from '../../extensions';
+import { brunoBrand } from '../../theme/brand';
+import { useBrandStyles } from '../../theme/brandStyles';
+import { BrunoIcon } from '../BrunoLogo';
 
 // Query param that switches the page to the chrome-less, full-viewport layout
 // (no sidebar / no header — just the docs iframe filling the whole window). The
@@ -56,31 +58,83 @@ async function mintDocsCookie(
   return new Date(expiresAt);
 }
 
-const useStyles = makeStyles((theme) => ({
-  frame: {
-    position: 'fixed',
-    top: 0,
-    left: 0,
-    width: '100vw',
-    height: '100vh',
-    border: 0,
-    // Sit above the app chrome (sidebar/header) so only the docs are visible.
-    zIndex: theme.zIndex.modal + 1
-  },
-  // Embedded (default) layout. The app's content area isn't viewport-anchored
-  // (its height collapses to content), so a flex/`height:100%` iframe would fall
-  // back to the intrinsic ~150px. Instead we compute an explicit pixel height at
-  // runtime (fill from the iframe's top edge to the bottom of the viewport) and
-  // set it inline; this width/border rule just covers the rest.
-  embeddedFrame: {
-    display: 'block',
-    width: '100%',
-    border: 0
-  },
-  message: {
-    padding: theme.spacing(4)
-  }
-}));
+const useStyles = makeStyles((theme) => {
+  const brand = brunoBrand(theme);
+
+  return {
+    frame: {
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      width: '100vw',
+      height: '100vh',
+      border: 0,
+      // Sit above the app chrome (sidebar/header) so only the docs are visible.
+      zIndex: theme.zIndex.modal + 1
+    },
+    // Embedded (default) layout. The app's content area isn't viewport-anchored
+    // (its height collapses to content), so a flex/`height:100%` iframe would fall
+    // back to the intrinsic ~150px. Instead we compute an explicit pixel height at
+    // runtime (fill from the iframe's top edge to the bottom of the viewport) and
+    // set it inline; this width/border rule just covers the rest.
+    embeddedFrame: {
+      display: 'block',
+      width: '100%',
+      border: 0
+    },
+    // Branded holding surface for the pre-iframe states (minting the docs
+    // cookie, then loading the bundle) and for a hard failure.
+    message: {
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      gap: theme.spacing(2),
+      margin: theme.spacing(4),
+      padding: theme.spacing(5, 4),
+      borderRadius: theme.shape.borderRadius,
+      borderTop: `3px solid ${brand.accent}`,
+      background: brand.wash
+    },
+    messageMark: {
+      fontSize: 44
+    },
+    messageProgress: {
+      width: '100%',
+      maxWidth: 320
+    }
+  };
+});
+
+/**
+ * Branded holding panel shown while the docs session is being minted and the
+ * OpenCollection bundle loads, and in place of the iframe on a hard failure.
+ * Both layouts share it, so the brand shows up before the docs do.
+ */
+function DocsMessage(props: {
+  classes: ReturnType<typeof useStyles>;
+  error?: string;
+}): JSX.Element {
+  const { classes, error } = props;
+  return (
+    <Box className={classes.message}>
+      <BrunoIcon className={classes.messageMark} />
+      {error ? (
+        <Typography variant="body1" color="error" align="center">
+          {error}
+        </Typography>
+      ) : (
+        <>
+          <Typography variant="body2" color="textSecondary">
+            Loading API documentation…
+          </Typography>
+          <Box className={classes.messageProgress}>
+            <Progress />
+          </Box>
+        </>
+      )}
+    </Box>
+  );
+}
 
 /**
  * Standalone page rendering a Bruno collection's OpenCollection API docs at
@@ -101,6 +155,7 @@ const useStyles = makeStyles((theme) => ({
  */
 export function BrunoDocsPage(): JSX.Element {
   const classes = useStyles();
+  const brandClasses = useBrandStyles();
   const theme = useTheme();
   const brunoApi = useApi(brunoApiRef);
   const discoveryApi = useApi(discoveryApiRef);
@@ -208,20 +263,10 @@ export function BrunoDocsPage(): JSX.Element {
   // sidebar/header so only the docs show.
   if (isFullView) {
     if (error) {
-      return (
-        <Box className={classes.message}>
-          <Typography variant="body1" color="error">
-            {error}
-          </Typography>
-        </Box>
-      );
+      return <DocsMessage classes={classes} error={error} />;
     }
     if (!src) {
-      return (
-        <Box className={classes.message}>
-          <Progress />
-        </Box>
-      );
+      return <DocsMessage classes={classes} />;
     }
     return (
       <iframe
@@ -245,19 +290,9 @@ export function BrunoDocsPage(): JSX.Element {
 
   let body: JSX.Element;
   if (error) {
-    body = (
-      <Box className={classes.message}>
-        <Typography variant="body1" color="error">
-          {error}
-        </Typography>
-      </Box>
-    );
+    body = <DocsMessage classes={classes} error={error} />;
   } else if (!src) {
-    body = (
-      <Box className={classes.message}>
-        <Progress />
-      </Box>
-    );
+    body = <DocsMessage classes={classes} />;
   } else {
     body = (
       <iframe
@@ -278,12 +313,12 @@ export function BrunoDocsPage(): JSX.Element {
   return (
     <PageLayout
       title="Bruno"
-      icon={<Http fontSize="inherit" />}
+      icon={<BrunoIcon fontSize="inherit" />}
       headerActions={[
         <Button
           key="open-in-new-tab"
           size="small"
-          color="primary"
+          className={brandClasses.accentText}
           startIcon={<LaunchIcon />}
           onClick={openInNewTab}
         >

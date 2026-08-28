@@ -255,7 +255,7 @@ export async function createRouter(
     await httpAuth.credentials(req, { allow: ['user', 'service'] });
     const rows = await connectionStore.listAll();
     res.json(
-      rows.map(row => ({
+      rows.map((row) => ({
         entityRef: row.entityRef,
         collectionId: row.collectionId,
         sourceUrl: row.sourceUrl,

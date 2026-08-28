@@ -1,10 +1,9 @@
 import { useState } from 'react';
-import { InfoCard, LinkButton } from '@backstage/core-components';
+import { LinkButton } from '@backstage/core-components';
 import { parseEntityRef } from '@backstage/catalog-model';
 import type { CompoundEntityRef } from '@backstage/catalog-model';
 import { EntityRefLink } from '@backstage/plugin-catalog-react';
 import { useApi } from '@backstage/core-plugin-api';
-import Avatar from '@material-ui/core/Avatar';
 import Box from '@material-ui/core/Box';
 import Button from '@material-ui/core/Button';
 import Chip from '@material-ui/core/Chip';
@@ -14,20 +13,11 @@ import { makeStyles } from '@material-ui/core/styles';
 import { brunoApiRef } from '../../api/BrunoApi';
 import { emitConnectionChange } from '../../lib/connectionEvents';
 import { useScmToken } from '../../lib/useScmToken';
+import { useBrandStyles } from '../../theme/brandStyles';
+import { BrunoInfoCard } from '../BrunoInfoCard';
 import type { DashboardCollection } from '../../api/types';
 
 const useStyles = makeStyles((theme) => ({
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: theme.spacing(1),
-    marginBottom: theme.spacing(1)
-  },
-  avatar: {
-    backgroundColor: theme.palette.primary.main,
-    width: theme.spacing(4),
-    height: theme.spacing(4)
-  },
   chips: {
     display: 'flex',
     flexWrap: 'wrap',
@@ -53,6 +43,7 @@ const useStyles = makeStyles((theme) => ({
   actions: {
     marginTop: theme.spacing(1),
     display: 'flex',
+    flexWrap: 'wrap',
     gap: theme.spacing(1)
   }
 }));
@@ -60,12 +51,13 @@ const useStyles = makeStyles((theme) => ({
 /** Deep-link straight to the standalone full-screen Bruno docs page. */
 function OpenAction(props: { collectionId?: string }): JSX.Element {
   const { collectionId } = props;
+  const brandClasses = useBrandStyles();
 
   if (!collectionId) {
     return (
       <Tooltip title="No collection to open">
         <span>
-          <Button variant="outlined" size="small" disabled>
+          <Button variant="contained" size="small" disabled>
             OPEN
           </Button>
         </span>
@@ -76,8 +68,9 @@ function OpenAction(props: { collectionId?: string }): JSX.Element {
   return (
     <LinkButton
       to={`/bruno/docs/${encodeURIComponent(collectionId)}`}
-      variant="outlined"
+      variant="contained"
       size="small"
+      className={brandClasses.accentButton}
     >
       OPEN
     </LinkButton>
@@ -91,6 +84,7 @@ export function CollectionCard(props: {
   onChanged?: () => void;
 }): JSX.Element {
   const classes = useStyles();
+  const brandClasses = useBrandStyles();
   const { collection, onRequestLink, onChanged } = props;
   const brunoApi = useApi(brunoApiRef);
   const tokens = useScmToken();
@@ -168,12 +162,7 @@ export function CollectionCard(props: {
   };
 
   return (
-    <InfoCard>
-      <Box className={classes.header}>
-        <Avatar className={classes.avatar}>B</Avatar>
-        <Typography variant="subtitle1">{collection.name}</Typography>
-      </Box>
-
+    <BrunoInfoCard title={collection.name} variant="gridItem">
       <Box className={classes.chips}>
         {collection.linked && (
           <Chip
@@ -184,7 +173,11 @@ export function CollectionCard(props: {
         )}
         {isImportedStub && <Chip label="imported" size="small" />}
         {collection.specType && (
-          <Chip label={collection.specType} size="small" />
+          <Chip
+            className={brandClasses.accentChip}
+            label={collection.specType}
+            size="small"
+          />
         )}
       </Box>
 
@@ -262,6 +255,6 @@ export function CollectionCard(props: {
           {error}
         </Typography>
       )}
-    </InfoCard>
+    </BrunoInfoCard>
   );
 }

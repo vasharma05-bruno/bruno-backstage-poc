@@ -70,7 +70,8 @@ export default [
     files: [
       'eslint.config.mjs',
       'plugins/bruno/src/**/*.{ts,tsx}',
-      'plugins/bruno-backend/src/**/*.{ts,tsx}'
+      'plugins/bruno-backend/src/**/*.{ts,tsx}',
+      'scripts/**/*.mjs'
     ],
     rules: {
       ...js.configs.recommended.rules,
@@ -149,10 +150,12 @@ export default [
   },
   {
     // These files legitimately hold colour tokens: MethodBadge maps HTTP
-    // methods to colours, and generateCollectionHtml emits a standalone HTML
-    // document with inline styling. Mirrors how upstream exempts theme/**.
+    // methods to colours, BrunoLogo carries the brand mark's own fills, and
+    // generateCollectionHtml emits a standalone HTML document with inline
+    // styling. Mirrors how upstream exempts theme/**.
     files: [
       'plugins/bruno/src/components/MethodBadge/**/*.{ts,tsx}',
+      'plugins/bruno/src/components/BrunoLogo/**/*.{ts,tsx}',
       'plugins/bruno-backend/src/service/generateCollectionHtml.ts'
     ],
     rules: {
@@ -167,6 +170,16 @@ export default [
     ],
     rules: {
       'no-console': 'off'
+    }
+  },
+  {
+    // Repo scripts are CLIs run from the root: stdout is their interface, and
+    // they import the root workspace's own devDependencies rather than a
+    // per-package manifest.
+    files: ['scripts/**/*.mjs'],
+    rules: {
+      'no-console': 'off',
+      'import/no-extraneous-dependencies': 'off'
     }
   }
 ];

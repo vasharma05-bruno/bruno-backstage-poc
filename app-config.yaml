@@ -252,6 +252,13 @@ catalog:
     - type: file
       target: ../../examples/entities.yaml
 
+    # Five production Bruno collections from github.com/bruno-collections, each
+    # an API entity whose spec.definition is an OpenAPI 3.0.3 document generated
+    # from the collection itself. Regenerate with:
+    #   node scripts/bruno-catalog/generate.mjs
+    - type: file
+      target: ../../examples/bruno-collections.yaml
+
     # Local example template
     - type: file
       target: ../../examples/template/template.yaml
@@ -263,6 +270,9 @@ catalog:
       target: ../../examples/org.yaml
       rules:
         - allow: [User, Group]
+    
+    - type: url
+      target: https://github.com/backstage/backstage/blob/master/packages/catalog-model/examples/apis/petstore-api.yaml
 
     ## Uncomment these lines to add more example data
     # - type: url

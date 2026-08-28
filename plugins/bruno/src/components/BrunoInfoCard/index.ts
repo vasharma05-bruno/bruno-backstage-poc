@@ -1,0 +1,1 @@
+export { BrunoInfoCard } from './BrunoInfoCard';

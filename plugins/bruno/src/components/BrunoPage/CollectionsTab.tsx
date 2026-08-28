@@ -6,6 +6,7 @@ import Button from '@material-ui/core/Button';
 import TextField from '@material-ui/core/TextField';
 import Typography from '@material-ui/core/Typography';
 import { brunoApiRef } from '../../api/BrunoApi';
+import { useBrandStyles } from '../../theme/brandStyles';
 import type { Dashboard } from '../../api/types';
 import { StatTiles } from './StatTiles';
 import { FailuresStrip } from './FailuresStrip';
@@ -26,6 +27,7 @@ export function CollectionsTab(props: {
   onRequestLink?: (collectionId: string) => void;
 }): JSX.Element {
   const { onRequestLink } = props;
+  const brandClasses = useBrandStyles();
   const brunoApi = useApi(brunoApiRef);
   const [state, setState] = useState<State>({ status: 'loading' });
   const [query, setQuery] = useState('');
@@ -112,7 +114,7 @@ export function CollectionsTab(props: {
         />
         <Button
           variant="contained"
-          color="primary"
+          className={brandClasses.accentButton}
           onClick={() => setAddOpen(true)}
         >
           Add collection

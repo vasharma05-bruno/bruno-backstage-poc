@@ -1,0 +1,2238 @@
+# GENERATED FILE — do not edit by hand.
+#
+# Five production Bruno collections from https://github.com/bruno-collections,
+# each as a kind: API entity whose spec.definition is an OpenAPI 3.0.3
+# document generated from the collection.
+#
+# Regenerate:  node scripts/bruno-catalog/generate.mjs
+# Verify:      node scripts/bruno-catalog/generate.mjs --check
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: bruno-collections
+  title: Bruno Collections
+  description: >-
+    Production Bruno collections published at github.com/bruno-collections, each exposed as an API
+    entity with an OpenAPI definition generated from the collection itself.
+  tags:
+    - bruno
+spec:
+  owner: guests
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: github-rest-api
+  title: GitHub REST API
+  description: >-
+    Repository, user and search endpoints of the GitHub REST API, converted from the upstream Bruno
+    collection. 13 Bruno requests -> 6 OpenAPI operations across 6 paths.
+  annotations:
+    bruno.dev/source-url: https://github.com/bruno-collections/github-rest-api-collection
+    backstage.io/source-location: url:https://github.com/bruno-collections/github-rest-api-collection/
+    bruno.dev/collection-format: bru
+  tags:
+    - bruno
+    - rest
+    - github
+    - scm
+  links:
+    - url: >-
+        https://fetch.usebruno.com/?url=https%3A%2F%2Fgithub.com%2Fbruno-collections%2Fgithub-rest-api-collection
+      title: Open in Bruno
+      icon: code
+    - url: https://github.com/bruno-collections/github-rest-api-collection
+      title: Bruno collection (source)
+      icon: github
+spec:
+  type: openapi
+  lifecycle: production
+  owner: guests
+  system: bruno-collections
+  definition: |
+    openapi: 3.0.3
+    info:
+      title: GitHub REST API
+      version: v3
+      description: |-
+        Repository, user and search endpoints of the GitHub REST API, converted from the upstream Bruno collection.
+
+        Generated from the Bruno collection at https://github.com/bruno-collections/github-rest-api-collection — the requests, params, bodies, recorded response examples and auth blocks in that collection are the only source for this document. Regenerate with `node scripts/bruno-catalog/generate.mjs`.
+    servers:
+      - url: '{baseUrl}'
+        description: Bruno variable {{baseUrl}} (from environment "Github")
+        variables:
+          baseUrl:
+            default: https://api.github.com
+            description: Base URL from the Bruno environment "Github"
+    tags:
+      - name: Repository
+      - name: User
+    paths:
+      /search/repositories:
+        get:
+          operationId: repositorySearchRepos
+          summary: Search Repos
+          tags:
+            - Repository
+          parameters:
+            - name: q
+              in: query
+              required: false
+              schema:
+                type: string
+              example: bruno
+            - name: order
+              in: query
+              required: false
+              schema:
+                type: string
+              example: desc
+            - name: per_page
+              in: query
+              required: false
+              schema:
+                type: integer
+              example: 10
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          x-bruno-seq: 1
+          x-bruno-also-from:
+            - Search React Repos
+            - Search Typescript Repos
+            - Search Java Repos
+            - Search JavaScript Repos
+            - Search NextJS Repos
+            - Search Rust Repos
+            - Search Golang Repos
+      /repos/usebruno/bruno-website:
+        get:
+          operationId: repositoryRepositoryInfo
+          summary: Repository Info
+          tags:
+            - Repository
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          x-bruno-seq: 2
+      /repos/usebruno/bruno/tags:
+        get:
+          operationId: repositoryRepositoryTags
+          summary: Repository Tags
+          tags:
+            - Repository
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          x-bruno-seq: 3
+      /search/issues:
+        get:
+          operationId: repositorySearchIssues
+          summary: Search Issues
+          tags:
+            - Repository
+          parameters:
+            - name: q
+              in: query
+              required: false
+              schema:
+                type: string
+              example: is:issue repo:usebruno/bruno
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          x-bruno-seq: 4
+      /users/usebruno:
+        get:
+          operationId: userUserInfo
+          summary: User Info
+          tags:
+            - User
+          responses:
+            '201':
+              description: Asserted by the Bruno request (success)
+          x-bruno-seq: 1
+      /users/usebruno/repos:
+        get:
+          operationId: userUserRepos
+          summary: User Repos
+          tags:
+            - User
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          x-bruno-seq: 2
+    x-bruno-source: https://github.com/bruno-collections/github-rest-api-collection
+    x-bruno-generated-by: '@usebruno/converters brunoToOpenCollection + scripts/bruno-catalog'
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: scim-provisioning-api
+  title: SCIM 2.0 Provisioning API
+  description: >-
+    SCIM 2.0 user and group lifecycle management (create, patch, deactivate, delete) plus Service
+    Provider Config. 15 Bruno requests -> 13 OpenAPI operations across 5 paths.
+  annotations:
+    bruno.dev/source-url: https://github.com/bruno-collections/bruno-scim-api-collection/tree/main/scim-collection
+    backstage.io/source-location: url:https://github.com/bruno-collections/bruno-scim-api-collection/tree/main/scim-collection/
+    bruno.dev/collection-format: bru
+  tags:
+    - bruno
+    - rest
+    - scim
+    - identity
+    - provisioning
+  links:
+    - url: >-
+        https://fetch.usebruno.com/?url=https%3A%2F%2Fgithub.com%2Fbruno-collections%2Fbruno-scim-api-collection
+      title: Open in Bruno
+      icon: code
+    - url: https://github.com/bruno-collections/bruno-scim-api-collection/tree/main/scim-collection
+      title: Bruno collection (source)
+      icon: github
+spec:
+  type: openapi
+  lifecycle: production
+  owner: guests
+  system: bruno-collections
+  definition: >
+    openapi: 3.0.3
+
+    info:
+      title: SCIM 2.0 Provisioning API
+      version: '2.0'
+      description: |-
+        SCIM 2.0 user and group lifecycle management (create, patch, deactivate, delete) plus Service Provider Config.
+
+        Generated from the Bruno collection at https://github.com/bruno-collections/bruno-scim-api-collection/tree/main/scim-collection — the requests, params, bodies, recorded response examples and auth blocks in that collection are the only source for this document. Regenerate with `node scripts/bruno-catalog/generate.mjs`.
+    servers:
+      - url: '{baseUrl}'
+        description: Bruno variable {{baseUrl}} (from environment "Production")
+        variables:
+          baseUrl:
+            default: https://license.usebruno.com
+            description: Base URL from the Bruno environment "Production"
+    tags:
+      - name: Groups
+      - name: Users
+    paths:
+      /scim/v2/ServiceProviderConfig:
+        get:
+          operationId: serviceProviderConfig
+          summary: Service Provider Config
+          description: |-
+            Get SCIM Service Provider Configuration
+
+            This is a public endpoint that returns the SCIM capabilities supported by the Bruno license server.
+            No authentication required.
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          x-bruno-seq: 1
+      /scim/v2/Groups:
+        get:
+          operationId: groupsListGroups
+          summary: List Groups
+          description: |-
+            List all groups via SCIM
+
+            Returns a paginated list of groups with their members.
+
+            Query Parameters:
+            - startIndex: Starting index for pagination (default: 1)
+            - count: Number of results per page (default: 100)
+            - filter: SCIM filter expression (e.g., displayName eq "Developers")
+            - sortBy: Attribute to sort by
+            - sortOrder: ascending or descending
+
+            Requires SCIM API key authentication.
+          tags:
+            - Groups
+          parameters:
+            - name: startIndex
+              in: query
+              required: false
+              schema:
+                type: integer
+              example: 1
+            - name: count
+              in: query
+              required: false
+              schema:
+                type: integer
+              example: 100
+            - name: filter
+              in: query
+              required: false
+              schema:
+                type: string
+              example: displayName eq "Developers"
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          security:
+            - bearerAuth: []
+          x-bruno-seq: 1
+        post:
+          operationId: groupsCreateGroup
+          summary: Create Group
+          description: |-
+            Create a new group via SCIM
+
+            Creates a new group in the system. Members can be added during creation
+            or later via PATCH operations.
+
+            Required fields:
+            - displayName: The name of the group
+
+            Optional fields:
+            - members: Array of member objects with value (user ID)
+            - description: Group description
+
+            Requires SCIM API key authentication.
+          tags:
+            - Groups
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    schemas:
+                      type: array
+                      items:
+                        type: string
+                    displayName:
+                      type: string
+                    members:
+                      type: array
+                      items: {}
+                example:
+                  schemas:
+                    - urn:ietf:params:scim:schemas:core:2.0:Group
+                  displayName: Developers
+                  members: []
+          responses:
+            '201':
+              description: Asserted by the Bruno request (success)
+          security:
+            - bearerAuth: []
+          x-bruno-seq: 3
+          x-bruno-has-scripts: true
+      /scim/v2/Groups/{groupId}:
+        get:
+          operationId: groupsGetGroup
+          summary: Get Group
+          description: |-
+            Get a specific group by ID
+
+            Returns the complete group resource including all members.
+            Requires SCIM API key authentication.
+          tags:
+            - Groups
+          parameters:
+            - name: groupId
+              in: path
+              required: true
+              schema:
+                type: string
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          security:
+            - bearerAuth: []
+          x-bruno-seq: 2
+        put:
+          operationId: groupsUpdateGroupPut
+          summary: Update Group (PUT)
+          description: |-
+            Update group via PUT (full replacement)
+
+            Replaces the entire group resource with the provided data.
+            All fields should be included, even if unchanged.
+
+            Requires SCIM API key authentication.
+          tags:
+            - Groups
+          parameters:
+            - name: groupId
+              in: path
+              required: true
+              schema:
+                type: string
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    schemas:
+                      type: array
+                      items:
+                        type: string
+                    id:
+                      type: string
+                    displayName:
+                      type: string
+                    members:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                example:
+                  schemas:
+                    - urn:ietf:params:scim:schemas:core:2.0:Group
+                  id: '{{groupId}}'
+                  displayName: Developers
+                  members:
+                    - value: '{{userId}}'
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          security:
+            - bearerAuth: []
+          x-bruno-seq: 4
+        patch:
+          operationId: groupsAddMembersToGroup
+          summary: Add Members to Group
+          description: |-
+            Add members to a group via PATCH
+
+            Adds one or more users to the group without affecting existing members.
+
+            The value field should contain the user's ID.
+            Multiple users can be added in a single operation.
+
+            Requires SCIM API key authentication.
+          tags:
+            - Groups
+          parameters:
+            - name: groupId
+              in: path
+              required: true
+              schema:
+                type: string
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    schemas:
+                      type: array
+                      items:
+                        type: string
+                    Operations:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          op:
+                            type: string
+                          path:
+                            type: string
+                          value:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                value:
+                                  type: string
+                examples:
+                  Add Members to Group:
+                    value:
+                      schemas:
+                        - urn:ietf:params:scim:api:messages:2.0:PatchOp
+                      Operations:
+                        - op: add
+                          path: members
+                          value:
+                            - value: '{{userId}}'
+                  Remove Members from Group:
+                    value:
+                      schemas:
+                        - urn:ietf:params:scim:api:messages:2.0:PatchOp
+                      Operations:
+                        - op: remove
+                          path: members[value eq "{{userId}}"]
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          security:
+            - bearerAuth: []
+          x-bruno-seq: 5
+          x-bruno-also-from:
+            - Remove Members from Group
+        delete:
+          operationId: groupsDeleteGroup
+          summary: Delete Group
+          description: |-
+            Delete a group
+
+            Permanently removes the group and all its member associations.
+            This does not delete the users, only the group membership.
+
+            Requires SCIM API key authentication.
+          tags:
+            - Groups
+          parameters:
+            - name: groupId
+              in: path
+              required: true
+              schema:
+                type: string
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          security:
+            - bearerAuth: []
+          x-bruno-seq: 7
+      /scim/v2/Users:
+        get:
+          operationId: usersListUsers
+          summary: List Users
+          description: |-
+            List all users via SCIM
+
+            Returns a paginated list of users. Supports filtering, sorting, and pagination.
+
+            Query Parameters:
+            - startIndex: Starting index for pagination (default: 1)
+            - count: Number of results per page (default: 100)
+            - filter: SCIM filter expression (e.g., userName eq "user@example.com")
+            - sortBy: Attribute to sort by (e.g., userName)
+            - sortOrder: ascending or descending
+
+            Requires SCIM API key authentication.
+          tags:
+            - Users
+          parameters:
+            - name: startIndex
+              in: query
+              required: false
+              schema:
+                type: integer
+              example: 1
+            - name: count
+              in: query
+              required: false
+              schema:
+                type: integer
+              example: 100
+            - name: filter
+              in: query
+              required: false
+              schema:
+                type: string
+              example: userName eq "user@example.com"
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          security:
+            - bearerAuth: []
+          x-bruno-seq: 1
+        post:
+          operationId: usersCreateUser
+          summary: Create User
+          description: |-
+            Create a new user via SCIM
+
+            Creates a new user in the Bruno license system. The user will receive an email
+            with their license key automatically.
+
+            Required fields:
+            - userName: Usually the user's email
+            - emails: Array with at least one email object
+
+            Optional fields:
+            - name: Given name and family name
+            - active: User status (default: true)
+
+            Requires SCIM API key authentication.
+          tags:
+            - Users
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    schemas:
+                      type: array
+                      items:
+                        type: string
+                    userName:
+                      type: string
+                      format: email
+                    name:
+                      type: object
+                      properties:
+                        givenName:
+                          type: string
+                        familyName:
+                          type: string
+                    emails:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                            format: email
+                          primary:
+                            type: boolean
+                    active:
+                      type: boolean
+                example:
+                  schemas:
+                    - urn:ietf:params:scim:schemas:core:2.0:User
+                  userName: john.doe@example.com
+                  name:
+                    givenName: John
+                    familyName: Doe
+                  emails:
+                    - value: john.doe@example.com
+                      primary: true
+                  active: true
+          responses:
+            '201':
+              description: Asserted by the Bruno request (success)
+          security:
+            - bearerAuth: []
+          x-bruno-seq: 3
+          x-bruno-has-scripts: true
+      /scim/v2/Users/{userId}:
+        get:
+          operationId: usersGetUser
+          summary: Get User
+          description: |-
+            Get a specific user by ID
+
+            Returns the complete user resource including all attributes.
+            Requires SCIM API key authentication.
+          tags:
+            - Users
+          parameters:
+            - name: userId
+              in: path
+              required: true
+              schema:
+                type: string
+              example: 67892c2731f15e7567e83d3b
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          security:
+            - bearerAuth: []
+          x-bruno-seq: 2
+        put:
+          operationId: usersUpdateUserPut
+          summary: Update User (PUT)
+          description: |-
+            Update user via PUT (full replacement)
+
+            Replaces the entire user resource with the provided data.
+            All fields should be included, even if unchanged.
+
+            Setting active to false will deactivate the user and send a deactivation email.
+
+            Requires SCIM API key authentication.
+          tags:
+            - Users
+          parameters:
+            - name: userId
+              in: path
+              required: true
+              schema:
+                type: string
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    schemas:
+                      type: array
+                      items:
+                        type: string
+                    id:
+                      type: string
+                    userName:
+                      type: string
+                      format: email
+                    name:
+                      type: object
+                      properties:
+                        givenName:
+                          type: string
+                        familyName:
+                          type: string
+                    emails:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                            format: email
+                          primary:
+                            type: boolean
+                    active:
+                      type: boolean
+                example:
+                  schemas:
+                    - urn:ietf:params:scim:schemas:core:2.0:User
+                  id: '{{userId}}'
+                  userName: john.doe@example.com
+                  name:
+                    givenName: Johnn
+                    familyName: Doe
+                  emails:
+                    - value: john.doe@example.com
+                      primary: true
+                  active: true
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          security:
+            - bearerAuth: []
+          x-bruno-seq: 4
+        patch:
+          operationId: usersUpdateUserPatch
+          summary: Update User (PATCH)
+          description: |-
+            Update user via PATCH (partial update)
+
+            Performs partial updates using SCIM patch operations.
+            Only the specified fields are modified.
+
+            Supported operations:
+            - add: Add a new value
+            - replace: Replace an existing value
+            - remove: Remove a value
+
+            Common use cases:
+            - Deactivate user: replace active with false
+            - Update email: replace emails
+            - Update name: replace name fields
+
+            Setting active to false will send a deactivation email to the user.
+
+            Requires SCIM API key authentication.
+          tags:
+            - Users
+          parameters:
+            - name: userId
+              in: path
+              required: true
+              schema:
+                type: string
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    schemas:
+                      type: array
+                      items:
+                        type: string
+                    Operations:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          op:
+                            type: string
+                          path:
+                            type: string
+                          value:
+                            type: boolean
+                examples:
+                  Update User (PATCH):
+                    value:
+                      schemas:
+                        - urn:ietf:params:scim:api:messages:2.0:PatchOp
+                      Operations:
+                        - op: replace
+                          path: active
+                          value: false
+                  Deactivate User:
+                    value:
+                      schemas:
+                        - urn:ietf:params:scim:api:messages:2.0:PatchOp
+                      Operations:
+                        - op: replace
+                          path: active
+                          value: false
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          security:
+            - bearerAuth: []
+          x-bruno-seq: 5
+          x-bruno-also-from:
+            - Deactivate User
+        delete:
+          operationId: usersDeleteUser
+          summary: Delete User
+          description: |-
+            Delete a user
+
+            deletes the user by setting active to false.
+            The user record is retained but marked as inactive.
+
+            An email notification will be sent to the user about the deactivation.
+
+            Requires SCIM API key authentication.
+          tags:
+            - Users
+          parameters:
+            - name: userId
+              in: path
+              required: true
+              schema:
+                type: string
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          security:
+            - bearerAuth: []
+          x-bruno-seq: 7
+    components:
+      securitySchemes:
+        bearerAuth:
+          type: http
+          scheme: bearer
+    x-bruno-source:
+    https://github.com/bruno-collections/bruno-scim-api-collection/tree/main/scim-collection
+
+    x-bruno-generated-by: '@usebruno/converters brunoToOpenCollection + scripts/bruno-catalog'
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: orders-api
+  title: Orders API
+  description: >-
+    Order and customer endpoints kept in sync with an upstream OpenAPI document via Bruno OpenAPI
+    Sync. Carries recorded response examples. 6 Bruno requests -> 6 OpenAPI operations across 4
+    paths.
+  annotations:
+    bruno.dev/source-url: https://github.com/bruno-collections/openapi-sync-ws/tree/main/collections/Orders%20API
+    backstage.io/source-location: url:https://github.com/bruno-collections/openapi-sync-ws/tree/main/collections/Orders%20API/
+    bruno.dev/collection-format: opencollection-yml
+  tags:
+    - bruno
+    - rest
+    - orders
+    - openapi-sync
+  links:
+    - url: >-
+        https://fetch.usebruno.com/?url=https%3A%2F%2Fgithub.com%2Fbruno-collections%2Fopenapi-sync-ws
+      title: Open in Bruno
+      icon: code
+    - url: https://github.com/bruno-collections/openapi-sync-ws/tree/main/collections/Orders%20API
+      title: Bruno collection (source)
+      icon: github
+spec:
+  type: openapi
+  lifecycle: production
+  owner: guests
+  system: bruno-collections
+  definition: >
+    openapi: 3.0.3
+
+    info:
+      title: Orders API
+      version: v1
+      description: |-
+        Order and customer endpoints kept in sync with an upstream OpenAPI document via Bruno OpenAPI Sync. Carries recorded response examples.
+
+        Generated from the Bruno collection at https://github.com/bruno-collections/openapi-sync-ws/tree/main/collections/Orders%20API — the requests, params, bodies, recorded response examples and auth blocks in that collection are the only source for this document. Regenerate with `node scripts/bruno-catalog/generate.mjs`.
+
+        The collection itself is kept in sync with an upstream OpenAPI document via Bruno OpenAPI Sync (https://raw.githubusercontent.com/bruno-collections/openapi-sync-ws/refs/heads/main/orders-api-v1.yaml).
+    servers:
+      - url: '{baseUrl}'
+        description: Bruno variable {{baseUrl}} (from environment "Demo server")
+        variables:
+          baseUrl:
+            default: https://api.demo.local/v1
+            description: Base URL from the Bruno environment "Demo server"
+    tags:
+      - name: Customers
+      - name: Orders
+      - name: System
+    paths:
+      /customers/{customerId}/orders:
+        get:
+          operationId: customersOrdersListOrdersForACustomer
+          summary: List orders for a customer
+          tags:
+            - Customers
+            - Orders
+          parameters:
+            - name: customerId
+              in: path
+              required: true
+              description: Unique customer identifier
+              schema:
+                type: string
+          responses:
+            '200':
+              description: Orders for the requested customer
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            customerId:
+                              type: string
+                            status:
+                              type: string
+                            totalAmount:
+                              type: number
+                            createdAt:
+                              type: string
+                              format: date-time
+                      pagination:
+                        type: object
+                        properties:
+                          page:
+                            type: integer
+                          pageSize:
+                            type: integer
+                          total:
+                            type: integer
+                  example:
+                    data:
+                      - id: ord_1001
+                        customerId: cust_1001
+                        status: confirmed
+                        totalAmount: 70.98
+                        createdAt: '2026-04-14T12:05:00Z'
+                    pagination:
+                      page: 1
+                      pageSize: 20
+                      total: 42
+          x-bruno-seq: 1
+      /orders:
+        get:
+          operationId: ordersListOrders
+          summary: List orders
+          tags:
+            - Orders
+          parameters:
+            - name: status
+              in: query
+              required: false
+              description: Filter orders by current status
+              schema:
+                type: string
+              example: pending
+            - name: page
+              in: query
+              required: false
+              schema:
+                type: integer
+              example: 1
+            - name: pageSize
+              in: query
+              required: false
+              schema:
+                type: integer
+              example: 20
+          responses:
+            '200':
+              description: A paginated list of orders
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            customerId:
+                              type: string
+                            status:
+                              type: string
+                            totalAmount:
+                              type: number
+                            createdAt:
+                              type: string
+                              format: date-time
+                      pagination:
+                        type: object
+                        properties:
+                          page:
+                            type: integer
+                          pageSize:
+                            type: integer
+                          total:
+                            type: integer
+                  example:
+                    data:
+                      - id: ord_1001
+                        customerId: cust_1001
+                        status: confirmed
+                        totalAmount: 70.98
+                        createdAt: '2026-04-14T12:05:00Z'
+                    pagination:
+                      page: 1
+                      pageSize: 20
+                      total: 42
+          x-bruno-seq: 1
+        post:
+          operationId: ordersCreateAnOrder
+          summary: Create an order
+          tags:
+            - Orders
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    customerId:
+                      type: string
+                    items:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          sku:
+                            type: string
+                          quantity:
+                            type: integer
+                          unitPrice:
+                            type: integer
+                    notes:
+                      type: string
+                example:
+                  customerId: cust_1001
+                  items:
+                    - sku: sku_espresso_beans
+                      quantity: 2
+                      unitPrice: 15.99
+                    - sku: sku_milk_frother
+                      quantity: 1
+                      unitPrice: 39
+                  notes: Leave package at front desk.
+          responses:
+            '201':
+              description: Order created
+            '400':
+              description: Invalid request
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      error:
+                        type: string
+                      message:
+                        type: string
+                  example:
+                    error: validation_error
+                    message: Request body failed validation.
+          x-bruno-seq: 2
+      /orders/{orderId}:
+        get:
+          operationId: ordersGetAnOrderById
+          summary: Get an order by ID
+          tags:
+            - Orders
+          parameters:
+            - name: orderId
+              in: path
+              required: true
+              description: Unique order identifier
+              schema:
+                type: string
+              example: ord_1001
+          responses:
+            '200':
+              description: Order details
+            '404':
+              description: Order not found
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      error:
+                        type: string
+                      message:
+                        type: string
+                  example:
+                    error: validation_error
+                    message: Request body failed validation.
+          x-bruno-seq: 3
+        patch:
+          operationId: ordersUpdateAnOrder
+          summary: Update an order
+          tags:
+            - Orders
+          parameters:
+            - name: orderId
+              in: path
+              required: true
+              description: Unique order identifier
+              schema:
+                type: string
+              example: ord_1001
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    status:
+                      type: string
+                    notes:
+                      type: string
+                example:
+                  status: pending
+                  notes: ''
+          responses:
+            '200':
+              description: Order updated
+            '400':
+              description: Invalid request
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      error:
+                        type: string
+                      message:
+                        type: string
+                  example:
+                    error: validation_error
+                    message: Request body failed validation.
+            '404':
+              description: Order not found
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      error:
+                        type: string
+                      message:
+                        type: string
+                  example:
+                    error: validation_error
+                    message: Request body failed validation.
+          x-bruno-seq: 4
+      /health:
+        get:
+          operationId: systemHealthCheck
+          summary: Health check
+          tags:
+            - System
+          responses:
+            '200':
+              description: OK
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                      service:
+                        type: string
+                      timestamp:
+                        type: string
+                        format: date-time
+                  example:
+                    status: ok
+                    service: orders-api
+                    timestamp: '2026-04-14T14:30:00Z'
+          x-bruno-seq: 1
+    x-bruno-source:
+    https://github.com/bruno-collections/openapi-sync-ws/tree/main/collections/Orders%20API
+
+    x-bruno-generated-by: '@usebruno/converters brunoToOpenCollection + scripts/bruno-catalog'
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: bruno-e2e-demo-api
+  title: Bruno E2E Demo API
+  description: >-
+    End-to-end demo surface exercising basic, bearer, API-key and OAuth2 auth alongside CRUD,
+    redirect and delay endpoints. 29 Bruno requests -> 17 OpenAPI operations across 16 paths.
+  annotations:
+    bruno.dev/source-url: >-
+      https://github.com/bruno-collections/bruno-demo-day-ws/tree/main/collections/Bruno%20E2E%20Demo
+    backstage.io/source-location: >-
+      url:https://github.com/bruno-collections/bruno-demo-day-ws/tree/main/collections/Bruno%20E2E%20Demo/
+    bruno.dev/collection-format: opencollection-yml
+  tags:
+    - bruno
+    - rest
+    - auth
+    - e2e
+  links:
+    - url: >-
+        https://fetch.usebruno.com/?url=https%3A%2F%2Fgithub.com%2Fbruno-collections%2Fbruno-demo-day-ws
+      title: Open in Bruno
+      icon: code
+    - url: >-
+        https://github.com/bruno-collections/bruno-demo-day-ws/tree/main/collections/Bruno%20E2E%20Demo
+      title: Bruno collection (source)
+      icon: github
+spec:
+  type: openapi
+  lifecycle: production
+  owner: guests
+  system: bruno-collections
+  definition: >
+    openapi: 3.0.3
+
+    info:
+      title: Bruno E2E Demo API
+      version: v1
+      description: |-
+        End-to-end demo surface exercising basic, bearer, API-key and OAuth2 auth alongside CRUD, redirect and delay endpoints.
+
+        Generated from the Bruno collection at https://github.com/bruno-collections/bruno-demo-day-ws/tree/main/collections/Bruno%20E2E%20Demo — the requests, params, bodies, recorded response examples and auth blocks in that collection are the only source for this document. Regenerate with `node scripts/bruno-catalog/generate.mjs`.
+
+        ### Markdown Docs
+        - 
+        -
+
+        [object Object]
+    servers:
+      - url: https://dummyjson.com
+      - url: https://echo.usebruno.com
+      - url: '{baseUrl}'
+        description: Bruno variable {{baseUrl}} — not set in any collection environment
+        variables:
+          baseUrl:
+            default: https://replace-me.example.com
+            description: No collection environment defines {{baseUrl}}; substitute the base URL for the deployment you are calling.
+      - url: https://httpbin.org
+      - url: https://newsapi.org
+      - url: https://www.httpfaker.com
+      - url: https://api.example.com
+      - url: https://dogapi.dog
+      - url: https://jsonplaceholder.typicode.com
+      - url: https://reqres.in
+      - url: https://www.httpfaker.org
+      - url: https://www.w3schools.com
+    tags:
+      - name: Additional-Request-Types
+      - name: Authentication
+      - name: Basic Auth / Bearer
+      - name: Basic-Requests-Tests
+      - name: Client-Credentials
+      - name: demo
+      - name: Product Update Flow
+      - name: Runner-DD-Users
+        description: '[object Object]'
+      - name: Scripting
+        description: '[object Object]'
+      - name: test-only
+      - name: Variables
+    paths:
+      /api/v2/facts:
+        get:
+          operationId: demoGetRandomDogFact
+          summary: Get Random Dog Fact
+          description: "## 🐶 Dog Facts API\n\nThe Dog Facts API is a tiny, public API that returns random, fun facts about dogs.\nIt’s perfect for demos, testing API clients, or anytime you need a harmless endpoint that returns real JSON data.\n\nNo auth. No setup. Just dogs.\n\n### 🎯 Why This API Is Great for Demos\n\t•\t✅ Public & free\n\t•\t✅ Fast responses\n\t•\t✅ Simple GET request\n\t•\t✅ Clean JSON output\n\t•\t✅ Zero risk test data\n\t•\t✅ Everyone likes dogs\n  \n### 🐕 Sample Dog Facts You Might Get\n\t•\tDogs can learn more than 100 words and gestures\n\t•\tA dog’s nose print is as unique as a human fingerprint\n\t•\tDogs dream just like humans do\n\t•\tPuppies are born deaf and blind\n\t•\tDogs have been human companions for over 15,000 years"
+          tags:
+            - demo
+          parameters:
+            - name: max_length
+              in: query
+              required: false
+              schema:
+                type: integer
+              example: 5
+          responses:
+            '200':
+              description: Asserted by the Bruno request (success)
+          servers:
+            - url: https://dogapi.dog
+          x-bruno-seq: 1
+          x-bruno-has-scripts: true
+          x-bruno-assertions:
+            - res.status eq 200
+            - res.body isJson
+            - res.body.data isArray
+      /v2/everything:
+        get:
+          operationId: demoGetNewsArticles
+          summary: Get News Articles
+          tags:
+            - demo
+          parameters:
+            - name: q
+              in: query
+              required: false
+              schema:
+                type: string
+              example: tesla
+            - name: sortBy
+              in: query
+              required: false
+              schema:
+                type: string
+              example: publishedAt
+            - name: from
+              in: query
+              required: false
+              schema:
+                type: string
+              example: '{{validDate}}'
+          responses:
+            '200':
+              description: Asserted by the Bruno request (success)
+          security:
+            - apiKeyAuth: []
+          servers:
+            - url: https://newsapi.org
+          x-bruno-seq: 2
+          x-bruno-has-scripts: true
+          x-bruno-assertions:
+            - res.status eq 200
+            - res.body isJson
+          x-bruno-also-from:
+            - Scripting, Testing, Asserting
+      /submit:
+        post:
+          operationId: basicRequestsTestsUploadForm
+          summary: Upload Form
+          description: |-
+            # User Creation API
+
+            This endpoint creates a new user in the system.
+
+            ## Required Fields
+            - name: User's full name
+            - email: User's email address
+          tags:
+            - Basic-Requests-Tests
+          requestBody:
+            required: true
+            content:
+              application/x-www-form-urlencoded:
+                schema:
+                  type: object
+                  properties:
+                    username:
+                      type: string
+                      example: johndoe
+                    password:
+                      type: string
+                      example: secret123
+          responses:
+            '200':
+              description: Asserted by the Bruno request (success)
+          security:
+            - apiKeyAuth: []
+          servers:
+            - url: https://api.example.com
+          x-bruno-seq: 3
+          x-bruno-has-scripts: true
+          x-bruno-assertions:
+            - res.status eq 200
+            - res.body.name isString
+      /basic-auth/user/passwd:
+        get:
+          operationId: authenticationBasicAuthBearerBasicAuth
+          summary: Basic Auth
+          tags:
+            - Authentication
+            - Basic Auth / Bearer
+          responses:
+            '200':
+              description: Asserted by the Bruno request (success)
+          security:
+            - basicAuth: []
+          servers:
+            - url: https://httpbin.org
+          x-bruno-seq: 1
+          x-bruno-has-scripts: true
+      /auth/login:
+        post:
+          operationId: authenticationBasicAuthBearerLogin
+          summary: Login
+          tags:
+            - Authentication
+            - Basic Auth / Bearer
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    username:
+                      type: string
+                    password:
+                      type: string
+                example:
+                  username: '{{username}}'
+                  password: '{{password}}'
+          responses:
+            '200':
+              description: Asserted by the Bruno request (success)
+          x-bruno-seq: 2
+          x-bruno-has-scripts: true
+      /auth/me:
+        get:
+          operationId: authenticationBasicAuthBearerGetCurrentAuthUser
+          summary: Get current auth user
+          tags:
+            - Authentication
+            - Basic Auth / Bearer
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          security:
+            - bearerAuth: []
+          x-bruno-seq: 3
+      /api/auth/oauth2/client-credentials/resource:
+        get:
+          operationId: authenticationClientCredentialsGetTokenOauth2
+          summary: Get Token - OAuth2
+          tags:
+            - Authentication
+            - Client-Credentials
+          parameters:
+            - name: access_token
+              in: query
+              required: false
+              schema:
+                type: string
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          security:
+            - oauth2Auth:
+                - user:read
+          servers:
+            - url: https://www.httpfaker.org
+          x-bruno-seq: 1
+      /:
+        post:
+          operationId: authenticationClientCredentialsUseOauthToken
+          summary: Use OAuth Token
+          tags:
+            - Authentication
+            - Client-Credentials
+          responses:
+            '200':
+              description: Asserted by the Bruno request (success)
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          security:
+            - bearerAuth: []
+          servers:
+            - url: https://echo.usebruno.com
+          x-bruno-seq: 2
+          x-bruno-also-from:
+            - Prompt Input Vars
+            - fakejs - random user data
+            - Validate Pet Vaccine - External Libraries
+            - Validating Pet Vaccines - JS File
+            - Create Users
+        get:
+          operationId: variablesBrunoVariablePrecedence
+          summary: Bruno Variable Precedence
+          tags:
+            - Variables
+          parameters:
+            - name: token
+              in: query
+              required: false
+              schema:
+                type: string
+              example: '{{tokenVar}}'
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          servers:
+            - url: https://www.httpfaker.com
+          x-bruno-seq: 1
+          x-bruno-has-scripts: true
+          x-bruno-also-from:
+            - Bruno Secret Mgr Variable
+      /products:
+        get:
+          operationId: productUpdateFlowGetAllProducts
+          summary: Get all products
+          tags:
+            - Product Update Flow
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          x-bruno-seq: 1
+          x-bruno-has-scripts: true
+      /products/{randomId}:
+        get:
+          operationId: productUpdateFlowGetARandomProduct
+          summary: Get a random product
+          tags:
+            - Product Update Flow
+          parameters:
+            - name: randomId
+              in: path
+              required: true
+              schema:
+                type: string
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          x-bruno-seq: 2
+          x-bruno-has-scripts: true
+          x-bruno-also-from:
+            - Get a product - negative case
+      /products/{productId}:
+        put:
+          operationId: productUpdateFlowUpdateLowerRatedProduct
+          summary: Update lower rated product
+          tags:
+            - Product Update Flow
+          parameters:
+            - name: productId
+              in: path
+              required: true
+              schema:
+                type: string
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    discountPercentage:
+                      type: string
+                example:
+                  discountPercentage: '{{updatedDiscountPercent}}'
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          x-bruno-seq: 3
+          x-bruno-has-scripts: true
+          x-bruno-also-from:
+            - Update high rated product
+            - Update product example - not for runner
+      /xml:
+        get:
+          operationId: scriptingXml2jsInbuiltLibrary
+          summary: xml2js - inbuilt library
+          tags:
+            - Scripting
+          responses:
+            '200':
+              description: Asserted by the Bruno request (success)
+          servers:
+            - url: https://httpbin.org
+          x-bruno-seq: 3
+      /users/{userId}:
+        get:
+          operationId: scriptingUserApiContractTest
+          summary: User API Contract Test
+          description: |-
+            ### Contract Testing Example
+
+            This request demonstrates comprehensive contract testing for a User API endpoint.
+
+            **What is Contract Testing?**
+            Contract testing validates that an API response conforms to an expected schema/contract.
+
+            **This example validates:**
+
+            1. **HTTP Response Contract**
+               - Status code is 200
+               - Content-Type header is application/json
+
+            2. **Response Structure**
+               - Body is a valid JSON object
+               - All required fields are present
+
+            3. **Data Types**
+               - id is a number
+               - name, username, email, phone, website are strings
+               - address and company are objects
+
+            4. **Nested Object Structure**
+               - address contains street, suite, city, zipcode, geo
+               - geo contains lat and lng coordinates
+               - company contains name, catchPhrase, bs
+
+            5. **Value Constraints**
+               - id is a positive integer
+               - email follows email format
+               - Strings are not empty
+               - Coordinates are valid numbers
+
+            **API Endpoint:** JSONPlaceholder Users API
+            **Documentation:** https://jsonplaceholder.typicode.com/
+          tags:
+            - Scripting
+          parameters:
+            - name: userId
+              in: path
+              required: true
+              schema:
+                type: string
+            - name: _format
+              in: query
+              required: false
+              schema:
+                type: string
+              example: json
+          responses:
+            '200':
+              description: Asserted by the Bruno request (success)
+          servers:
+            - url: https://jsonplaceholder.typicode.com
+          x-bruno-seq: 5
+          x-bruno-has-scripts: true
+          x-bruno-assertions:
+            - res.status eq 200
+            - res.body isJson
+            - res.body.id isNumber
+            - res.body.name isString
+            - res.body.email isString
+      /api/users:
+        get:
+          operationId: testOnlyGetUser
+          summary: Get User
+          tags:
+            - test-only
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          servers:
+            - url: https://reqres.in
+          x-bruno-seq: 1
+      /sse.dev/test:
+        get:
+          operationId: additionalRequestTypesSseSupport
+          summary: SSE Support
+          tags:
+            - Additional-Request-Types
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          x-bruno-seq: 4
+      /xml/tempconvert.asmx:
+        get:
+          operationId: additionalRequestTypesSoapRequest
+          summary: SOAP request
+          tags:
+            - Additional-Request-Types
+          parameters:
+            - name: SOAPAction
+              in: header
+              required: false
+              schema:
+                type: string
+              example: '"https://www.w3schools.com/xml/CelsiusToFahrenheit"'
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          servers:
+            - url: https://www.w3schools.com
+          x-bruno-seq: 5
+    components:
+      securitySchemes:
+        apiKeyAuth:
+          type: apiKey
+          in: header
+          name: x-api-key
+        basicAuth:
+          type: http
+          scheme: basic
+        bearerAuth:
+          type: http
+          scheme: bearer
+        oauth2Auth:
+          type: oauth2
+          flows:
+            clientCredentials:
+              tokenUrl: https://www.httpfaker.org/api/auth/oauth2/client-credentials/token
+              scopes:
+                user:read: user:read
+    x-bruno-source:
+    https://github.com/bruno-collections/bruno-demo-day-ws/tree/main/collections/Bruno%20E2E%20Demo
+
+    x-bruno-generated-by: '@usebruno/converters brunoToOpenCollection + scripts/bruno-catalog'
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: api-testing-practices
+  title: API Testing Best Practices
+  description: >-
+    Reference collection from the Feb 2026 API Testing Best Practices webinar: variables,
+    bearer/OAuth2 auth, assertions and chaining. 20 Bruno requests -> 12 OpenAPI operations across
+    11 paths.
+  annotations:
+    bruno.dev/source-url: https://github.com/bruno-collections/Webinar-Best-Practices-Feb-2026-BRU
+    backstage.io/source-location: url:https://github.com/bruno-collections/Webinar-Best-Practices-Feb-2026-BRU/
+    bruno.dev/collection-format: bru
+  tags:
+    - bruno
+    - rest
+    - testing
+    - auth
+    - scripting
+  links:
+    - url: >-
+        https://fetch.usebruno.com/?url=https%3A%2F%2Fgithub.com%2Fbruno-collections%2FWebinar-Best-Practices-Feb-2026-BRU
+      title: Open in Bruno
+      icon: code
+    - url: https://github.com/bruno-collections/Webinar-Best-Practices-Feb-2026-BRU
+      title: Bruno collection (source)
+      icon: github
+spec:
+  type: openapi
+  lifecycle: production
+  owner: guests
+  system: bruno-collections
+  definition: |
+    openapi: 3.0.3
+    info:
+      title: API Testing Best Practices
+      version: v1
+      description: |-
+        Reference collection from the Feb 2026 API Testing Best Practices webinar: variables, bearer/OAuth2 auth, assertions and chaining.
+
+        Generated from the Bruno collection at https://github.com/bruno-collections/Webinar-Best-Practices-Feb-2026-BRU — the requests, params, bodies, recorded response examples and auth blocks in that collection are the only source for this document. Regenerate with `node scripts/bruno-catalog/generate.mjs`.
+
+        # 🎉 Welcome to the Bruno Live Workshop!
+
+        This collection is designed for a **hands-on, instructor-led walkthrough** of Bruno's key features. Each section contains intentionally incomplete requests for you to fix — with fully working solutions in each **Solution** subfolder.
+
+        ## 📋 Sections
+
+        1. **Getting Started** — Send your first requests (GET, POST), explore JSON responses
+        2. **Working with Variables** — Environment variables, dynamic variables, switching environments
+        3. **Authentication** — Bearer token login, OAuth2 Client Credentials, token chaining
+        4. **Tests & Assertions** — Declarative assertions, Chai.js tests, Zod schema validation, external JS files
+        5. **Scripts & Chaining** — Pre/post-request scripts, `bru.runRequest()` chaining, `bru.visualize()` data visualization
+        6. **Collection Runner** — Data-driven testing with JSON data files, batch execution
+
+        ## 🏁 Before You Start
+
+        1. Select the **Workshop** environment from the environment dropdown (top right)
+        2. Work through the sections in order (01 → 06)
+        3. Click on each folder's **Docs** tab for instructions and guidance
+        4. Each request at the folder root is **intentionally incomplete** — follow along with the instructor!
+        5. If you get stuck, check the **Solution** subfolder in each section for the working version
+
+        ## 📂 How This Collection Is Structured
+
+        ```
+        📁 01-Getting Started/
+        ├── Hello Echo.yml          ← Incomplete (your task!)
+        ├── Get Dog Facts.yml       ← Ready to send
+        ├── Get All Users.yml       ← Incomplete (your task!)
+        └── 📁 Solution/            ← Working reference versions
+        ```
+
+        Each section follows this pattern — incomplete requests at the root, complete solutions in the subfolder.
+
+        ## 💻 Bruno CLI Quick Reference
+
+        Bruno also has a CLI for running collections from the terminal or CI/CD pipelines.
+
+        ```bash
+        # Run this entire collection
+        bru run --env Workshop
+
+        # Run a specific section
+        bru run "04-Tests and Assertions/Solution" --env Workshop
+
+        # Run with a JSON data file
+        bru run "06-Collection Runner/Solution" --env Workshop --reporter-json results.json
+
+        # Generate an HTML report
+        bru run --env Workshop --reporter-html reports/report.html
+
+        # Stop on first failure
+        bru run --env Workshop --bail
+        ```
+
+        ## 🤖 GitHub Actions CI
+
+        This repo includes a GitHub Actions workflow (`.github/workflows/collection-runner-tests.yml`) that automatically runs the **06-Collection Runner** section using the Bruno CLI and the `users.json` data file.
+
+        - **Triggers** on push to `main`, pull requests, or manual dispatch
+        - Runs `bru run "06-Collection Runner/Solution" --env Workshop --json-file-path ../../users.json`
+        - Generates JSON and HTML reports, uploaded as artifacts
+        - Great example of integrating Bruno into a CI/CD pipeline — see [GitHub Actions docs](https://docs.usebruno.com/bru-cli/gitHubCLI)
+
+        ## 🙏 Public APIs Used
+
+        This workshop uses the following free, public APIs — thank you to their maintainers!
+
+        - **[JSONPlaceholder](https://jsonplaceholder.typicode.com)** — Free fake REST API for testing and prototyping (by [typicode](https://github.com/typicode))
+        - **[Dog API](https://dogapi.dog)** — Free API for random dog facts and breeds
+        - **[Bruno Echo Server](https://echo.usebruno.com)** — Bruno's echo endpoint that mirrors back whatever you send
+        - **[httpfaker.org](https://www.httpfaker.org)** — Free API for testing authentication flows (Bearer, OAuth2)
+
+        ## 🔗 Useful Links
+
+        - [Bruno Documentation](https://docs.usebruno.com/)
+        - [Bruno GitHub](https://github.com/usebruno/bruno)
+        - [Bruno Blog](https://blog.usebruno.com/)
+        - [Bruno CLI Docs](https://docs.usebruno.com/bru-cli/overview)
+        - [Data-Driven Testing](https://docs.usebruno.com/testing/automate-test/data-driven-testing)
+        - [External JS Files](https://docs.usebruno.com/testing/script/js-file)
+
+        Happy testing! 🐾
+
+        [object Object]
+    servers:
+      - url: '{baseUrl}'
+        description: Bruno variable {{baseUrl}} (from environment "Workshop-Alt")
+        variables:
+          baseUrl:
+            default: https://jsonplaceholder.typicode.com
+            description: Base URL from the Bruno environment "Workshop-Alt"
+      - url: '{echoUrl}'
+        description: Bruno variable {{echoUrl}} (from environment "Workshop-Alt")
+        variables:
+          echoUrl:
+            default: https://echo.usebruno.com
+            description: Base URL from the Bruno environment "Workshop-Alt"
+      - url: '{dogApiUrl}'
+        description: Bruno variable {{dogApiUrl}} (from environment "Workshop-Alt")
+        variables:
+          dogApiUrl:
+            default: https://dogapi.dog/api/v2
+            description: Base URL from the Bruno environment "Workshop-Alt"
+      - url: '{httpFakerUrl}'
+        description: Bruno variable {{httpFakerUrl}} (from environment "Workshop")
+        variables:
+          httpFakerUrl:
+            default: https://www.httpfaker.org
+            description: Base URL from the Bruno environment "Workshop"
+      - url: https://jsonplaceholder.typicode.com
+      - url: https://www.httpfaker.org
+    tags:
+      - name: 01-Getting Started
+        description: '[object Object]'
+      - name: 02-Working with Variables
+        description: '[object Object]'
+      - name: 03-Authentication
+        description: '[object Object]'
+      - name: 04-Tests and Assertions
+        description: '[object Object]'
+      - name: 05-Scripts and Chaining
+        description: '[object Object]'
+      - name: 06-Collection Runner
+        description: '[object Object]'
+    paths:
+      /users:
+        get:
+          operationId: 01GettingStartedGetAllUsers
+          summary: Get All Users
+          description: |-
+            # Get All Users 👥
+
+            Fetches all users from the JSONPlaceholder API.
+
+            This returns an array of 10 users, each with properties like `name`, `email`, `address`, `company`, etc.
+
+            **Tip:** Notice the `{{baseUrl}}` in the URL — this is an **environment variable**! We'll learn more about these in the next section.
+          tags:
+            - 01-Getting Started
+          responses:
+            '200':
+              description: Asserted by the Bruno request (success)
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          servers:
+            - url: https://jsonplaceholder.typicode.com
+          x-bruno-seq: 1
+          x-bruno-also-from:
+            - Full Test Suite
+            - Full Test Suite (JS File)
+            - Visualize Response
+      /facts:
+        get:
+          operationId: 01GettingStartedGetDogFacts
+          summary: Get Dog Facts
+          description: |-
+            # Get Dog Facts 🐕
+
+            Fetches a random dog fact from the Dog API.
+
+            Notice how the response is structured JSON — Bruno auto-formats it for you.
+
+            **Try it:** Look at the response body. Each fact has an `id`, `type`, and `attributes.body`.
+          tags:
+            - 01-Getting Started
+          parameters:
+            - name: limit
+              in: query
+              required: false
+              schema:
+                type: integer
+              example: 1
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          servers:
+            - url: '{dogApiUrl}'
+          x-bruno-seq: 3
+          x-bruno-also-from:
+            - Assert Basics
+      /:
+        post:
+          operationId: 01GettingStartedHelloEcho
+          summary: Hello Echo
+          description: |-
+            # Hello Echo 👋
+
+            This is the simplest possible request — a POST to Bruno's echo server.
+
+            The echo server mirrors back whatever JSON you send it, so you can see exactly what arrived on the other end.
+
+            **Click Send ▶️ and explore the response!**
+          tags:
+            - 01-Getting Started
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    message:
+                      type: string
+                    workshop:
+                      type: string
+                examples:
+                  Hello Echo:
+                    value:
+                      message: ''
+                      workshop: ''
+                  Echo with Variables:
+                    value:
+                      workshop: Demo Workshop
+                      attendee: '{{}}'
+                      email: '{{}}'
+                      role: '{{}}'
+          responses:
+            '200':
+              description: Asserted by the Bruno request (success)
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          servers:
+            - url: '{echoUrl}'
+          x-bruno-seq: 4
+          x-bruno-also-from:
+            - Echo with Variables
+            - Generate Test Data
+            - Create User
+        get:
+          operationId: 05ScriptsAndChainingDynamicallySetRequests
+          summary: Dynamically Set Requests
+          tags:
+            - 05-Scripts and Chaining
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          servers:
+            - url: '{echoUrl}'
+          x-bruno-seq: 1
+          x-bruno-has-scripts: true
+      /posts:
+        post:
+          operationId: 02WorkingWithVariablesCreateAPost
+          summary: Create a Post
+          description: |-
+            # Create a Post ✏️
+
+            This sends a POST request to create a new post.
+
+            **Notice:**
+            - The HTTP method is `post` (not `get`)
+            - The `body: json` tells Bruno we're sending JSON data
+            - `{{defaultUserId}}` comes from your selected environment
+
+            **Expected:** Status `201 Created` with the new post data in the response.
+          tags:
+            - 02-Working with Variables
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    title:
+                      type: string
+                    body:
+                      type: string
+                    userId:
+                      type: integer
+                example:
+                  title: My First Bruno Post
+                  body: Hello from the Bruno Live Workshop!
+                  userId: 0
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          x-bruno-seq: 1
+      /posts/1:
+        put:
+          operationId: 02WorkingWithVariablesUpdateAPost
+          summary: Update a Post
+          description: |-
+            # Update a Post ✏️
+
+            This sends a PUT request to update an existing post.
+
+            **Notice:**
+            - The URL includes `/posts/1` to target a specific post
+            - The HTTP method is `put`
+            - The body contains the full updated resource
+
+            **Expected:** Status `200 OK` with the updated post data.
+          tags:
+            - 02-Working with Variables
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                x-bruno-raw-body: |-
+                  {
+                    "id": 1,
+                    "title": "Updated from Bruno Workshop",
+                    "body": "This post was updated during the live workshop!",
+                    "userId": {{}}
+                  }
+          responses:
+            '201':
+              description: Asserted by the Bruno request (success)
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          x-bruno-seq: 3
+          x-bruno-also-from:
+            - Update Post
+      /api/auth/bearer/login:
+        post:
+          operationId: 03AuthenticationBearerLogin
+          summary: Bearer Login
+          description: |-
+            ## Bearer Login
+
+            Logs in with username/password and captures the returned token using a post-response script.
+
+            The token is stored as `{{bearerToken}}` for the next request.
+          tags:
+            - 03-Authentication
+          requestBody:
+            required: true
+            content:
+              application/x-www-form-urlencoded:
+                schema:
+                  type: object
+                  properties:
+                    username:
+                      type: string
+                    password:
+                      type: string
+          responses:
+            '200':
+              description: Asserted by the Bruno request (success)
+          servers:
+            - url: '{httpFakerUrl}'
+          x-bruno-seq: 1
+          x-bruno-has-scripts: true
+          x-bruno-assertions:
+            - res.status eq 200
+            - res.body.token isString
+      /api/auth/bearer/resource:
+        get:
+          operationId: 03AuthenticationBearerProtectedResource
+          summary: Bearer Protected Resource
+          description: |-
+            ## Bearer Protected Resource
+
+            Uses the bearer token captured from the login request to access a protected resource.
+
+            ⚠️ Run "Bearer Login" first to capture the token!
+          tags:
+            - 03-Authentication
+          responses:
+            '200':
+              description: Asserted by the Bruno request (success)
+          security:
+            - bearerAuth: []
+          servers:
+            - url: '{httpFakerUrl}'
+          x-bruno-seq: 2
+          x-bruno-assertions:
+            - res.status eq 200
+            - res.body.name isString
+            - res.body.email isString
+      /api/auth/oauth2/client-credentials/resource:
+        get:
+          operationId: 03AuthenticationGetTokenOauth2
+          summary: Get Token - OAuth2
+          tags:
+            - 03-Authentication
+          responses:
+            default:
+              description: The Bruno collection records no response example or status assertion for this request.
+          security:
+            - oauth2Auth:
+                - user:read
+          servers:
+            - url: https://www.httpfaker.org
+          x-bruno-seq: 3
+      /users/{defaultUserId}:
+        get:
+          operationId: 04TestsAndAssertionsChaiJsTests
+          summary: Chai.js Tests
+          description: |-
+            # Chai.js Tests 🧪
+
+            The `tests {}` block gives you full JavaScript with **Chai.js** assertions.
+
+            **This request tests:**
+            - Status code validation
+            - Required field presence
+            - Email format validation with regex
+            - Data type checks
+
+            **Key patterns:**
+            ```javascript
+            test("Test name", () => {
+              expect(value).to.equal(expected);
+              expect(obj).to.have.property("key");
+              expect(str).to.match(/regex/);
+            });
+            ```
+
+            Notice we also have `assert {}` alongside `tests {}` — you can use both together!
+          tags:
+            - 04-Tests and Assertions
+          parameters:
+            - name: defaultUserId
+              in: path
+              required: true
+              schema:
+                type: string
+          responses:
+            '200':
+              description: Asserted by the Bruno request (success)
+          x-bruno-seq: 2
+          x-bruno-assertions:
+            - res.status eq 200
+            - res.body.id gt 1
+            - res.body.email isString
+      /posts/{capturedPostId}:
+        get:
+          operationId: 05ScriptsAndChainingGetPostDetails
+          summary: Get Post Details
+          description: |-
+            # Get Post Details 🔍
+
+            This request uses `bru.runRequest()` to automatically run **Create Post** first, then retrieves the created post.
+
+            **How the chain works:**
+            1. Pre-request script calls `bru.runRequest("05-Scripts and Chaining/Solution/Create Post")`
+            2. **Create Post** runs → creates a post → saves ID with `bru.setVar("capturedPostId", body.id)`
+            3. Back in **Get Post Details** → uses `{{capturedPostId}}` in the URL to fetch that post
+
+            This is fully self-contained — just send this request and the entire chain runs automatically!
+          tags:
+            - 05-Scripts and Chaining
+          parameters:
+            - name: capturedPostId
+              in: path
+              required: true
+              schema:
+                type: string
+          responses:
+            '200':
+              description: Asserted by the Bruno request (success)
+          x-bruno-seq: 4
+          x-bruno-has-scripts: true
+          x-bruno-assertions:
+            - res.status eq 200
+            - res.body.id isNumber
+      /users/{param1}:
+        get:
+          operationId: 06CollectionRunnerVerifyCreation
+          summary: Verify Creation
+          description: |-
+            # Verify Creation ✔️
+
+            This is a verification step that runs after Create User in the collection runner sequence.
+
+            It fetches a user from JSONPlaceholder to demonstrate that the runner executes requests in **sequence order** (seq 1, then seq 2).
+
+            Notice the `res.responseTime` check — you can also assert on performance!
+          tags:
+            - 06-Collection Runner
+          parameters:
+            - name: param1
+              in: path
+              required: true
+              schema:
+                type: string
+          responses:
+            '200':
+              description: Asserted by the Bruno request (success)
+          x-bruno-seq: 2
+          x-bruno-assertions:
+            - res.status eq 200
+            - res.body isJson
+            - res.body.id isNumber
+    components:
+      securitySchemes:
+        bearerAuth:
+          type: http
+          scheme: bearer
+        oauth2Auth:
+          type: oauth2
+          flows:
+            clientCredentials:
+              tokenUrl: https://www.httpfaker.org/api/auth/oauth2/client-credentials/token
+              scopes:
+                user:read: user:read
+    x-bruno-source: https://github.com/bruno-collections/Webinar-Best-Practices-Feb-2026-BRU
+    x-bruno-generated-by: '@usebruno/converters brunoToOpenCollection + scripts/bruno-catalog'

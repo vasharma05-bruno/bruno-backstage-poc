@@ -13,6 +13,7 @@ import Checkbox from '@material-ui/core/Checkbox';
 import FormControlLabel from '@material-ui/core/FormControlLabel';
 import List from '@material-ui/core/List';
 import ListItem from '@material-ui/core/ListItem';
+import { makeStyles } from '@material-ui/core/styles';
 import { brunoApiRef } from '../../../api/BrunoApi';
 import { classifyLinkError } from '../../../lib/linkErrors';
 import {
@@ -20,7 +21,30 @@ import {
   validateScmRepoUrl
 } from '../../../lib/scmProviders';
 import { useScmToken } from '../../../lib/useScmToken';
+import { brunoBrand } from '../../../theme/brand';
+import { useBrandStyles } from '../../../theme/brandStyles';
+import { BrunoIcon } from '../../BrunoLogo';
 import type { DiscoveredCollection } from '../../../api/types';
+
+const useStyles = makeStyles((theme) => {
+  const brand = brunoBrand(theme);
+
+  return {
+    // Same accent rule the Bruno cards carry, so the modal reads as Bruno's
+    // without dressing up the stock Material-UI dialog any further.
+    paper: {
+      borderTop: `3px solid ${brand.accent}`
+    },
+    titleRow: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: theme.spacing(1)
+    },
+    titleMark: {
+      fontSize: 24
+    }
+  };
+});
 
 type State
   = | { status: 'idle' }
@@ -50,6 +74,8 @@ export function AddCollectionModal(props: {
   onImported: () => void;
 }): JSX.Element {
   const { open, onClose, onImported } = props;
+  const classes = useStyles();
+  const brandClasses = useBrandStyles();
   const brunoApi = useApi(brunoApiRef);
   const tokens = useScmToken();
 
@@ -226,8 +252,19 @@ export function AddCollectionModal(props: {
     = state.status === 'scanning' || state.status === 'importing';
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Add collection</DialogTitle>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      maxWidth="sm"
+      fullWidth
+      PaperProps={{ className: classes.paper }}
+    >
+      <DialogTitle disableTypography>
+        <Box className={classes.titleRow}>
+          <BrunoIcon className={classes.titleMark} />
+          <Typography variant="h6">Add collection</Typography>
+        </Box>
+      </DialogTitle>
       <DialogContent>
         <Box mb={2}>
           <TextField
@@ -337,7 +374,7 @@ export function AddCollectionModal(props: {
         ) : collections.length > 0 ? (
           <Button
             variant="contained"
-            color="primary"
+            className={brandClasses.accentButton}
             onClick={importSelected}
             disabled={busy || selectedCollections.length === 0}
           >

@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { InfoCard } from '@backstage/core-components';
 import { useApi } from '@backstage/core-plugin-api';
 import Grid from '@material-ui/core/Grid';
 import Typography from '@material-ui/core/Typography';
@@ -7,6 +6,7 @@ import Button from '@material-ui/core/Button';
 import TextField from '@material-ui/core/TextField';
 import MenuItem from '@material-ui/core/MenuItem';
 import Divider from '@material-ui/core/Divider';
+import { BrunoInfoCard } from '../../BrunoInfoCard';
 import {
   CollectionPickerFields,
   useCollectionPicker
@@ -190,7 +190,7 @@ export function LinkPanel(props: {
   };
 
   return (
-    <InfoCard title={`Link a Bruno collection to ${selectedName ?? '…'}`}>
+    <BrunoInfoCard title={`Link a Bruno collection to ${selectedName ?? '…'}`}>
       {!selectedRef ? (
         <Typography variant="body2" color="textSecondary">
           Select an API on the left to link it to a Bruno collection.
@@ -340,6 +340,6 @@ export function LinkPanel(props: {
           </Grid>
         </Grid>
       )}
-    </InfoCard>
+    </BrunoInfoCard>
   );
 }

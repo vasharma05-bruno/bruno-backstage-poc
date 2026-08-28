@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { InfoCard } from '@backstage/core-components';
 import { useApi } from '@backstage/core-plugin-api';
 import { useEntity } from '@backstage/plugin-catalog-react';
 import { stringifyEntityRef } from '@backstage/catalog-model';
@@ -19,6 +18,7 @@ import type { CollectionDetail, Item } from '../../api/types';
 import { isFolderItem, isRequestItem } from '../../api/types';
 import { getCollectionId } from '../../lib/annotations';
 import { subscribeConnectionChange } from '../../lib/connectionEvents';
+import { BrunoInfoCard } from '../BrunoInfoCard';
 import { MethodBadge } from '../MethodBadge';
 
 type State
@@ -185,7 +185,7 @@ export function CollectionTreeCard(): JSX.Element | null {
 
   const items = state.detail.collection.items;
   return (
-    <InfoCard title="Collection Tree">
+    <BrunoInfoCard title="Collection Tree">
       {items.length === 0 ? (
         <Typography variant="body2" color="textSecondary">
           No requests in this collection.
@@ -193,6 +193,6 @@ export function CollectionTreeCard(): JSX.Element | null {
       ) : (
         <CompactTree items={items} />
       )}
-    </InfoCard>
+    </BrunoInfoCard>
   );
 }
