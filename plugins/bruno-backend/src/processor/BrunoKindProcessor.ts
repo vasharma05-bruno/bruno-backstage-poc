@@ -22,9 +22,11 @@ import type { BrunoEntity } from '../types';
 const SOURCE_LOCATION_ANNOTATION = 'backstage.io/source-location';
 /** Why `spec.definition` is absent, and how big it would have been. Both values
  *  are pure functions of the collection's content, so stamping them cannot churn
- *  `resultHash`. The `bruno.dev/*` prefix matches the keys already in use. */
-const DEFINITION_OMITTED_ANNOTATION = 'bruno.dev/definition-omitted';
-const DEFINITION_BYTES_ANNOTATION = 'bruno.dev/definition-bytes';
+ *  `resultHash`. The `bruno.dev/*` prefix matches the keys already in use.
+ *  Exported because the docs route reads them back to explain an entity with no
+ *  document to render — one definition of the keys, not two. */
+export const DEFINITION_OMITTED_ANNOTATION = 'bruno.dev/definition-omitted';
+export const DEFINITION_BYTES_ANNOTATION = 'bruno.dev/definition-bytes';
 
 /**
  * The apiVersion the `Bruno` kind is written against — the identifier the PRD

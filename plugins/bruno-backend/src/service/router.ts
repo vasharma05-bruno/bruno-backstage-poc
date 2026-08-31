@@ -4,14 +4,20 @@ import type {
   UserInfoService
 } from '@backstage/backend-plugin-api';
 import { MiddlewareFactory } from '@backstage/backend-defaults/rootHttpRouter';
+import type { Entity } from '@backstage/catalog-model';
 import type { Config } from '@backstage/config';
 import { InputError } from '@backstage/errors';
+import type { CatalogService } from '@backstage/plugin-catalog-node';
 import express from 'express';
 import Router from 'express-promise-router';
 import type { CollectionService } from './collectionService';
 import { collectionIdFromUrl } from './collectionService';
 import type { ConnectionStore } from '../store/connectionStore';
 import type { CollectionsStore } from '../store/collectionsStore';
+import {
+  DEFINITION_BYTES_ANNOTATION,
+  DEFINITION_OMITTED_ANNOTATION
+} from '../processor/BrunoKindProcessor';
 import { generateOcDocsHtml } from './generateOcDocsHtml';
 import {
   redactCollectionDetail,
@@ -24,6 +30,7 @@ export interface RouterOptions {
   collectionService: CollectionService;
   connectionStore: ConnectionStore;
   collectionsStore: CollectionsStore;
+  catalog: CatalogService;
   httpAuth: HttpAuthService;
   userInfo: UserInfoService;
 }
@@ -41,6 +48,7 @@ export interface RouterOptions {
  *   GET /collections/:id/docs   -> text/html (self-contained Scenario-B docs)
  *   GET /collections/:id/opencollection.yml -> text/yaml (OpenCollection export)
  *   POST /collections/:id/sync  -> live re-pull from the SCM host, refresh cache
+ *   GET /entities/:namespace/:name/docs -> text/html (docs for a kind:Bruno entity)
  *   GET /dashboard              -> Dashboard (stats + cards + failed sources)
  *   POST /connections/discover  -> DiscoverResult (all collection roots in a repo)
  *   POST /refresh               -> re-reads and re-parses all sources
@@ -54,6 +62,7 @@ export async function createRouter(
     collectionService,
     connectionStore,
     collectionsStore,
+    catalog,
     httpAuth,
     userInfo
   } = options;
@@ -164,6 +173,72 @@ export async function createRouter(
     const theme = req.query.theme === 'dark' ? 'dark' : 'light';
     const yaml = toOpenCollectionYaml(detail.collection);
     res.type('text/html').send(generateOcDocsHtml(yaml, detail.name, theme));
+  });
+
+  // The `kind: Bruno` entity's docs, keyed by entity ref rather than by a
+  // backend collection id. Same document as `/collections/:id/docs`, built from
+  // the OpenCollection YAML the processor already stored on the entity as
+  // `spec.definition` — so no source-control read happens here.
+  //
+  // Served from the backend rather than assembled in the browser ON PURPOSE:
+  // this document has its own origin (the backend's), so the OpenCollection
+  // renderer bundle is fetched under the CSP set below rather than under the
+  // app's `backend.csp.*`. A `blob:` document minted by the app would inherit
+  // the app's CSP, where the CDN is not allowed, and the bundle would be
+  // blocked everywhere except under the CSP-less webpack dev server.
+  //
+  // Auth: same barrier as `/collections/:id/docs` above — the `user-cookie`
+  // policy (plugin.ts) is what gates the route. The credentials read here is
+  // not a second gate; it exists because the catalog call needs a principal to
+  // act as, and it is deliberately cookie-tolerant: `allowLimitedAccess` is
+  // what lets the iframe's limited-access cookie (the request carries no
+  // Authorization header) resolve to the requesting user, and without it the
+  // read throws on every framed request. The allow-list is the default pair,
+  // NOT narrowed to `['user']`. The catalog is then read AS THAT USER, so this
+  // route can never surface a collection the caller could not read from the
+  // catalog itself.
+  router.get('/entities/:namespace/:name/docs', async (req, res) => {
+    // Embedding headers up-front — BEFORE any error branch — so every error
+    // page below is framable too; see the collection docs route for why.
+    applyDocsEmbeddingHeaders(res, config);
+    const credentials = await httpAuth.credentials(req, {
+      allow: ['user', 'service'],
+      allowLimitedAccess: true
+    });
+    const { namespace, name } = req.params;
+    const entity = await catalog.getEntityByRef(
+      { kind: 'Bruno', namespace, name },
+      { credentials }
+    );
+    if (!entity) {
+      sendDocsErrorPage(
+        res,
+        404,
+        `No Bruno collection named ${namespace}/${name}.`
+      );
+      return;
+    }
+    // Defensive: `getEntityByRef` is asked for `kind: Bruno`, so a foreign kind
+    // should be unreachable — but rendering a non-Bruno entity's `spec` through
+    // the OpenCollection renderer would fail far less legibly than this does.
+    if (entity.kind.toLocaleLowerCase('en-US') !== 'bruno') {
+      sendDocsErrorPage(
+        res,
+        400,
+        `${namespace}/${name} is a ${entity.kind} entity, not a Bruno `
+        + 'collection, so it has no OpenCollection document.'
+      );
+      return;
+    }
+    const yaml = (entity.spec as { definition?: unknown } | undefined)
+      ?.definition;
+    if (typeof yaml !== 'string' || !yaml) {
+      sendDocsErrorPage(res, 404, missingDefinitionMessage(entity));
+      return;
+    }
+    const theme = req.query.theme === 'dark' ? 'dark' : 'light';
+    const title = entity.metadata.title ?? entity.metadata.name;
+    res.type('text/html').send(generateOcDocsHtml(yaml, title, theme));
   });
 
   router.get('/collections/:id/opencollection.yml', async (req, res) => {
@@ -312,6 +387,69 @@ function escapeHtml(value: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+/**
+ * Sends a framable HTML error page from a docs route.
+ *
+ * Same shape as the `/collections/:id/docs` 404 it is modelled on: the docs are
+ * reached as an iframe `src`, so an error has to be a DOCUMENT the frame can
+ * render. A JSON body (what the error middleware would produce) shows up as raw
+ * text or an empty frame, and tells the reader nothing.
+ */
+function sendDocsErrorPage(
+  res: express.Response,
+  status: number,
+  message: string
+): void {
+  res
+    .status(status)
+    .type('text/html')
+    .send(
+      `<!DOCTYPE html><html><body><h1>${status}</h1><p>${escapeHtml(
+        message
+      )}</p></body></html>`
+    );
+}
+
+/**
+ * Explains why a Bruno entity carries no `spec.definition`.
+ *
+ * Three genuinely different states, and the reader can only act on the right
+ * one. `BrunoKindProcessor` stamps `bruno.dev/definition-omitted` when it HAD a
+ * document and dropped it — `size` (over `bruno.definition.maxBytes`, with the
+ * would-be size in `bruno.dev/definition-bytes`) or `error` (the collection
+ * could not be read/converted). No annotation at all means the entity simply
+ * has not been processed yet, which resolves itself on the next cycle.
+ */
+function missingDefinitionMessage(entity: Entity): string {
+  const annotations = entity.metadata.annotations ?? {};
+  const omitted = annotations[DEFINITION_OMITTED_ANNOTATION];
+  const bytes = annotations[DEFINITION_BYTES_ANNOTATION];
+  if (omitted === 'size') {
+    return (
+      'This collection\'s OpenCollection document'
+      + (bytes ? ` (${bytes} bytes)` : '')
+      + ' exceeds the configured bruno.definition.maxBytes, so it was not '
+      + 'stored on the entity and cannot be rendered. Raise that limit in your '
+      + 'Backstage configuration.'
+    );
+  }
+  if (omitted === 'error') {
+    return (
+      'The OpenCollection document for this collection could not be generated. '
+      + 'Check the entity\'s processing errors for why the collection could not '
+      + 'be read.'
+    );
+  }
+  if (omitted) {
+    return `No OpenCollection document is stored on this entity (${omitted}).`;
+  }
+  return (
+    'No API documentation has been generated for this collection yet. It is '
+    + 'written to the entity the first time Backstage reads the collection from '
+    + 'source control — check back in a minute.'
+  );
 }
 
 /**

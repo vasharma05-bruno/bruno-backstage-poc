@@ -2,6 +2,7 @@ import {
   coreServices,
   createBackendPlugin
 } from '@backstage/backend-plugin-api';
+import { catalogServiceRef } from '@backstage/plugin-catalog-node';
 import { createCollectionService } from './service/collectionService';
 import { createRouter } from './service/router';
 import { readSchedule } from './service/schedule';
@@ -27,7 +28,11 @@ export const brunoPlugin = createBackendPlugin({
         database: coreServices.database,
         scheduler: coreServices.scheduler,
         httpAuth: coreServices.httpAuth,
-        userInfo: coreServices.userInfo
+        userInfo: coreServices.userInfo,
+        // Reads `kind: Bruno` entities for the entity-keyed docs route. Calls
+        // are made with the REQUESTING user's credentials, not the plugin's, so
+        // the route inherits the catalog's own visibility rules.
+        catalog: catalogServiceRef
       },
       async init({
         httpRouter,
@@ -37,7 +42,8 @@ export const brunoPlugin = createBackendPlugin({
         database,
         scheduler,
         httpAuth,
-        userInfo
+        userInfo,
+        catalog
       }) {
         const collectionService = await createCollectionService({
           logger,
@@ -68,6 +74,7 @@ export const brunoPlugin = createBackendPlugin({
             collectionService,
             connectionStore,
             collectionsStore,
+            catalog,
             httpAuth,
             userInfo
           })
@@ -88,6 +95,15 @@ export const brunoPlugin = createBackendPlugin({
         // user/service token. See docs/execution/DOCS-AUTH-P1-plan.md.
         httpRouter.addAuthPolicy({
           path: '/collections/:id/docs',
+          allow: 'user-cookie'
+        });
+        // Same treatment for the entity-keyed docs route, and for the same
+        // reason: it is loaded as an iframe `src`. Prefix matching again means
+        // this covers `/entities/<ns>/<name>/docs*` and nothing else — there is
+        // no sibling route under `/entities`, and any future one would NOT be
+        // reached by this policy unless it sits under that same path.
+        httpRouter.addAuthPolicy({
+          path: '/entities/:namespace/:name/docs',
           allow: 'user-cookie'
         });
       }
