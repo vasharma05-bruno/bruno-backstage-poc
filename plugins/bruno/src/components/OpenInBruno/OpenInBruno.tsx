@@ -127,7 +127,7 @@ export function OpenInBruno(props: { sourceUrl?: string }) {
 
   if (!sourceUrl) {
     return (
-      <Tooltip title="No bruno.dev/source-url annotation on this entity">
+      <Tooltip title="No usebruno.com/source-url annotation on this entity">
         <span>
           <Button
             variant="contained"

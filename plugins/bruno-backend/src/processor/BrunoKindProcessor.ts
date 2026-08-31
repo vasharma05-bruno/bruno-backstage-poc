@@ -22,11 +22,11 @@ import type { BrunoEntity } from '../types';
 const SOURCE_LOCATION_ANNOTATION = 'backstage.io/source-location';
 /** Why `spec.definition` is absent, and how big it would have been. Both values
  *  are pure functions of the collection's content, so stamping them cannot churn
- *  `resultHash`. The `bruno.dev/*` prefix matches the keys already in use.
+ *  `resultHash`. The `usebruno.com/*` prefix matches the keys already in use.
  *  Exported because the docs route reads them back to explain an entity with no
  *  document to render — one definition of the keys, not two. */
-export const DEFINITION_OMITTED_ANNOTATION = 'bruno.dev/definition-omitted';
-export const DEFINITION_BYTES_ANNOTATION = 'bruno.dev/definition-bytes';
+export const DEFINITION_OMITTED_ANNOTATION = 'usebruno.com/definition-omitted';
+export const DEFINITION_BYTES_ANNOTATION = 'usebruno.com/definition-bytes';
 
 /**
  * How this collection came to be in the catalog — the one thing the UI cannot
@@ -45,7 +45,7 @@ export const DEFINITION_BYTES_ANNOTATION = 'bruno.dev/definition-bytes';
  * never changes for a given entity, so unlike a source commit sha it cannot
  * churn `resultHash` (BE-P2 §8 Q4). See `deriveOrigin` for who sets what.
  */
-export const ORIGIN_ANNOTATION = 'bruno.dev/origin';
+export const ORIGIN_ANNOTATION = 'usebruno.com/origin';
 
 /**
  * - `config` — a `bruno.collections[]` entry in `app-config.yaml`. Stamped by
@@ -425,7 +425,7 @@ export class BrunoKindProcessor implements CatalogProcessor {
 
   /**
    * Stamps the two annotations that do not depend on a successful fetch —
-   * `backstage.io/source-location` and `bruno.dev/origin` — returning the same
+   * `backstage.io/source-location` and `usebruno.com/origin` — returning the same
    * reference when there is nothing to add so `resultHash` stays stable.
    *
    * This is the DEGRADED path: an unreachable repo, or one with no manifest.

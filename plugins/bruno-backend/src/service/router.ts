@@ -227,9 +227,9 @@ function sendDocsErrorPage(
  * Explains why a Bruno entity carries no `spec.definition`.
  *
  * Three genuinely different states, and the reader can only act on the right
- * one. `BrunoKindProcessor` stamps `bruno.dev/definition-omitted` when it HAD a
+ * one. `BrunoKindProcessor` stamps `usebruno.com/definition-omitted` when it HAD a
  * document and dropped it — `size` (over `bruno.definition.maxBytes`, with the
- * would-be size in `bruno.dev/definition-bytes`) or `error` (the collection
+ * would-be size in `usebruno.com/definition-bytes`) or `error` (the collection
  * could not be read/converted). No annotation at all means the entity simply
  * has not been processed yet, which resolves itself on the next cycle.
  */

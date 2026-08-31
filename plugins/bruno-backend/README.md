@@ -87,8 +87,8 @@ emits one entity per source:
   `spec.owner: guests`
 - `metadata.name` = sanitized source id, plus `title` / `description` derived
   from the collection name and request count
-- annotations `bruno.dev/collection-id`, `bruno.dev/collection-path`,
-  `bruno.dev/source-url` (url sources only), and
+- annotations `usebruno.com/collection-id`, `usebruno.com/collection-path`,
+  `usebruno.com/source-url` (url sources only), and
   `backstage.io/managed-by-location` / `managed-by-origin-location` set to a
   `bruno-provider:` location key
 

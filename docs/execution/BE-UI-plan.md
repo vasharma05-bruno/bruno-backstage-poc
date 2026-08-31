@@ -48,7 +48,7 @@ Degrade: facets return `[]`; tiles render `—`.
 
 **Route-ordering note carried forward from BE-P1 §4:** `router.ts:169` registers the literal `/collections/:id/opencollection.yml`. Any new literal segment must sit *before* a sibling `:param` route.
 
-**Note on the oversized-definition fallback.** BE-P2 §2 omits `spec.definition` above `bruno.definition.maxBytes` and stamps `bruno.dev/definition-omitted: size`. UI-P1's docs tab must check that annotation and fall back to the route above rather than rendering an empty document.
+**Note on the oversized-definition fallback.** BE-P2 §2 omits `spec.definition` above `bruno.definition.maxBytes` and stamps `usebruno.com/definition-omitted: size`. UI-P1's docs tab must check that annotation and fall back to the route above rather than rendering an empty document.
 
 ### 0.3 Sync
 
@@ -213,7 +213,7 @@ Renders `@backstage/ui` `Header` (F7) with:
 
 **10. NEW `plugins/bruno/src/components/BrunoEntity/EnvironmentsCard.tsx`** — PRD line 90. `BrunoInfoCard title="Environments"` + `Table` over `environments(entity)`. Empty state: *"No environments found in this collection."* Renders `—` with a "waiting for the next collection sync" hint when `spec.environments` is absent entirely (BE-P2 not yet landed).
 
-**11. NEW `plugins/bruno/src/components/BrunoEntity/BrunoApiDocsContent.tsx`** — PRD lines 91-92. Rewrite of `BrunoDocsContent` keyed by entity ref. **Preserves every docs-iframe invariant** from `plugins/bruno/src/lib/docsSession.ts`: mint the limited-access cookie at `GET {bruno base}/.backstage/auth/v1/cookie` with `credentials:'include'` **before** setting `src` (`docsSession.ts:27-43`), keep the re-mint timer (`:93-111`), `sandbox="allow-scripts allow-same-origin"`, and the runtime height measurement (`BrunoDocsContent.tsx:131-149`). Also handles the `bruno.dev/definition-omitted: size` case (§0.2).
+**11. NEW `plugins/bruno/src/components/BrunoEntity/BrunoApiDocsContent.tsx`** — PRD lines 91-92. Rewrite of `BrunoDocsContent` keyed by entity ref. **Preserves every docs-iframe invariant** from `plugins/bruno/src/lib/docsSession.ts`: mint the limited-access cookie at `GET {bruno base}/.backstage/auth/v1/cookie` with `credentials:'include'` **before** setting `src` (`docsSession.ts:27-43`), keep the re-mint timer (`:93-111`), `sandbox="allow-scripts allow-same-origin"`, and the runtime height measurement (`BrunoDocsContent.tsx:131-149`). Also handles the `usebruno.com/definition-omitted: size` case (§0.2).
 
 **12. `plugins/bruno/src/lib/docsSession.ts`** — re-key: `useDocsSession(entityRef: string | undefined)`, calling `brunoApi.getEntityDocsUrl(entityRef, themeMode)`. Keep the theme dependency (`:78-79`, `:136`).
 
@@ -433,7 +433,7 @@ Columns (PRD lines 101-105): **Name** → `EntityRefLink` to the Bruno entity ·
 
 **4. `plugins/bruno/src/extensions.tsx`** — add `brunoCollectionsCard` (extension 9, `filter:{kind:'api'}`, `type:'content'`); **delete** `brunoCard` (`:30-37`), `brunoCollectionTreeCard` (`:44-51`), `brunoCollectionOverviewCard` (`:58-67`), `brunoDocsContent` (`:92-102`) and their now-unused `isApiEntity` predicate (`:20-21`).
 
-**5. `plugins/bruno/src/plugin.ts`** — update the array and the doc comment (which still describes `bruno.dev/collection-id`, `:22-33`).
+**5. `plugins/bruno/src/plugin.ts`** — update the array and the doc comment (which still describes `usebruno.com/collection-id`, `:22-33`).
 
 **DELETED — the annotation architecture, frontend half.** Safe now because every consumer is removed in this same commit:
 
@@ -457,7 +457,7 @@ Columns (PRD lines 101-105): **Name** → `EntityRefLink` to the Bruno entity ·
 yarn tsc
 yarn lint:bruno plugins/bruno/src
 yarn prettier:check
-grep -rn "bruno.dev/collection-id\|bruno.dev/source-url\|getConnection\|emitConnectionChange\|isProviderManaged" plugins/bruno/src   # must return nothing
+grep -rn "usebruno.com/collection-id\|usebruno.com/source-url\|getConnection\|emitConnectionChange\|isProviderManaged" plugins/bruno/src   # must return nothing
 ```
 Live boot, at `/catalog/default/api/github-rest-api`:
 1. Exactly **one** Bruno card, titled **Bruno Collections**, listing `my-bruno-collection` with Version, Source url and a `⋮` menu.

@@ -96,7 +96,7 @@ Per F11 the only thing that protects `resultHash` is that the generated string i
 2. **Deterministic input order.** `readTree.ts:41-49` inserts files into the Map in archive order. `buildTreeForDir`/`buildTreeForDirYml` iterate `tree.files.keys()`, and `sortItems` (`collectionService.ts:1612-1630`) falls back to **insertion index** when `seq` is absent on both operands; `findBrunoJson` (`:779-789`) breaks equal-length ties by Map order. Sorting the admitted paths before reading contents makes item order a pure function of content, for both parse paths, at zero cost.
 3. **Etag short-circuit (the real guarantee).** Cache the `readTree` etag. On revalidation a `NotModifiedError` returns the **same cached string instance** — regeneration never runs, so the question of determinism does not even arise for the common case. Determinism (1 + 2) covers the case where the sha moved but the collection folder did not.
 
-**Deliberately not stamped: a generation timestamp or the source commit sha.** We have the sha for free (it *is* the etag), and `bruno.dev/source-commit` would be tempting for provenance — but the etag is the sha of the whole repo/branch, so any unrelated push would rewrite every Bruno entity in that repo and re-stitch it. Listed as Q4 in §8.
+**Deliberately not stamped: a generation timestamp or the source commit sha.** We have the sha for free (it *is* the etag), and `usebruno.com/source-commit` would be tempting for provenance — but the etag is the sha of the whole repo/branch, so any unrelated push would rewrite every Bruno entity in that repo and re-stitch it. Listed as Q4 in §8.
 
 ---
 
@@ -118,7 +118,7 @@ Per F11 the only thing that protects `resultHash` is that the generated string i
 
 - Cap: `bruno.definition.maxBytes`, default **1 MiB** (`1048576`), measured as `Buffer.byteLength(yaml, 'utf8')`. 1 MiB admits every realistic collection (the largest reference above is ~600 KB) while bounding the pathological case and the probe cache's memory.
 - **On exceed: omit, never truncate.** A truncated YAML document is invalid and would break Phase 4's renderer with a parse error instead of an explanation. Concretely: `spec.definition` is not written, one `logger.warn` is emitted, and the entity is stamped
-  `bruno.dev/definition-omitted: 'size'` and `bruno.dev/definition-bytes: '<n>'`.
+  `usebruno.com/definition-omitted: 'size'` and `usebruno.com/definition-bytes: '<n>'`.
   Both values are pure functions of content, so they do not churn `resultHash`. The entity still lands, still enriched, still related.
 - Phase 4 falls back to the existing per-request route `GET /api/bruno/collections/:id/opencollection.yml` (`router.ts:169`) for oversized collections. Recorded here so Phase 4 plans for it; nothing is built for it in Phase 2.
 - **Mitigation available to Phase 3, stated not implemented:** pass `fields: ['kind','metadata','spec.type','spec.url','spec.partOf','relations']` on a bespoke `queryEntities` call rather than using `EntityListProvider` unmodified (`catalog-client/dist/index.d.ts:420`).
@@ -464,13 +464,13 @@ Home justification unchanged from BE-P1 §3.I: this is the Bruno spine's config 
    ```
    **No `minLength`** — unlike `kind: API` (F8). A `''` reaching `validateEntityKind` throws, which makes the run `ok:false` and deletes the entity (F3). Not added to `spec.required` for the same reason: degraded entities must validate. Update the top-level `examples` block (`:54-69`) accordingly.
 2. **Annotation constants** — add beside `SOURCE_LOCATION_ANNOTATION` (`:22`):
-   `bruno.dev/definition-omitted`, `bruno.dev/definition-bytes`. The `bruno.dev/*` prefix matches the existing keys in `examples/bruno-collections.yaml:31-33`.
+   `usebruno.com/definition-omitted`, `usebruno.com/definition-bytes`. The `usebruno.com/*` prefix matches the existing keys in `examples/bruno-collections.yaml:31-33`.
 3. **`preProcessEntity`** (`:164-246`) — after the manifest branch, before the metadata precedence block:
    ```ts
    const definition = manifest.definition;
    const omitted = manifest.definitionOmitted;
    ```
-   Extend the annotation object built at `:213` with, when `omitted` is set, `{'bruno.dev/definition-omitted': omitted, 'bruno.dev/definition-bytes': String(manifest.definitionBytes)}` — and, when it is not set, **delete** any stale values of those two keys, so an over-cap collection that later shrinks stops claiming to be omitted.
+   Extend the annotation object built at `:213` with, when `omitted` is set, `{'usebruno.com/definition-omitted': omitted, 'usebruno.com/definition-bytes': String(manifest.definitionBytes)}` — and, when it is not set, **delete** any stale values of those two keys, so an over-cap collection that later shrinks stops claiming to be omitted.
 4. **No-change guard** (`:224-231`) — extend with `&& definition === (entity as BrunoEntity).spec.definition` and an annotation comparison. Keep the existing comment noting this is an allocation guard, not a correctness one (F11).
 5. **Return** (`:233-245`) — add a `spec` key:
    ```ts
@@ -533,7 +533,7 @@ Insert after the `collections` block, before `schedule`:
       /**
        * Hard cap on the stored YAML, in bytes. Over the cap the definition is
        * OMITTED (never truncated — a truncated document is invalid YAML) and
-       * the entity is annotated `bruno.dev/definition-omitted: size`.
+       * the entity is annotated `usebruno.com/definition-omitted: size`.
        * Default 1048576.
        * @visibility backend
        */
@@ -626,7 +626,7 @@ Nothing else in the two PRD sections is undeliverable.
 - **R4 — dashboard payload.** Per F10 nothing projects fields, so Phase 3's table will pull every definition. 50 collections × 120 KB ≈ 6 MB per load. Phase 3 must either pass `fields` on a bespoke fetch or paginate. Flagged here so Phase 3 does not discover it late.
 - **R5 — truncated GitHub trees.** `github.ts:171-175` warns when `tree.truncated` and then proceeds, so the user-token path can silently produce a *partial* definition that is then stored on the entity as if complete. This path is unreachable from the probe (BE-P1 removed the user-token surface from the spine), but it is reachable from `bruno.sources` via `readUrlTreeWithCreds`. Left as-is; noted.
 - **R6 — stray `.yaml` files in a root-level OpenCollection repo.** §4 accepts one `warn` per stray file per genuine re-parse.
-- **R7 — an entity rewritten by an unrelated push.** Not a risk in the chosen design, because the etag only *suppresses* regeneration; when the sha moves we regenerate and the deterministic output usually compares equal, so `resultHash` is unchanged and the engine takes `markSuccessfulWithNoChanges`. This is exactly why the `bruno.dev/source-commit` annotation is rejected (Q4 below) — stamping the sha would convert a no-op into a rewrite.
+- **R7 — an entity rewritten by an unrelated push.** Not a risk in the chosen design, because the etag only *suppresses* regeneration; when the sha moves we regenerate and the deterministic output usually compares equal, so `resultHash` is unchanged and the engine takes `markSuccessfulWithNoChanges`. This is exactly why the `usebruno.com/source-commit` annotation is rejected (Q4 below) — stamping the sha would convert a no-op into a rewrite.
 - **R8 — residual secret exposure.** §3, point 4 of the MUST list. Bodies, scripts and tests are stored in plaintext under the default `standard` mode.
 
 **Open questions for the requester**
@@ -634,8 +634,8 @@ Nothing else in the two PRD sections is undeliverable.
 - **Q1 — should `bruno.definition.redaction` default to `strict`?** `standard` keeps bodies, scripts and tests, which is what makes the Phase 4 docs tab useful, but those are also the likeliest carriers of hardcoded credentials. Changing the default is one line and no code.
 - **Q2 — is 1 MiB the right cap,** and is "omit + annotate + fall back to the existing route" the right behaviour, versus refusing to ingest the entity at all?
 - **Q3 — should `spec.definition` carry `requestCount` / `environmentCount` alongside it?** Phase 3's dashboard needs "Number of requests" and "Number of unique environments"; deriving them client-side means parsing a 100 KB YAML per table row. `countRequests` and `collection.environments.length` are free at generation time. Excluded from Phase 2 to avoid shipping unused fields; decide before Phase 3 starts.
-- **Q4 — provenance.** We get the source commit sha for free (it is the reader's etag). Stamping `bruno.dev/source-commit` would give Phase 3/4 a real staleness signal — but the sha is the *repo* head, not the collection folder, so every unrelated push would rewrite every Bruno entity in that repo and re-stitch it (R7 inverted). Recommended: do not stamp. Confirm.
-- **Q5 — should `bruno.dev/collection-format: bru|yml` be stamped?** Free from the manifest, deterministic, and the exact key already appears at `examples/bruno-collections.yaml:33`. Excluded because nothing in Phase 2 reads it.
+- **Q4 — provenance.** We get the source commit sha for free (it is the reader's etag). Stamping `usebruno.com/source-commit` would give Phase 3/4 a real staleness signal — but the sha is the *repo* head, not the collection folder, so every unrelated push would rewrite every Bruno entity in that repo and re-stitch it (R7 inverted). Recommended: do not stamp. Confirm.
+- **Q5 — should `usebruno.com/collection-format: bru|yml` be stamped?** Free from the manifest, deterministic, and the exact key already appears at `examples/bruno-collections.yaml:33`. Excluded because nothing in Phase 2 reads it.
 - **Q6 — carried over from BE-P1 and still unanswered:** Q3 (fatal vs. warned unparseable `partOf`), Q5 (`spec.type` enum).
 
 ---
@@ -661,7 +661,7 @@ yarn prettier:check
 5. **Revalidation is cheap.** In the same window, `Reading Bruno collection tree via UrlReader:` must appear **once per distinct URL at most**, not once per TTL window.
 6. **Redaction holds.** Every `variables[].value` absent with `secret: true` present; auth secrets read `<redacted>`; an `Authorization` header value is `<redacted>` while a `{{token}}` placeholder passes through verbatim; a plain `Accept: application/json` header is untouched.
 7. **`strict` mode works.** Scripts, tests and body content gone from `spec.definition`; the `/opencollection.yml` route response **unchanged**.
-8. **Cap works, non-lossy.** With `maxBytes: 1024`, `spec.definition` is **absent**, `bruno.dev/definition-omitted == "size"`, `bruno.dev/definition-bytes` plausible, and the entity still returns **200** with title/description/version/relations intact.
+8. **Cap works, non-lossy.** With `maxBytes: 1024`, `spec.definition` is **absent**, `usebruno.com/definition-omitted == "size"`, `usebruno.com/definition-bytes` plausible, and the entity still returns **200** with title/description/version/relations intact.
 9. **Sync works, both entry points.** `POST /api/catalog/refresh` returns 200; a pushed change appears in `spec.definition` within `cacheTtlSeconds` and `metadata.etag` changes.
 10. **`.yaml` end-to-end.** A collection whose manifest is `opencollection.yaml` and whose request/environment/folder files are `.yaml` must produce a `spec.definition` containing the requests and environments — not an empty `items: []`. This is the only check that catches a missed site from §4.
 11. **No regression on the legacy path.** `/api/bruno/health` 200; `/api/bruno/collections` unchanged; `/docs` still renders; `/opencollection.yml` byte-identical to `main` apart from `exportedAt`; existing `kind: API` entities unchanged.

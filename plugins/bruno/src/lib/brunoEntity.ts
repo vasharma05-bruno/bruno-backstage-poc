@@ -55,9 +55,9 @@ export const BRUNO_ENVIRONMENTS_FIELD = 'spec.environments';
  * is the difference between "this collection has no docs yet" and "the docs
  * exist but were left off the entity", and the two need different UI copy.
  */
-export const BRUNO_DEFINITION_OMITTED_ANNOTATION = 'bruno.dev/definition-omitted';
+export const BRUNO_DEFINITION_OMITTED_ANNOTATION = 'usebruno.com/definition-omitted';
 /** How big the omitted definition would have been, in bytes (a string). */
-export const BRUNO_DEFINITION_BYTES_ANNOTATION = 'bruno.dev/definition-bytes';
+export const BRUNO_DEFINITION_BYTES_ANNOTATION = 'usebruno.com/definition-bytes';
 
 /** Whether this entity is a Bruno collection. Kind comparison is case-insensitive. */
 export function isBrunoEntity(entity: Entity): boolean {
@@ -155,7 +155,7 @@ export function definitionOmittedBytes(entity: Entity): string | undefined {
 export type BrunoOrigin = 'descriptor' | 'config' | 'ui' | 'file' | 'unknown';
 
 /** Stamped by `BrunoKindProcessor`; see its docblock for who writes what. */
-export const BRUNO_ORIGIN_ANNOTATION = 'bruno.dev/origin';
+export const BRUNO_ORIGIN_ANNOTATION = 'usebruno.com/origin';
 
 const ORIGINS: readonly string[] = ['descriptor', 'config', 'ui', 'file'];
 
@@ -163,7 +163,7 @@ const ORIGINS: readonly string[] = ['descriptor', 'config', 'ui', 'file'];
  * Where this collection came from, and therefore what has to be edited to
  * change it. {@link changeRoute} turns this into an actual instruction.
  *
- * Reads `bruno.dev/origin`, and falls back to the shape of
+ * Reads `usebruno.com/origin`, and falls back to the shape of
  * `backstage.io/managed-by-location` when it is missing — a descriptor is a
  * YAML file, and the provider stamps a folder. That fallback is the rule the UI
  * used before the annotation existed; it is kept because an entity ingested by

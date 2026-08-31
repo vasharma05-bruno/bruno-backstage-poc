@@ -60,7 +60,7 @@ export interface Config {
       /**
        * Hard cap on the stored YAML, in bytes. Over the cap the definition is
        * OMITTED (never truncated — a truncated document is invalid YAML) and
-       * the entity is annotated `bruno.dev/definition-omitted: size`.
+       * the entity is annotated `usebruno.com/definition-omitted: size`.
        * Default 1048576.
        * @visibility backend
        */

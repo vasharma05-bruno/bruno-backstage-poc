@@ -22,7 +22,7 @@ contract and the `NormalizedCollection` type.
 Base URL resolved via `discoveryApi.getBaseUrl('bruno')`.
 
 ### `BrunoCard` (`src/components/BrunoCard/`)
-Entity card. Reads `bruno.dev/collection-id` and `bruno.dev/source-url`
+Entity card. Reads `usebruno.com/collection-id` and `usebruno.com/source-url`
 annotations, fetches the collection detail for name + request count, links to
 the source, and renders **Open in Bruno**.
 

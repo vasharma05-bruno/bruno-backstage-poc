@@ -163,7 +163,7 @@ function CollectionActions(props: {
  *
  * Reads the catalog RELATION (`hasPart` → `kind: Bruno`), which
  * `BrunoKindProcessor` emits as the mirror of each collection's `spec.partOf`.
- * Deliberately NOT gated on any `bruno.dev/*` annotation: the catalog stamps
+ * Deliberately NOT gated on any `usebruno.com/*` annotation: the catalog stamps
  * those on its own processing schedule, minutes after an entity is registered,
  * so an annotation-gated card reads as empty exactly when a user has just wired
  * something up and is looking at it. It also no longer consults the runtime

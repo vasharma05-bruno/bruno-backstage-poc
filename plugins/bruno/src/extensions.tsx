@@ -14,7 +14,7 @@ import { BrunoIcon } from './components/BrunoLogo';
 /**
  * Filter selecting any API entity — the surface `BrunoCard` hangs off.
  *
- * Deliberately NOT gated on a `bruno.dev/*` annotation or on the presence of a
+ * Deliberately NOT gated on a `usebruno.com/*` annotation or on the presence of a
  * `hasPart` relation: catalog processing stamps relations a cycle (minutes)
  * after a Bruno entity is registered, so an annotation/relation-gated card is
  * missing exactly when the user has just linked a collection and goes looking
