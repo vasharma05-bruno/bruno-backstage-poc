@@ -20,6 +20,7 @@ import {
   useRelatedEntities
 } from '@backstage/plugin-catalog-react';
 import { BrunoInfoCard } from '../BrunoInfoCard';
+import { descriptorLocation } from '../../lib/brunoEntity';
 import { UnlinkDialog } from './UnlinkDialog';
 
 const useStyles = makeStyles((theme) => ({
@@ -115,6 +116,28 @@ export function RelatedApisCard(): JSX.Element {
   ];
 
   let body: JSX.Element;
+  // The advice depends on where the entity is DECLARED, not on where the
+  // collection lives. A `bruno.collections[]` entry has no descriptor file at
+  // all, so telling its operator to edit a catalog-info.yaml sends them looking
+  // for a file that does not exist -- see `descriptorLocation`, which carries a
+  // distinct reason for each case precisely so the copy can differ.
+  const location = descriptorLocation(entity);
+  const emptyHint
+    = location.kind === 'none' && location.reason === 'provider'
+      ? (
+          <>
+            Add the API&apos;s entity reference to <code>partOf</code> on this
+            collection&apos;s <code>bruno.collections[]</code> entry in{' '}
+            <code>app-config.yaml</code>.
+          </>
+        )
+      : (
+          <>
+            Add the API&apos;s entity reference to <code>spec.partOf</code> in the
+            collection&apos;s <code>catalog-info.yaml</code>.
+          </>
+        );
+
   if (loading) {
     body = <Progress />;
   } else if (error) {
@@ -128,9 +151,7 @@ export function RelatedApisCard(): JSX.Element {
         color="textSecondary"
         className={classes.empty}
       >
-        This collection is not linked to any API entity. Add the API&apos;s
-        entity reference to <code>spec.partOf</code> in the collection&apos;s
-        <code>catalog-info.yaml</code>.
+        This collection is not linked to any API entity. {emptyHint}
       </Typography>
     );
   } else {
