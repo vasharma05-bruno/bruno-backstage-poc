@@ -1,1 +1,2 @@
-export { OpenInBruno } from './OpenInBruno';
+export { OpenInBruno, OpenInBrunoSnackbar, useOpenInBruno } from './OpenInBruno';
+export type { OpenInBrunoActions } from './OpenInBruno';

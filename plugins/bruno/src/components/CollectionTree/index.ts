@@ -1,1 +1,0 @@
-export { CollectionTreeCard } from './CollectionTreeCard';

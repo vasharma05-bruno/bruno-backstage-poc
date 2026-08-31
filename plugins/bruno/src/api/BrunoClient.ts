@@ -1,214 +1,33 @@
-import type { DiscoveryApi, FetchApi } from '@backstage/core-plugin-api';
+import type { DiscoveryApi } from '@backstage/core-plugin-api';
 import type { BrunoApi } from './BrunoApi';
-import type {
-  CollectionDetail,
-  CollectionSummary,
-  ConnectionRecord,
-  ConnectResult,
-  Dashboard,
-  DiscoverResult,
-  ImportedCollection
-} from './types';
-
-/**
- * Header carrying the caller's SCM OAuth token to the backend. Sent as a
- * header (never in the request body) so the token doesn't sit in JSON payloads
- * that are trivially visible in the browser's network inspector / logs.
- */
-const SCM_TOKEN_HEADER = 'x-bruno-scm-token';
 
 /**
  * Default {@link BrunoApi} implementation. Talks to the `bruno` backend plugin
  * over HTTP, resolving the base URL via the discovery API.
+ *
+ * Takes no `fetchApi` any more. The one remaining method BUILDS a URL rather
+ * than fetching one — it is handed to an iframe `src`, which carries no
+ * Authorization header, so the request is authenticated by the limited-access
+ * cookie `useEntityDocsSession` mints for itself. See `lib/docsSession.ts`.
  */
 export class BrunoClient implements BrunoApi {
   private readonly discoveryApi: DiscoveryApi;
-  private readonly fetchApi: FetchApi;
 
-  constructor(options: { discoveryApi: DiscoveryApi; fetchApi: FetchApi }) {
+  constructor(options: { discoveryApi: DiscoveryApi }) {
     this.discoveryApi = options.discoveryApi;
-    this.fetchApi = options.fetchApi;
   }
 
   private async baseUrl(): Promise<string> {
     return this.discoveryApi.getBaseUrl('bruno');
   }
 
-  private async getJson<T>(path: string): Promise<T> {
+  async getEntityDocsUrl(
+    namespace: string,
+    name: string,
+    theme: 'light' | 'dark'
+  ): Promise<string> {
     const base = await this.baseUrl();
-    const res = await this.fetchApi.fetch(`${base}${path}`);
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(
-        `Bruno backend request to ${path} failed (${res.status}): ${text}`
-      );
-    }
-    return (await res.json()) as T;
-  }
-
-  async getCollections(): Promise<CollectionSummary[]> {
-    return this.getJson<CollectionSummary[]>('/collections');
-  }
-
-  async getDashboard(): Promise<Dashboard> {
-    return this.getJson<Dashboard>('/dashboard');
-  }
-
-  async getCollection(id: string): Promise<CollectionDetail> {
-    return this.getJson<CollectionDetail>(
-      `/collections/${encodeURIComponent(id)}`
-    );
-  }
-
-  async getDocsUrl(id: string, theme: 'light' | 'dark'): Promise<string> {
-    const base = await this.baseUrl();
-    return `${base}/collections/${encodeURIComponent(id)}/docs?theme=${theme}`;
-  }
-
-  async getOpenCollectionYaml(id: string): Promise<string> {
-    const base = await this.baseUrl();
-    const path = `/collections/${encodeURIComponent(id)}/opencollection.yml`;
-    const res = await this.fetchApi.fetch(`${base}${path}`);
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(
-        `Bruno backend request to ${path} failed (${res.status}): ${text}`
-      );
-    }
-    return res.text();
-  }
-
-  async connect(
-    entityRef: string,
-    url: string,
-    token?: string
-  ): Promise<ConnectResult> {
-    const base = await this.baseUrl();
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json'
-    };
-    if (token) {
-      headers[SCM_TOKEN_HEADER] = token;
-    }
-    const res = await this.fetchApi.fetch(`${base}/connections`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ entityRef, url })
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(
-        `Bruno backend request to /connections failed (${res.status}): ${text}`
-      );
-    }
-    return (await res.json()) as ConnectResult;
-  }
-
-  async discover(url: string, token?: string): Promise<DiscoverResult> {
-    const base = await this.baseUrl();
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json'
-    };
-    if (token) {
-      headers[SCM_TOKEN_HEADER] = token;
-    }
-    const res = await this.fetchApi.fetch(`${base}/connections/discover`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ url })
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(
-        `Bruno backend request to /connections/discover failed (${res.status}): ${text}`
-      );
-    }
-    return (await res.json()) as DiscoverResult;
-  }
-
-  async sync(collectionId: string, token?: string): Promise<ConnectResult> {
-    const base = await this.baseUrl();
-    const path = `/collections/${encodeURIComponent(collectionId)}/sync`;
-    const headers: Record<string, string> = {};
-    if (token) {
-      headers[SCM_TOKEN_HEADER] = token;
-    }
-    const res = await this.fetchApi.fetch(`${base}${path}`, {
-      method: 'POST',
-      headers
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(
-        `Bruno backend request to ${path} failed (${res.status}): ${text}`
-      );
-    }
-    return (await res.json()) as ConnectResult;
-  }
-
-  async getConnection(entityRef: string): Promise<ConnectionRecord | undefined> {
-    const base = await this.baseUrl();
-    const path = `/connections/${encodeURIComponent(entityRef)}`;
-    const res = await this.fetchApi.fetch(`${base}${path}`);
-    if (res.status === 404) {
-      return undefined;
-    }
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(
-        `Bruno backend request to ${path} failed (${res.status}): ${text}`
-      );
-    }
-    return (await res.json()) as ConnectionRecord;
-  }
-
-  async importCollections(
-    collections: Array<{ sourceUrl: string; name: string }>
-  ): Promise<{ imported: number }> {
-    const base = await this.baseUrl();
-    const res = await this.fetchApi.fetch(`${base}/collections/import`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ collections })
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(
-        `Bruno backend request to /collections/import failed (${res.status}): ${text}`
-      );
-    }
-    return (await res.json()) as { imported: number };
-  }
-
-  async getImportedCollections(): Promise<ImportedCollection[]> {
-    return this.getJson<ImportedCollection[]>('/collections/imported');
-  }
-
-  async disconnect(entityRef: string): Promise<void> {
-    const base = await this.baseUrl();
-    const path = `/connections/${encodeURIComponent(entityRef)}`;
-    const res = await this.fetchApi.fetch(`${base}${path}`, {
-      method: 'DELETE'
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(
-        `Bruno backend request to ${path} failed (${res.status}): ${text}`
-      );
-    }
-  }
-
-  async deleteImportedCollection(collectionId: string): Promise<void> {
-    const base = await this.baseUrl();
-    const path = `/collections/imported/${encodeURIComponent(collectionId)}`;
-    const res = await this.fetchApi.fetch(`${base}${path}`, {
-      method: 'DELETE'
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(
-        `Bruno backend request to ${path} failed (${res.status}): ${text}`
-      );
-    }
+    const path = `/entities/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/docs`;
+    return `${base}${path}?theme=${theme}`;
   }
 }

@@ -1,20 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { makeStyles, useTheme } from '@material-ui/core/styles';
+import { makeStyles } from '@material-ui/core/styles';
 import Box from '@material-ui/core/Box';
 import Button from '@material-ui/core/Button';
 import Typography from '@material-ui/core/Typography';
 import LaunchIcon from '@material-ui/icons/Launch';
 import { Progress } from '@backstage/core-components';
-import type { DiscoveryApi, FetchApi } from '@backstage/core-plugin-api';
-import {
-  discoveryApiRef,
-  errorApiRef,
-  fetchApiRef,
-  useApi
-} from '@backstage/core-plugin-api';
+import { useApi } from '@backstage/core-plugin-api';
 import { PageLayout, useRouteRefParams } from '@backstage/frontend-plugin-api';
-import { brunoApiRef } from '../../api/BrunoApi';
+import type { Entity } from '@backstage/catalog-model';
+import { catalogApiRef } from '@backstage/plugin-catalog-react';
 import { brunoDocsPageRouteRef } from '../../extensions';
+import { definition, definitionOmittedReason } from '../../lib/brunoEntity';
+import { useEntityDocsSession } from '../../lib/docsSession';
 import { brunoBrand } from '../../theme/brand';
 import { useBrandStyles } from '../../theme/brandStyles';
 import { BrunoIcon } from '../BrunoLogo';
@@ -24,39 +21,6 @@ import { BrunoIcon } from '../BrunoLogo';
 // "Open in new tab" action links to `?view=full`.
 const FULL_VIEW_PARAM = 'view';
 const FULL_VIEW_VALUE = 'full';
-
-// Re-mint the docs cookie this many ms before it expires, so a long-lived tab
-// never lets the iframe's session lapse. Floored so a short-lived cookie still
-// yields a sane (non-negative, not-too-eager) refresh delay.
-const COOKIE_REFRESH_MARGIN_MS = 60_000;
-const MIN_COOKIE_REFRESH_MS = 60_000;
-
-/**
- * Mints (or refreshes) the Backstage limited-access cookie for the `bruno`
- * backend by hitting its auto-registered `/.backstage/auth/v1/cookie` endpoint.
- * The request is authenticated by the bearer token `fetchApi` attaches;
- * `credentials: 'include'` makes the browser store the returned `Set-Cookie`.
- * That cookie is what authenticates the iframe's `src` GET (which carries no
- * Authorization header). Returns the cookie's expiry so the caller can schedule
- * a refresh.
- */
-async function mintDocsCookie(
-  discoveryApi: DiscoveryApi,
-  fetchApi: FetchApi
-): Promise<Date> {
-  const base = await discoveryApi.getBaseUrl('bruno');
-  const res = await fetchApi.fetch(`${base}/.backstage/auth/v1/cookie`, {
-    credentials: 'include'
-  });
-  if (!res.ok) {
-    throw new Error(
-      `Could not authenticate the docs session (${res.status}). `
-      + 'Please reload the page.'
-    );
-  }
-  const { expiresAt } = (await res.json()) as { expiresAt: string };
-  return new Date(expiresAt);
-}
 
 const useStyles = makeStyles((theme) => {
   const brand = brunoBrand(theme);
@@ -82,8 +46,8 @@ const useStyles = makeStyles((theme) => {
       width: '100%',
       border: 0
     },
-    // Branded holding surface for the pre-iframe states (minting the docs
-    // cookie, then loading the bundle) and for a hard failure.
+    // Branded holding surface for the pre-iframe states (resolving the entity,
+    // then loading the bundle) and for a hard failure.
     message: {
       display: 'flex',
       flexDirection: 'column',
@@ -106,7 +70,7 @@ const useStyles = makeStyles((theme) => {
 });
 
 /**
- * Branded holding panel shown while the docs session is being minted and the
+ * Branded holding panel shown while the collection entity is resolved and the
  * OpenCollection bundle loads, and in place of the iframe on a hard failure.
  * Both layouts share it, so the brand shows up before the docs do.
  */
@@ -138,8 +102,19 @@ function DocsMessage(props: {
 
 /**
  * Standalone page rendering a Bruno collection's OpenCollection API docs at
- * `/bruno/docs/<collectionId>`, opened in a new tab (e.g. from the entity
- * "API Docs" launcher).
+ * `/bruno/docs/<namespace>/<name>`, opened in a new tab from the entity page's
+ * "Bruno API Docs" tab.
+ *
+ * Keyed by entity ref rather than by a backend collection id: the collection IS
+ * an entity now, and the generated OpenCollection document lives on it as
+ * `spec.definition`. The backend renders that document at
+ * `/entities/:namespace/:name/docs` and this page frames it by `src` — the
+ * entity is still fetched here, but only to know whether there is a document to
+ * frame and to explain the cases where there is not. Rendering the document in
+ * the browser instead (a `blob:` URL) would make it inherit the app's
+ * Content-Security-Policy, which does not allow the OpenCollection renderer's
+ * CDN. `useEntityDocsSession` mints the cookie that authenticates the frame's
+ * GET, since an iframe `src` carries no Authorization header.
  *
  * Two layouts, selected by the `?view=full` query param:
  *  - default: embedded in the app chrome — the Backstage sidebar stays visible
@@ -148,27 +123,56 @@ function DocsMessage(props: {
  *    tab" action linking to `?view=full`.
  *  - `?view=full`: a fixed, full-viewport iframe that overlays all app chrome
  *    so only the docs show.
- *
- * The iframe embeds the backend-served docs page (`GET /collections/:id/docs`)
- * by `src` — the same document the entity "API Docs" tab uses — so the
- * OpenCollection bundle gets a real origin for its `sessionStorage`/HashRouter.
  */
 export function BrunoDocsPage(): JSX.Element {
   const classes = useStyles();
   const brandClasses = useBrandStyles();
-  const theme = useTheme();
-  const brunoApi = useApi(brunoApiRef);
-  const discoveryApi = useApi(discoveryApiRef);
-  const fetchApi = useApi(fetchApiRef);
-  const errorApi = useApi(errorApiRef);
-  // Read the collection id from the `:collectionId` path parameter bound to
+  const catalogApi = useApi(catalogApiRef);
+  // Read the collection from the `:namespace`/`:name` path parameters bound to
   // the page's route ref (see extensions.tsx).
-  const { collectionId } = useRouteRefParams(brunoDocsPageRouteRef);
-  const themeMode: 'light' | 'dark'
-    = theme.palette.type === 'dark' ? 'dark' : 'light';
+  const { namespace, name } = useRouteRefParams(brunoDocsPageRouteRef);
 
-  const [src, setSrc] = useState<string | undefined>();
+  const [entity, setEntity] = useState<Entity | undefined>();
   const [error, setError] = useState<string | undefined>();
+
+  useEffect(() => {
+    let cancelled = false;
+    setEntity(undefined);
+    setError(undefined);
+    if (!namespace || !name) {
+      setError('Missing collection namespace or name in the URL path.');
+      return undefined;
+    }
+    catalogApi
+      .getEntityByRef({ kind: 'Bruno', namespace, name })
+      .then((found) => {
+        if (cancelled) {
+          return;
+        }
+        if (!found) {
+          setError(`No Bruno collection named ${namespace}/${name}.`);
+          return;
+        }
+        setEntity(found);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [catalogApi, namespace, name]);
+
+  const definitionYaml = entity && definition(entity);
+  // Framed only once the entity is known to carry a document: the states below
+  // stand in for the frame otherwise, and there is nothing to authenticate for
+  // a frame that is never mounted.
+  const { src, error: sessionError } = useEntityDocsSession(
+    definitionYaml ? namespace : undefined,
+    definitionYaml ? name : undefined
+  );
 
   // The embedded iframe has no viewport-anchored ancestor to stretch into (the
   // app content area sizes to content), so measure its top offset and fill the
@@ -190,67 +194,22 @@ export function BrunoDocsPage(): JSX.Element {
     return () => window.removeEventListener('resize', recompute);
   }, [src]);
 
-  useEffect(() => {
-    let cancelled = false;
-    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-    setSrc(undefined);
-    setError(undefined);
-    if (!collectionId) {
-      setError('Missing collection id in the URL path.');
-      return undefined;
-    }
-
-    // Re-mint the cookie shortly before it expires so a long-lived docs tab
-    // keeps its iframe session authenticated. A failed refresh is surfaced
-    // (errorApi) but not fatal — the current cookie is still valid until it
-    // lapses, at which point a reload re-mints.
-    const scheduleRefresh = (expiresAt: Date) => {
-      const delay = Math.max(
-        MIN_COOKIE_REFRESH_MS,
-        expiresAt.getTime() - Date.now() - COOKIE_REFRESH_MARGIN_MS
-      );
-      refreshTimer = setTimeout(() => {
-        mintDocsCookie(discoveryApi, fetchApi)
-          .then((next) => {
-            if (!cancelled) {
-              scheduleRefresh(next);
-            }
-          })
-          .catch((e) => {
-            if (!cancelled) {
-              errorApi.post(e instanceof Error ? e : new Error(String(e)));
-            }
-          });
-      }, delay);
-    };
-
-    // Mint the cookie BEFORE pointing the iframe at the docs URL: the iframe's
-    // `src` GET carries no Authorization header and is authenticated solely by
-    // this cookie, so it must exist first.
-    mintDocsCookie(discoveryApi, fetchApi)
-      .then(async (expiresAt) => {
-        if (cancelled) {
-          return;
-        }
-        scheduleRefresh(expiresAt);
-        const url = await brunoApi.getDocsUrl(collectionId, themeMode);
-        if (!cancelled) {
-          setSrc(url);
-        }
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : String(e));
-        }
-      });
-
-    return () => {
-      cancelled = true;
-      if (refreshTimer) {
-        clearTimeout(refreshTimer);
-      }
-    };
-  }, [brunoApi, discoveryApi, fetchApi, errorApi, collectionId, themeMode]);
+  // A resolved entity with no document to render is a real, explainable state
+  // rather than a failure: the processor writes `spec.definition` a cycle after
+  // the entity appears, and omits it entirely above `bruno.definition.maxBytes`.
+  // Branching on the definition and NOT on `src` matters — `src` is only handed
+  // out once the docs cookie exists, so it is undefined for the first frames
+  // even when there is a document.
+  let missing: string | undefined;
+  if (entity && !definitionYaml) {
+    missing
+      = definitionOmittedReason(entity) === 'size'
+        ? 'This collection\'s OpenCollection document exceeds the configured '
+        + 'bruno.definition.maxBytes, so it was not stored on the entity and '
+        + 'cannot be rendered.'
+        : 'No API documentation has been generated for this collection yet.';
+  }
+  const message = error ?? missing ?? sessionError;
 
   // Whether to render the chrome-less, full-viewport layout. Read from the
   // live URL: this page is opened via a fresh navigation (new tab / link), so
@@ -262,8 +221,8 @@ export function BrunoDocsPage(): JSX.Element {
   // Chrome-less, full-viewport layout: the fixed iframe overlays the app
   // sidebar/header so only the docs show.
   if (isFullView) {
-    if (error) {
-      return <DocsMessage classes={classes} error={error} />;
+    if (message) {
+      return <DocsMessage classes={classes} error={message} />;
     }
     if (!src) {
       return <DocsMessage classes={classes} />;
@@ -289,8 +248,8 @@ export function BrunoDocsPage(): JSX.Element {
   };
 
   let body: JSX.Element;
-  if (error) {
-    body = <DocsMessage classes={classes} error={error} />;
+  if (message) {
+    body = <DocsMessage classes={classes} error={message} />;
   } else if (!src) {
     body = <DocsMessage classes={classes} />;
   } else {

@@ -1,1 +1,0 @@
-export { AddCollectionModal } from './AddCollectionModal';

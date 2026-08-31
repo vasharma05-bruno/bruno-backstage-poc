@@ -1,416 +1,352 @@
-import { useEffect, useRef, useState } from 'react';
-import { Link, Progress } from '@backstage/core-components';
-import { useApi } from '@backstage/core-plugin-api';
-import { useEntity } from '@backstage/plugin-catalog-react';
-import { stringifyEntityRef } from '@backstage/catalog-model';
-import Grid from '@material-ui/core/Grid';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import Button from '@material-ui/core/Button';
+import Chip from '@material-ui/core/Chip';
+import Divider from '@material-ui/core/Divider';
+import IconButton from '@material-ui/core/IconButton';
+import Menu from '@material-ui/core/Menu';
+import MenuItem from '@material-ui/core/MenuItem';
 import Typography from '@material-ui/core/Typography';
 import Box from '@material-ui/core/Box';
-import Button from '@material-ui/core/Button';
-import LaunchIcon from '@material-ui/icons/Launch';
+import MoreVertIcon from '@material-ui/icons/MoreVert';
 import { makeStyles } from '@material-ui/core/styles';
-import { brunoApiRef } from '../../api/BrunoApi';
-import type { CollectionDetail } from '../../api/types';
+import { Link, Progress, Table, WarningPanel } from '@backstage/core-components';
+import type { TableColumn } from '@backstage/core-components';
+import { useRouteRef } from '@backstage/frontend-plugin-api';
+import { RELATION_HAS_PART, stringifyEntityRef } from '@backstage/catalog-model';
+import type { Entity } from '@backstage/catalog-model';
 import {
-  getCollectionId,
-  getSourceUrl,
-  isProviderManaged
-} from '../../lib/annotations';
-import { emitConnectionChange } from '../../lib/connectionEvents';
-import { repoRootFromCollectionUrl } from '../../lib/scmUrl';
-import { useScmToken } from '../../lib/useScmToken';
-import { useBrandStyles } from '../../theme/brandStyles';
+  EntityRefLink,
+  useEntity,
+  useRelatedEntities
+} from '@backstage/plugin-catalog-react';
+import { brunoDocsPageRouteRef } from '../../extensions';
+import { sourceUrl, version } from '../../lib/brunoEntity';
 import { BrunoInfoCard } from '../BrunoInfoCard';
-import { CollectionPickerFields, useCollectionPicker } from '../CollectionPicker';
-import { OpenInBruno } from '../OpenInBruno';
+import { UnlinkDialog } from '../BrunoEntity';
+import { OpenInBrunoSnackbar, useOpenInBruno } from '../OpenInBruno';
+import { LinkCollectionDialog } from './LinkCollectionDialog';
 
-type State
-  = | { status: 'loading' }
-    | { status: 'picking' }
-    | { status: 'connecting' }
-    | {
-      status: 'connected';
-      detail?: CollectionDetail;
-      collectionId: string;
-      sourceUrl?: string;
-    }
-    | { status: 'error'; errorMsg: string };
+/** Longest a source URL is shown in a table cell before the middle is elided. */
+const MAX_SOURCE_URL_CHARS = 44;
 
 const useStyles = makeStyles((theme) => ({
-  actionRow: {
+  danger: {
+    color: theme.palette.error.main
+  },
+  empty: {
+    padding: theme.spacing(2)
+  },
+  prStrip: {
     display: 'flex',
     flexWrap: 'wrap',
-    gap: theme.spacing(1)
+    gap: theme.spacing(1),
+    padding: theme.spacing(1, 2, 2)
   },
-  metricLabel: {
-    display: 'block',
-    letterSpacing: 0.6,
-    textTransform: 'uppercase'
+  chip: {
+    marginLeft: theme.spacing(1)
   }
 }));
 
 /**
- * Entity card for an API entity.
- *
- * When the entity carries the `bruno.dev/collection-id` annotation the
- * collection is fetched and rendered directly; otherwise it is a runtime
- * candidate and on mount we look up any existing connection (`getConnection`)
- * and either render it or show the collection picker to scan, pick and link a
- * collection from any configured SCM provider.
- *
- * Whether the Disconnect / Change collection actions render is a SEPARATE
- * question, answered by provenance (`isProviderManaged`) rather than by the
- * annotation — see the note there.
+ * Shortens a URL for a table cell: the host and the last two path segments carry
+ * the meaning, and a full `/tree/<ref>/<deep>/<path>` would widen the column past
+ * everything else in the card.
  */
-export function BrunoCard() {
+function shortenUrl(url: string): string {
+  if (url.length <= MAX_SOURCE_URL_CHARS) {
+    return url;
+  }
+  try {
+    const parsed = new URL(url);
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    return `${parsed.host}/…/${segments.slice(-2).join('/')}`;
+  } catch {
+    return `${url.slice(0, MAX_SOURCE_URL_CHARS - 1)}…`;
+  }
+}
+
+/**
+ * The per-row action menu: Fetch in Bruno, View Collection Docs, Unlink.
+ *
+ * Its own component because each row needs its own menu anchor and its own
+ * "Open in Bruno" state, and hooks cannot be called from a `render` callback
+ * conditionally per row otherwise.
+ */
+function CollectionActions(props: {
+  collection: Entity;
+  onUnlink: () => void;
+}): JSX.Element {
+  const { collection, onUnlink } = props;
   const classes = useStyles();
-  const brandClasses = useBrandStyles();
-  const { entity } = useEntity();
-  const brunoApi = useApi(brunoApiRef);
-  const tokens = useScmToken();
+  const navigate = useNavigate();
+  const docsRoute = useRouteRef(brunoDocsPageRouteRef);
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
 
-  const entityRef = stringifyEntityRef(entity);
-  const annotationCollectionId = getCollectionId(entity);
-  const annotationSourceUrl = getSourceUrl(entity);
-  // Whether the USER owns this link. Deliberately NOT "does the entity carry a
-  // bruno.dev annotation": BrunoLinkProcessor injects the same annotations onto
-  // runtime-connected entities, so that test flipped to true ~30s after any
-  // connect and silently removed Disconnect / Change collection from the card.
-  const userOwnsLink = !isProviderManaged(entity);
+  const url = sourceUrl(collection);
+  // The deep link AND its clipboard fallback, straight from `OpenInBruno` — the
+  // split button cannot live inside a menu, but its behaviour can.
+  const openInBruno = useOpenInBruno(url);
 
-  const [state, setState] = useState<State>({ status: 'loading' });
-  const [syncing, setSyncing] = useState(false);
-  const [syncError, setSyncError] = useState<string | undefined>();
-  // Guards against concurrent/double disconnects.
-  const inFlight = useRef(false);
-
-  const picker = useCollectionPicker({
-    entityRef,
-    onLinked: async (result) => {
-      const detail = await brunoApi.getCollection(result.collectionId);
-      const rec = await brunoApi.getConnection(entityRef);
-      setState({
-        status: 'connected',
-        detail,
-        collectionId: result.collectionId,
-        sourceUrl: rec?.sourceUrl
-      });
-    }
-  });
-
-  useEffect(() => {
-    let cancelled = false;
-    setState({ status: 'loading' });
-
-    if (annotationCollectionId) {
-      brunoApi
-        .getCollection(annotationCollectionId)
-        .then((d) => {
-          if (!cancelled) {
-            setState({
-              status: 'connected',
-              detail: d,
-              collectionId: annotationCollectionId,
-              sourceUrl: annotationSourceUrl
-            });
-          }
-        })
-        .catch((e) => {
-          if (!cancelled) {
-            setState({
-              status: 'error',
-              errorMsg: e instanceof Error ? e.message : String(e)
-            });
-          }
-        });
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    brunoApi
-      .getConnection(entityRef)
-      .then((record) => {
-        if (cancelled) {
-          return undefined;
-        }
-        if (!record) {
-          setState({ status: 'picking' });
-          picker.reset();
-          return undefined;
-        }
-        return brunoApi.getCollection(record.collectionId).then((d) => {
-          if (!cancelled) {
-            setState({
-              status: 'connected',
-              detail: d,
-              collectionId: record.collectionId,
-              sourceUrl: record.sourceUrl
-            });
-          }
-        });
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setState({
-            status: 'error',
-            errorMsg: e instanceof Error ? e.message : String(e)
-          });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brunoApi, entityRef, annotationCollectionId, annotationSourceUrl]);
-
-  const onDisconnect = async () => {
-    if (inFlight.current) {
-      return;
-    }
-    inFlight.current = true;
-    setState({ status: 'connecting' });
-    try {
-      await brunoApi.disconnect(entityRef);
-      picker.reset();
-      setState({ status: 'picking' });
-      emitConnectionChange(entityRef);
-    } catch (e) {
-      setState({
-        status: 'error',
-        errorMsg: e instanceof Error ? e.message : String(e)
-      });
-    } finally {
-      inFlight.current = false;
-    }
-  };
-
-  const onSync = async () => {
-    if (inFlight.current || state.status !== 'connected') {
-      return;
-    }
-    inFlight.current = true;
-    setSyncing(true);
-    setSyncError(undefined);
-    try {
-      const token = state.sourceUrl
-        ? await tokens.silent(state.sourceUrl)
-        : undefined;
-      await brunoApi.sync(state.collectionId, token);
-      const d = await brunoApi.getCollection(state.collectionId);
-      setState({
-        status: 'connected',
-        detail: d,
-        collectionId: state.collectionId,
-        sourceUrl: state.sourceUrl
-      });
-    } catch (e) {
-      setSyncError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSyncing(false);
-      inFlight.current = false;
-    }
-  };
-
-  const busy
-    = picker.state.status === 'scanning'
-      || picker.state.status === 'connecting';
-
-  const connectedSourceUrl
-    = state.status === 'connected' ? state.sourceUrl : undefined;
-  const repoUrl = connectedSourceUrl
-    ? repoRootFromCollectionUrl(connectedSourceUrl)
-    : undefined;
-  // Only show Source separately when it points somewhere deeper than the repo
-  // root (e.g. a /tree/<ref>/<subpath> collection); otherwise Repo says it all.
-  const showSource = Boolean(
-    connectedSourceUrl && connectedSourceUrl !== repoUrl
-  );
+  const close = (): void => setAnchor(null);
 
   return (
-    <BrunoInfoCard title="Bruno Collection">
-      {state.status === 'loading' && <Progress />}
-
-      {state.status === 'connecting' && (
-        <>
-          <Progress />
-          <Typography variant="body2" color="textSecondary">
-            Connecting…
-          </Typography>
-        </>
-      )}
-
-      {state.status === 'error' && (
-        <Typography variant="body2" color="error">
-          {state.errorMsg}
-        </Typography>
-      )}
-
-      {state.status === 'picking' && (
-        <Grid container spacing={2}>
-          <Grid item xs={12}>
-            <Typography variant="body2" color="textSecondary">
-              Scan a GitHub, GitLab or Bitbucket repository for Bruno
-              collections, then pick one to connect to this entity.
-            </Typography>
-          </Grid>
-
-          <CollectionPickerFields picker={picker} />
-
-          <Grid item xs={12}>
-            {picker.state.status === 'needsAuthScan' ? (
-              <Button
-                variant="contained"
-                color="primary"
-                onClick={picker.scanWithAuth}
-              >
-                Connect {picker.providerLabel}
-              </Button>
-            ) : picker.state.status === 'scanned' ? (
-              <Button
-                variant="contained"
-                color="primary"
-                onClick={picker.link}
-                disabled={busy || !picker.selectedCollectionId}
-              >
-                Link
-              </Button>
-            ) : picker.state.status === 'needsAuthLink' ? (
-              <Button
-                variant="contained"
-                color="primary"
-                onClick={picker.linkWithAuth}
-              >
-                Connect {picker.providerLabel}
-              </Button>
-            ) : (
-              <Button
-                variant="contained"
-                color="primary"
-                onClick={() => picker.scan()}
-                disabled={busy}
-              >
-                Scan
-              </Button>
-            )}
-          </Grid>
-        </Grid>
-      )}
-
-      {state.status === 'connected' && (
-        <Grid container spacing={2}>
-          <Grid item xs={12}>
-            <Typography variant="subtitle1">
-              {state.detail?.name
-                ?? entity.metadata.title
-                ?? entity.metadata.name}
-            </Typography>
-          </Grid>
-          <Grid item xs={6}>
-            <Typography
-              variant="caption"
-              color="textSecondary"
-              className={classes.metricLabel}
-            >
-              Requests
-            </Typography>
-            <Typography variant="h5" className={brandClasses.accentFigure}>
-              {state.detail?.requestCount ?? '—'}
-            </Typography>
-          </Grid>
-          <Grid item xs={6}>
-            <Typography
-              variant="caption"
-              color="textSecondary"
-              className={classes.metricLabel}
-            >
-              Repo
-            </Typography>
-            <Typography variant="body2">
-              {repoUrl ? (
-                <Link to={repoUrl}>{shorten(repoUrl)}</Link>
-              ) : (
-                '—'
-              )}
-            </Typography>
-            {showSource && connectedSourceUrl && (
-              <Box mt={1}>
-                <Typography variant="caption" color="textSecondary">
-                  Source
-                </Typography>
-                <Typography variant="body2">
-                  <Link to={connectedSourceUrl}>
-                    {shorten(connectedSourceUrl)}
-                  </Link>
-                </Typography>
-              </Box>
-            )}
-          </Grid>
-          <Grid item xs={12}>
-            <Box mt={1} className={classes.actionRow}>
-              <OpenInBruno sourceUrl={state.sourceUrl} />
-              <Button
-                variant="outlined"
-                className={brandClasses.accentOutlinedButton}
-                startIcon={<LaunchIcon />}
-                onClick={() =>
-                  window.open(
-                    `/bruno/docs/${encodeURIComponent(state.collectionId)}`,
-                    '_blank',
-                    'noopener,noreferrer'
-                  )}
-              >
-                View collection
-              </Button>
-            </Box>
-          </Grid>
-          <Grid item xs={12}>
-            <Box className={classes.actionRow}>
-              <Button
-                variant="outlined"
-                onClick={onSync}
-                disabled={syncing}
-              >
-                Sync
-              </Button>
-              {userOwnsLink && (
-                <>
-                  <Button variant="outlined" onClick={onDisconnect}>
-                    Disconnect
-                  </Button>
-                  <Button
-                    variant="outlined"
-                    onClick={() => {
-                      const root = repoRootFromCollectionUrl(
-                        state.sourceUrl ?? ''
-                      );
-                      picker.reset(root);
-                      setState({ status: 'picking' });
-                      void picker.scan(root);
-                    }}
-                  >
-                    Change collection
-                  </Button>
-                </>
-              )}
-            </Box>
-            {syncError && (
-              <Typography variant="body2" color="error">
-                {syncError}
-              </Typography>
-            )}
-          </Grid>
-        </Grid>
-      )}
-    </BrunoInfoCard>
+    <>
+      <IconButton
+        size="small"
+        aria-label={`Actions for ${collection.metadata.name}`}
+        onClick={(event) => setAnchor(event.currentTarget)}
+      >
+        <MoreVertIcon fontSize="small" />
+      </IconButton>
+      <Menu
+        anchorEl={anchor}
+        open={Boolean(anchor)}
+        onClose={close}
+      >
+        <MenuItem
+          disabled={!url}
+          onClick={() => {
+            close();
+            openInBruno.openDeepLink();
+          }}
+        >
+          Fetch in Bruno
+        </MenuItem>
+        <MenuItem
+          disabled={!url}
+          onClick={() => {
+            close();
+            void openInBruno.copyCloneInstruction();
+          }}
+        >
+          Clone &amp; open in Bruno (copy git clone)
+        </MenuItem>
+        <MenuItem
+          // `useRouteRef` returns undefined when the docs page is not mounted in
+          // this app; a dead menu item is worse than a disabled one.
+          disabled={!docsRoute}
+          onClick={() => {
+            close();
+            if (docsRoute) {
+              navigate(
+                docsRoute({
+                  namespace: collection.metadata.namespace ?? 'default',
+                  name: collection.metadata.name
+                })
+              );
+            }
+          }}
+        >
+          View Collection Docs
+        </MenuItem>
+        <Divider />
+        <MenuItem
+          className={classes.danger}
+          onClick={() => {
+            close();
+            onUnlink();
+          }}
+        >
+          Unlink
+        </MenuItem>
+      </Menu>
+      {/* Outside the Menu: a Snackbar child would be cloned into the menu's
+          keyboard-navigable item list. */}
+      <OpenInBrunoSnackbar actions={openInBruno} />
+    </>
   );
 }
 
-function shorten(url: string): string {
-  try {
-    const u = new URL(url);
-    return `${u.hostname}${u.pathname}`;
-  } catch {
-    return url;
+/**
+ * Entity card for an API entity: the Bruno collections that document it.
+ *
+ * Reads the catalog RELATION (`hasPart` → `kind: Bruno`), which
+ * `BrunoKindProcessor` emits as the mirror of each collection's `spec.partOf`.
+ * Deliberately NOT gated on any `bruno.dev/*` annotation: the catalog stamps
+ * those on its own processing schedule, minutes after an entity is registered,
+ * so an annotation-gated card reads as empty exactly when a user has just wired
+ * something up and is looking at it. It also no longer consults the runtime
+ * connection store (`getConnection`/`getCollection`) — the collection is an
+ * entity now, and everything the card shows travels on it.
+ *
+ * Built on core-components `Table` rather than `EntityRelationCard` for the same
+ * reason `RelatedApisCard` is: the latter has no per-row action slot, and its
+ * cells must be `@backstage/ui` components, which would put a second design
+ * system inside a Material-UI v4 card.
+ */
+export function BrunoCard(): JSX.Element {
+  const classes = useStyles();
+  const { entity } = useEntity();
+  const { entities, loading, error } = useRelatedEntities(entity, {
+    type: RELATION_HAS_PART,
+    kind: 'Bruno'
+  });
+
+  const apiRef = stringifyEntityRef(entity);
+
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [unlinkTarget, setUnlinkTarget] = useState<Entity | undefined>();
+  /**
+   * Open pull requests from this session, keyed by Bruno entity ref.
+   *
+   * Session state on purpose. Persisting it would mean a side store of link
+   * state outside source control, which is exactly what the relation model
+   * exists to avoid — so after a reload the chip is gone and the pull request
+   * lives where it belongs, in the SCM host.
+   */
+  const [unlinkPrs, setUnlinkPrs] = useState<Record<string, string>>({});
+  /**
+   * Link pull requests, as `[label, url]`. Kept separately from `unlinkPrs`
+   * because a linked collection is NOT in the table yet — the relation only
+   * exists once the pull request is merged and the descriptor re-read — so there
+   * is no row to hang a chip on.
+   */
+  const [linkPrs, setLinkPrs] = useState<{ label: string; link: string }[]>([]);
+
+  const columns: TableColumn<Entity>[] = [
+    {
+      title: 'Name',
+      field: 'metadata.name',
+      render: (row) => {
+        const ref = stringifyEntityRef(row);
+        return (
+          <>
+            <EntityRefLink entityRef={row} defaultKind="bruno" />
+            {unlinkPrs[ref] && (
+              <Chip
+                size="small"
+                className={classes.chip}
+                label="Unlink PR open"
+                component="a"
+                clickable
+                href={unlinkPrs[ref]}
+                target="_blank"
+                rel="noopener noreferrer"
+              />
+            )}
+          </>
+        );
+      }
+    },
+    {
+      title: 'Version',
+      render: (row) => version(row) ?? '—'
+    },
+    {
+      title: 'Source',
+      render: (row) => {
+        const url = sourceUrl(row);
+        return url
+          ? (
+              <Link to={url} title={url}>
+                {shortenUrl(url)}
+              </Link>
+            )
+          : '—';
+      }
+    },
+    {
+      title: 'Actions',
+      width: '1%',
+      sorting: false,
+      render: (row) => (
+        <CollectionActions
+          collection={row}
+          onUnlink={() => setUnlinkTarget(row)}
+        />
+      )
+    }
+  ];
+
+  let body: JSX.Element;
+  if (loading) {
+    body = <Progress />;
+  } else if (error) {
+    body = (
+      <WarningPanel
+        title="Could not load Bruno collections"
+        message={error.message}
+      />
+    );
+  } else if (!entities || entities.length === 0) {
+    body = (
+      <Typography
+        variant="body2"
+        color="textSecondary"
+        className={classes.empty}
+      >
+        No Bruno collection documents this API yet. Use{' '}
+        <strong>Link collection</strong> above to attach one — that adds this
+        API to the collection&apos;s <code>spec.partOf</code>, which is what the
+        catalog turns into the relation shown here.
+      </Typography>
+    );
+  } else {
+    body = (
+      <Table
+        options={{ search: false, paging: false, toolbar: false, padding: 'dense' }}
+        columns={columns}
+        data={entities}
+      />
+    );
   }
+
+  return (
+    <BrunoInfoCard
+      title="Bruno Collections"
+      noPadding
+      action={(
+        <Box mr={1} mt={1}>
+          <Button size="small" onClick={() => setLinkOpen(true)}>
+            Link collection
+          </Button>
+        </Box>
+      )}
+    >
+      {body}
+
+      {linkPrs.length > 0 && (
+        <Box className={classes.prStrip}>
+          {linkPrs.map((pr) => (
+            <Chip
+              key={pr.link}
+              size="small"
+              label={`Link PR open: ${pr.label}`}
+              component="a"
+              clickable
+              href={pr.link}
+              target="_blank"
+              rel="noopener noreferrer"
+            />
+          ))}
+        </Box>
+      )}
+
+      {unlinkTarget && (
+        <UnlinkDialog
+          open
+          // The row's collection owns the descriptor being edited; this API is
+          // the reference removed from it.
+          collection={unlinkTarget}
+          apiRef={apiRef}
+          onClose={() => setUnlinkTarget(undefined)}
+          onSubmitted={(link) =>
+            setUnlinkPrs((prs) => ({
+              ...prs,
+              [stringifyEntityRef(unlinkTarget)]: link
+            }))}
+        />
+      )}
+
+      <LinkCollectionDialog
+        open={linkOpen}
+        onClose={() => setLinkOpen(false)}
+        apiEntity={entity}
+        linkedRefs={(entities ?? []).map((e) => stringifyEntityRef(e))}
+        onSubmitted={(collectionRef, link) =>
+          setLinkPrs((prs) => [...prs, { label: collectionRef, link }])}
+      />
+    </BrunoInfoCard>
+  );
 }

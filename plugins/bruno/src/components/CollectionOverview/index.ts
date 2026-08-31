@@ -1,1 +1,0 @@
-export { CollectionOverviewCard } from './CollectionOverviewCard';
