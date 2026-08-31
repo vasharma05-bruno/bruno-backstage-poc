@@ -561,13 +561,13 @@ No other reference to `BrunoKindProcessor`, `BRUNO_API_VERSION`, `brunoEntityV1a
 
 ## 6. Cannot deliver
 
-**PRD §"Ingesting Bruno Collection", bullet 5: "Infer information from comments in the yaml".**
+**PRD §"Ingesting Bruno Collection", bullet 5: "Infer information from comments in the yaml" — RESOLVED, not a feature.**
 
-Not implementable at any point in the pipeline. The catalog parses an entity descriptor into plain JavaScript objects **before** any processor is invoked: `processSingleEntity` receives `request.entity` already deserialised (`dist/processing/DefaultCatalogProcessingOrchestrator.cjs.js:33-44`), and the default `CatalogProcessorParser` performs YAML document parsing producing `CatalogProcessorResult` values. YAML comments have no representation in the resulting object graph and are discarded at parse time. By the time any hook we can install runs, the comment text no longer exists in the process.
-
-The only theoretical workaround — re-reading the raw descriptor bytes from `location.target` and re-parsing with a comment-preserving YAML reader — is rejected: it duplicates the platform's read including credential handling, is impossible for `bruno.collections[]` entities (no descriptor file exists), and creates a second divergent source of truth.
-
-**No Phase 1 design assumes this requirement.** Surfaced so it is not silently dropped and a decision can be taken (e.g. move the information into real spec fields) before Phase 2.
+Confirmed with the requester: this referred to the inline comments in the PRD's own YAML snippet
+(`name: string # optional`, `owner: string # Should be optional`, `partOf: string # ... will be
+plural`), i.e. read those annotations as part of the spec. It is not a request to parse comments at
+runtime. Already satisfied: `metadata.name`/`version`/`description` and `spec.owner` are optional, and
+`spec.partOf` is plural.
 
 **Secondary (F1): `metadata.name` cannot be optional for an authored `catalog-info.yaml`.** The PRD marks it optional; the platform requires it and forbids a processor from supplying it. Phase 1 delivers the *intent* — the manifest name is used automatically — by routing it to `metadata.title` for authored entities, and deriving `metadata.name` from the URL for config-created entities, where we construct the entity ourselves and the constraint does not bite.
 
