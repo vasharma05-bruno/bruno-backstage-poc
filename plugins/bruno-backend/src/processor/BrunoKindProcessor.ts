@@ -29,6 +29,61 @@ export const DEFINITION_OMITTED_ANNOTATION = 'bruno.dev/definition-omitted';
 export const DEFINITION_BYTES_ANNOTATION = 'bruno.dev/definition-bytes';
 
 /**
+ * How this collection came to be in the catalog — the one thing the UI cannot
+ * work out for itself, and the thing that decides what an operator has to edit
+ * to change it.
+ *
+ * Before this annotation existed the frontend guessed, by asking whether
+ * `backstage.io/managed-by-location` ended in `.yaml`: a descriptor is a YAML
+ * file, and the provider stamps a folder. That guess is right for every case we
+ * ship, and wrong for two we cannot rule out — a descriptor served from a URL
+ * with no YAML suffix, and a collection onboarded through the Bruno UI, which
+ * produces a descriptor indistinguishable from a hand-written one. Recording the
+ * fact at ingestion removes the guess from both.
+ *
+ * Safe to stamp: the value is a pure function of how the entity was created and
+ * never changes for a given entity, so unlike a source commit sha it cannot
+ * churn `resultHash` (BE-P2 §8 Q4). See `deriveOrigin` for who sets what.
+ */
+export const ORIGIN_ANNOTATION = 'bruno.dev/origin';
+
+/**
+ * - `config` — a `bruno.collections[]` entry in `app-config.yaml`. Stamped by
+ *   `BrunoCollectionEntityProvider`; there is no descriptor file anywhere.
+ * - `ui` — onboarded through the Bruno plugin, which opened a pull request for
+ *   the `catalog-info.yaml` and wrote this annotation into it.
+ * - `file` — a descriptor on the Backstage host's disk (`catalog.locations` of
+ *   `type: file`), which is not in an SCM and cannot take a pull request.
+ * - `descriptor` — a hand-authored `catalog-info.yaml` in source control.
+ *   The default, because it is the only case that needs no special handling.
+ */
+export type BrunoOrigin = 'descriptor' | 'config' | 'ui' | 'file';
+
+const ORIGINS: readonly string[] = ['descriptor', 'config', 'ui', 'file'];
+
+/**
+ * The origin to stamp, preferring one already on the entity.
+ *
+ * An existing value always wins, and that is what makes the whole scheme work
+ * with one annotation instead of three: the provider stamps `config` on the
+ * unprocessed entity, the UI writes `ui` into the descriptor it generates, and
+ * this processor only has to name the two cases nobody else can — a descriptor
+ * on disk versus one in source control, which the location's own type already
+ * distinguishes.
+ *
+ * An authored `catalog-info.yaml` can therefore also claim an origin it does not
+ * have. That is accepted: the descriptor is the operator's own file, and a wrong
+ * value costs them nothing worse than misdirected advice in a dialog.
+ */
+function deriveOrigin(entity: Entity, location?: LocationSpec): BrunoOrigin {
+  const declared = entity.metadata.annotations?.[ORIGIN_ANNOTATION];
+  if (declared && ORIGINS.includes(declared)) {
+    return declared as BrunoOrigin;
+  }
+  return location?.type === 'file' ? 'file' : 'descriptor';
+}
+
+/**
  * The apiVersion the `Bruno` kind is written against — the identifier the PRD
  * mandates for Bruno's own kinds.
  *
@@ -240,7 +295,10 @@ export class BrunoKindProcessor implements CatalogProcessor {
     return validator(entity) !== false;
   }
 
-  async preProcessEntity(entity: Entity): Promise<Entity> {
+  async preProcessEntity(
+    entity: Entity,
+    location: LocationSpec
+  ): Promise<Entity> {
     // Runs for EVERY entity in the catalog, so the guard comes first and
     // allocates nothing.
     if (entity.kind !== 'Bruno' || entity.apiVersion !== BRUNO_API_VERSION) {
@@ -252,6 +310,8 @@ export class BrunoKindProcessor implements CatalogProcessor {
       // A shape error belongs to `validateEntityKind`, which rejects it there.
       return entity;
     }
+
+    const origin = deriveOrigin(entity, location);
 
     let manifest: CollectionSnapshot | undefined;
     try {
@@ -267,7 +327,7 @@ export class BrunoKindProcessor implements CatalogProcessor {
       );
       // Still stamped: a degraded entity is exactly the one an operator wants
       // to click through to source in order to diagnose.
-      return this.withSourceLocation(entity, url);
+      return this.withDerivedAnnotations(entity, url, origin);
     }
 
     if (!manifest) {
@@ -276,7 +336,7 @@ export class BrunoKindProcessor implements CatalogProcessor {
         + `opencollection.yml/.yaml found at ${url}; entity ingested without `
         + `collection metadata.`
       );
-      return this.withSourceLocation(entity, url);
+      return this.withDerivedAnnotations(entity, url, origin);
     }
 
     // Derived data, so no authored-value precedence applies: the processor owns
@@ -309,7 +369,8 @@ export class BrunoKindProcessor implements CatalogProcessor {
     // so an over-cap collection that later shrinks stops claiming to be omitted.
     const nextAnnotations: Record<string, string> = {
       ...annotations,
-      [SOURCE_LOCATION_ANNOTATION]: sourceLocation
+      [SOURCE_LOCATION_ANNOTATION]: sourceLocation,
+      [ORIGIN_ANNOTATION]: origin
     };
     if (omitted) {
       nextAnnotations[DEFINITION_OMITTED_ANNOTATION] = omitted;
@@ -362,24 +423,42 @@ export class BrunoKindProcessor implements CatalogProcessor {
   }
 
   /**
-   * Stamps `backstage.io/source-location` when absent, returning the same
+   * Stamps the two annotations that do not depend on a successful fetch —
+   * `backstage.io/source-location` and `bruno.dev/origin` — returning the same
    * reference when there is nothing to add so `resultHash` stays stable.
    *
+   * This is the DEGRADED path: an unreachable repo, or one with no manifest.
+   * Both annotations are stamped here anyway, because a degraded collection is
+   * exactly the one whose operator needs to know where to click through to and
+   * which file to fix.
+   *
    * `normalize` parses the URL and throws on a malformed one. That throw is
-   * swallowed here on purpose: this runs on the degraded paths, where the
-   * probe has already logged the real problem, and letting it escape
-   * `preProcessEntity` would make the run `ok: false` and drop the entity.
+   * swallowed here on purpose: the probe has already logged the real problem,
+   * and letting it escape `preProcessEntity` would make the run `ok: false` and
+   * drop the entity. The origin is still stamped in that case — it does not
+   * depend on the URL parsing.
    */
-  private withSourceLocation(entity: Entity, url: string): Entity {
+  private withDerivedAnnotations(
+    entity: Entity,
+    url: string,
+    origin: BrunoOrigin
+  ): Entity {
     const annotations = entity.metadata.annotations ?? {};
-    if (annotations[SOURCE_LOCATION_ANNOTATION]) {
-      return entity;
+
+    let sourceLocation: string | undefined
+      = annotations[SOURCE_LOCATION_ANNOTATION];
+    if (!sourceLocation) {
+      try {
+        sourceLocation = `url:${this.options.probe.normalize(url)}/`;
+      } catch {
+        sourceLocation = undefined;
+      }
     }
 
-    let normalized: string;
-    try {
-      normalized = this.options.probe.normalize(url);
-    } catch {
+    if (
+      annotations[ORIGIN_ANNOTATION] === origin
+      && sourceLocation === annotations[SOURCE_LOCATION_ANNOTATION]
+    ) {
       return entity;
     }
 
@@ -389,7 +468,10 @@ export class BrunoKindProcessor implements CatalogProcessor {
         ...entity.metadata,
         annotations: {
           ...annotations,
-          [SOURCE_LOCATION_ANNOTATION]: `url:${normalized}/`
+          ...(sourceLocation && {
+            [SOURCE_LOCATION_ANNOTATION]: sourceLocation
+          }),
+          [ORIGIN_ANNOTATION]: origin
         }
       }
     };

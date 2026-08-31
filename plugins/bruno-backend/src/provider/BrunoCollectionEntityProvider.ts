@@ -7,7 +7,10 @@ import type {
   EntityProvider,
   EntityProviderConnection
 } from '@backstage/plugin-catalog-node';
-import { BRUNO_API_VERSION } from '../processor/BrunoKindProcessor';
+import {
+  BRUNO_API_VERSION,
+  ORIGIN_ANNOTATION
+} from '../processor/BrunoKindProcessor';
 import { readBrunoCollections } from '../service/brunoConfig';
 import { sanitizeName } from '../service/collectionService';
 import type { CollectionManifest, ManifestProbe } from '../service/manifestProbe';
@@ -174,7 +177,13 @@ function buildEntity(input: {
       annotations: {
         'backstage.io/managed-by-location': location,
         'backstage.io/managed-by-origin-location': location,
-        'backstage.io/source-location': `${location}/`
+        'backstage.io/source-location': `${location}/`,
+        // The one fact only this provider knows. `managed-by-location` is the
+        // collection FOLDER here, not a descriptor, and nothing downstream can
+        // tell that apart from a descriptor URL without guessing at the file
+        // extension. Stamped on the unprocessed entity so `BrunoKindProcessor`
+        // sees it and leaves it alone.
+        [ORIGIN_ANNOTATION]: 'config'
       }
     },
     spec: {

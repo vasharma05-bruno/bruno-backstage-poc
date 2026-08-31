@@ -144,13 +144,64 @@ export function definitionOmittedBytes(entity: Entity): string | undefined {
   return entity.metadata.annotations?.[BRUNO_DEFINITION_BYTES_ANNOTATION];
 }
 
+/**
+ * How the collection got into the catalog, as recorded by the backend.
+ *
+ * Mirrors `BrunoOrigin` in plugins/bruno-backend/src/processor/BrunoKindProcessor.ts
+ * — keep the two in step. `unknown` is this side's own addition, for an entity
+ * the processor has not stamped yet (annotations it writes appear a cycle after
+ * the entity itself) or one ingested by an older backend.
+ */
+export type BrunoOrigin = 'descriptor' | 'config' | 'ui' | 'file' | 'unknown';
+
+/** Stamped by `BrunoKindProcessor`; see its docblock for who writes what. */
+export const BRUNO_ORIGIN_ANNOTATION = 'bruno.dev/origin';
+
+const ORIGINS: readonly string[] = ['descriptor', 'config', 'ui', 'file'];
+
+/**
+ * Where this collection came from, and therefore what has to be edited to
+ * change it. {@link changeRoute} turns this into an actual instruction.
+ *
+ * Reads `bruno.dev/origin`, and falls back to the shape of
+ * `backstage.io/managed-by-location` when it is missing — a descriptor is a
+ * YAML file, and the provider stamps a folder. That fallback is the rule the UI
+ * used before the annotation existed; it is kept because an entity ingested by
+ * an older backend, or one stitched in the window before its first processing
+ * run, carries no origin and still has to be given advice. It cannot tell `ui`
+ * from `descriptor` — they are the same file, which is exactly the ambiguity
+ * the annotation was added to remove.
+ */
+export function collectionOrigin(entity: Entity): BrunoOrigin {
+  const stamped = entity.metadata.annotations?.[BRUNO_ORIGIN_ANNOTATION];
+  if (stamped && ORIGINS.includes(stamped)) {
+    return stamped as BrunoOrigin;
+  }
+
+  const location = entity.metadata.annotations?.[ANNOTATION_LOCATION];
+  if (!location) {
+    return 'unknown';
+  }
+  if (location.startsWith('file:')) {
+    return 'file';
+  }
+  if (!location.startsWith('url:')) {
+    return 'unknown';
+  }
+  const target = location.slice('url:'.length);
+  const lastSegment = target.split('?')[0].split('#')[0].split('/').pop() ?? '';
+  return lastSegment.endsWith('.yaml') || lastSegment.endsWith('.yml')
+    ? 'descriptor'
+    : 'config';
+}
+
 /** Where the `catalog-info.yaml` describing this entity lives, if anywhere. */
 export type DescriptorLocation
   = | { kind: 'url'; target: string }
     | { kind: 'none'; reason: 'provider' | 'file' | 'absent' };
 
 /**
- * Resolves the descriptor file this entity was read from.
+ * Resolves the descriptor file this entity was read from, if it has one.
  *
  * Reads `backstage.io/managed-by-location` and NOT
  * `backstage.io/source-location`: `BrunoKindProcessor` stamps `source-location`
@@ -159,33 +210,35 @@ export type DescriptorLocation
  * `spec.partOf` means editing the descriptor, so the descriptor is what we have
  * to name.
  *
+ * WHETHER there is a descriptor at all now comes from {@link collectionOrigin}
+ * — a recorded fact — rather than from the annotation's file extension, which
+ * was a guess that misread any descriptor served from a URL not ending in
+ * `.yaml` as provider-managed.
+ *
  * The three "none" reasons are all real and all need different copy:
- *  - `provider` — a `url:` location that is not a YAML file, i.e. the collection
- *    folder stamped by `BrunoCollectionEntityProvider` for a `bruno.collections[]`
- *    entry. There is no file to edit; the operator edits `app-config.yaml`.
- *  - `file` — a `file:` location (this repo's `examples/bruno-entity.yaml`). The
- *    file is on the Backstage host's disk, not in an SCM we can open a PR against.
+ *  - `provider` — the location is the collection folder stamped by
+ *    `BrunoCollectionEntityProvider` for a `bruno.collections[]` entry. There is
+ *    no file to edit; the operator edits `app-config.yaml`.
+ *  - `file` — a `file:` location (this repo's `examples/bruno-entities.yaml`).
+ *    The file is on the Backstage host's disk, not in an SCM we can open a pull
+ *    request against.
  *  - `absent` — no location annotation at all, which should not happen for a
  *    stitched entity but must not crash a dialog.
  */
 export function descriptorLocation(entity: Entity): DescriptorLocation {
-  const location = entity.metadata.annotations?.[ANNOTATION_LOCATION];
-  if (!location) {
-    return { kind: 'none', reason: 'absent' };
+  const origin = collectionOrigin(entity);
+  if (origin === 'config') {
+    return { kind: 'none', reason: 'provider' };
   }
-  if (location.startsWith('file:')) {
+  if (origin === 'file') {
     return { kind: 'none', reason: 'file' };
   }
-  if (!location.startsWith('url:')) {
+
+  // `descriptor`, `ui` and `unknown` all mean "there is a file", and for all
+  // three the location annotation is the only place its URL is recorded.
+  const location = entity.metadata.annotations?.[ANNOTATION_LOCATION];
+  if (!location?.startsWith('url:')) {
     return { kind: 'none', reason: 'absent' };
   }
-  const target = location.slice('url:'.length);
-  // A descriptor is a YAML document; anything else under `url:` is a folder —
-  // which for us means the provider stamped the collection root.
-  const lastSegment = target.split('?')[0].split('#')[0].split('/').pop() ?? '';
-  const isDescriptor
-    = lastSegment.endsWith('.yaml') || lastSegment.endsWith('.yml');
-  return isDescriptor
-    ? { kind: 'url', target }
-    : { kind: 'none', reason: 'provider' };
+  return { kind: 'url', target: location.slice('url:'.length) };
 }
