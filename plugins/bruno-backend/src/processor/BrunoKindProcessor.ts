@@ -16,10 +16,15 @@ import type {
   LocationSpec
 } from '@backstage/plugin-catalog-node';
 import { processingResult } from '@backstage/plugin-catalog-node';
-import type { CollectionManifest, ManifestProbe } from '../service/manifestProbe';
+import type { CollectionSnapshot, ManifestProbe } from '../service/manifestProbe';
 import type { BrunoEntity } from '../types';
 
 const SOURCE_LOCATION_ANNOTATION = 'backstage.io/source-location';
+/** Why `spec.definition` is absent, and how big it would have been. Both values
+ *  are pure functions of the collection's content, so stamping them cannot churn
+ *  `resultHash`. The `bruno.dev/*` prefix matches the keys already in use. */
+const DEFINITION_OMITTED_ANNOTATION = 'bruno.dev/definition-omitted';
+const DEFINITION_BYTES_ANNOTATION = 'bruno.dev/definition-bytes';
 
 /**
  * The apiVersion the `Bruno` kind is written against — the identifier the PRD
@@ -63,7 +68,8 @@ export const brunoEntityV1alpha1Schema = {
         type: 'bruno-collection',
         owner: 'guests',
         url: 'https://github.com/bruno-collections/github-rest-api-collection',
-        partOf: ['api:default/github-rest-api']
+        partOf: ['api:default/github-rest-api'],
+        definition: 'opencollection: 1.0.0\ninfo:\n  name: My Collection\n'
       }
     }
   ],
@@ -107,6 +113,40 @@ export const brunoEntityV1alpha1Schema = {
                 'Entity references to API entities this collection is part of.',
               items: { type: 'string', minLength: 1 },
               examples: [['api:default/github-rest-api']]
+            },
+            // Deliberately WITHOUT `minLength`, and deliberately not in
+            // `spec.required` — unlike `kind: API`, which requires its
+            // `definition` and constrains it to a non-empty string. A degraded
+            // Bruno entity (unreachable repo, missing manifest, over the size
+            // cap) has no definition to write, and a validation failure here
+            // would make the processing run `ok: false`, which abandons
+            // stitching and deletes the entity outright.
+            definition: {
+              type: 'string',
+              description:
+                'The generated OpenCollection YAML for the whole collection. '
+                + 'Written by the processor; any authored value is overwritten. '
+                + 'Absent when generation failed or the collection exceeded '
+                + '`bruno.definition.maxBytes`.',
+              examples: ['opencollection: 1.0.0\ninfo:\n  name: My Collection\n']
+            },
+            // Same reasoning as `definition`: derived, optional, and never
+            // required — a degraded entity has neither and must still validate.
+            requestCount: {
+              type: 'integer',
+              description:
+                'Number of executable requests in the collection. Written by '
+                + 'the processor; any authored value is overwritten.',
+              minimum: 0,
+              examples: [42]
+            },
+            environments: {
+              type: 'array',
+              description:
+                'Names of the environments defined in the collection. Written '
+                + 'by the processor; any authored value is overwritten.',
+              items: { type: 'string' },
+              examples: [['local', 'staging', 'prod']]
             }
           }
         }
@@ -122,6 +162,32 @@ const validator = entityKindSchemaValidator<BrunoEntity>(
 /** Treats empty/whitespace-only strings as absent so `??` falls through. */
 function keep(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+/** Order-sensitive equality over two optional string lists. Order matters: the
+ *  parser emits environments deterministically, so a reordering is a real
+ *  change and should rewrite the entity. */
+function sameStrings(a?: string[], b?: string[]): boolean {
+  if (a === b) {
+    return true;
+  }
+  return (
+    a !== undefined
+    && b !== undefined
+    && a.length === b.length
+    && a.every((v, i) => v === b[i])
+  );
+}
+
+/** Shallow equality over two annotation maps, for the no-change guard. */
+function sameAnnotations(
+  a: Record<string, string>,
+  b: Record<string, string>
+): boolean {
+  const keys = Object.keys(a);
+  return (
+    keys.length === Object.keys(b).length && keys.every((k) => a[k] === b[k])
+  );
 }
 
 /**
@@ -141,7 +207,18 @@ function keep(value: unknown): string | undefined {
  * The same processor serves entities authored as a `catalog-info.yaml` and
  * entities emitted by the `BrunoCollectionEntityProvider` from
  * `bruno.collections[]` — provider-emitted entities are written unprocessed and
- * flow through this identical loop.
+ * flow through this identical loop. It is also what makes Sync work at all: a
+ * catalog refresh re-runs processors and never providers, so generation has to
+ * live here for both entry points to converge on it.
+ *
+ * It also writes `spec.definition` — the whole collection's OpenCollection YAML,
+ * mirroring how a `kind: API` entity stores its OpenAPI document. Note the
+ * deliberate ASYMMETRY with the metadata rule above it: authored
+ * `title`/`description`/`version` WIN over the fetched values, but
+ * `spec.definition` is overwritten unconditionally whenever generation succeeds.
+ * It is derived data — nobody hand-writes an OpenCollection document into a
+ * `catalog-info.yaml` — and letting a stale authored value win would make Sync a
+ * permanent no-op. When generation fails, whatever was there is left alone.
  */
 export class BrunoKindProcessor implements CatalogProcessor {
   constructor(
@@ -174,7 +251,7 @@ export class BrunoKindProcessor implements CatalogProcessor {
       return entity;
     }
 
-    let manifest: CollectionManifest | undefined;
+    let manifest: CollectionSnapshot | undefined;
     try {
       manifest = await this.options.probe.probe(url);
     } catch (e) {
@@ -200,6 +277,17 @@ export class BrunoKindProcessor implements CatalogProcessor {
       return this.withSourceLocation(entity, url);
     }
 
+    // Derived data, so no authored-value precedence applies: the processor owns
+    // `spec.definition` outright (see the class comment). `undefined` here means
+    // "could not generate", and the return below deliberately leaves a
+    // previously-good definition in place rather than blanking it.
+    const definition = manifest.definition;
+    const omitted = manifest.definitionOmitted;
+    // Reported even when the definition itself was omitted for size, so the
+    // dashboard's counts do not go blank on the largest collections.
+    const requestCount = manifest.requestCount;
+    const environments = manifest.environments;
+
     // Authored metadata WINS over the fetched value — the inverse of the
     // `bruno.sources` path, where config is only a fallback display name.
     // `metadata.name` is deliberately NOT in this list: the catalog freezes the
@@ -215,6 +303,22 @@ export class BrunoKindProcessor implements CatalogProcessor {
     const sourceLocation
       = existingSourceLocation ?? `url:${this.options.probe.normalize(url)}/`;
 
+    // When nothing is omitted the two keys are DELETED rather than left alone,
+    // so an over-cap collection that later shrinks stops claiming to be omitted.
+    const nextAnnotations: Record<string, string> = {
+      ...annotations,
+      [SOURCE_LOCATION_ANNOTATION]: sourceLocation
+    };
+    if (omitted) {
+      nextAnnotations[DEFINITION_OMITTED_ANNOTATION] = omitted;
+      nextAnnotations[DEFINITION_BYTES_ANNOTATION] = String(
+        manifest.definitionBytes
+      );
+    } else {
+      delete nextAnnotations[DEFINITION_OMITTED_ANNOTATION];
+      delete nextAnnotations[DEFINITION_BYTES_ANNOTATION];
+    }
+
     // Nothing to enrich: hand back the input untouched rather than allocating
     // an identical copy. Note this is an allocation guard, not a correctness
     // one — the engine's no-change detection hashes the serialized result, not
@@ -226,6 +330,10 @@ export class BrunoKindProcessor implements CatalogProcessor {
       && description === meta.description
       && version === meta.version
       && sourceLocation === existingSourceLocation
+      && definition === (entity as BrunoEntity).spec.definition
+      && requestCount === (entity as BrunoEntity).spec.requestCount
+      && sameStrings(environments, (entity as BrunoEntity).spec.environments)
+      && sameAnnotations(annotations, nextAnnotations)
     ) {
       return entity;
     }
@@ -237,10 +345,16 @@ export class BrunoKindProcessor implements CatalogProcessor {
         ...(title && { title }),
         ...(description && { description }),
         ...(version && { version }),
-        annotations: {
-          ...annotations,
-          [SOURCE_LOCATION_ANNOTATION]: sourceLocation
-        }
+        annotations: nextAnnotations
+      },
+      spec: {
+        ...(entity as BrunoEntity).spec,
+        // Only written when generation succeeded. A transient failure — an
+        // unreachable host, a parse error on one bad push — must not blank a
+        // definition that was good a cycle ago. Same for the two counts.
+        ...(definition !== undefined && { definition }),
+        ...(requestCount !== undefined && { requestCount }),
+        ...(environments !== undefined && { environments })
       }
     };
   }

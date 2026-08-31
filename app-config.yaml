@@ -165,6 +165,21 @@ bruno:
     #   owner: guests
     #   partOf:
     #     - api:default/github-rest-api
+  # PRD §"Post ingestion" / §"Entity Sync". The generated OpenCollection YAML
+  # is stored inline on each Bruno entity's `spec.definition`, mirroring how a
+  # kind: API entity stores its OpenAPI document.
+  #
+  # SECURITY: an entity is readable by anything that can read the catalog, which
+  # is strictly broader than the per-user, per-collection
+  # /api/bruno/collections/:id/opencollection.yml route. `standard` redacts
+  # environment values, auth secrets, and header/param values with secret-looking
+  # names; it does NOT redact request bodies, scripts or tests. Set `strict` if
+  # your collections carry credentials in those places.
+  definition:
+    maxBytes: 1048576
+    redaction: standard
+  # Also the upper bound on how long a Sync takes to show new content.
+  cacheTtlSeconds: 60
   schedule:
     frequencySeconds: 60
     timeoutSeconds: 30
@@ -278,6 +293,12 @@ catalog:
 
     - type: file
       target: ../../examples/bruno-entity.yaml
+
+    # Sample kind: Bruno entities, one per real collection in
+    # github.com/bruno-collections. Spans both collection formats (.bru and
+    # opencollection.yml) and both repo-root and subfolder layouts.
+    - type: file
+      target: ../../examples/bruno-entities.yaml
 
     # Local example template
     - type: file

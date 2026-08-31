@@ -3,6 +3,10 @@ import {
   createBackendModule
 } from '@backstage/backend-plugin-api';
 import { catalogProcessingExtensionPoint } from '@backstage/plugin-catalog-node';
+import {
+  readCacheTtlMs,
+  readDefinitionOptions
+} from './service/brunoConfig';
 import { createCollectionService } from './service/collectionService';
 import { createManifestProbe } from './service/manifestProbe';
 import { readSchedule } from './service/schedule';
@@ -62,7 +66,13 @@ export const brunoCatalogModule = createBackendModule({
         // Constructed once and shared, so two `kind: Bruno` entities pointing
         // at the same repo cost one tree read rather than one each per
         // reprocess cycle.
-        const probe = createManifestProbe({ config, reader, logger });
+        const probe = createManifestProbe({
+          config,
+          reader,
+          logger,
+          ttlMs: readCacheTtlMs(config),
+          definition: readDefinitionOptions(config, logger)
+        });
 
         catalog.addEntityProvider(
           new BrunoCollectionEntityProvider({

@@ -9,6 +9,12 @@
 # `version` are optional and are filled in from the collection's bruno.json /
 # opencollection.yml|.yaml when omitted here; a value written here WINS over
 # the fetched one.
+#
+# `spec.definition` is the opposite: it holds the collection's generated
+# OpenCollection YAML, is written by the processor on every run, and is never
+# authored — any value written here is overwritten. It is absent while the
+# collection is unreachable, has no manifest, or exceeds
+# `bruno.definition.maxBytes`.
 apiVersion: usebruno.com/v1alpha1
 kind: Bruno
 metadata:

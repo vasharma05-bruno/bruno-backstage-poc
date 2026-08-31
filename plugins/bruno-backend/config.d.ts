@@ -76,6 +76,38 @@ export interface Config {
       name?: string;
     }>;
     /**
+     * How long a fetched collection stays cached before the probe revalidates
+     * it. Revalidation is an ETag check — one metadata API call, not a tree
+     * download — so a short value is cheap. This is also the upper bound on
+     * how long a Sync (catalog entity refresh) takes to show new content.
+     * Default 60.
+     * @visibility backend
+     */
+    cacheTtlSeconds?: number;
+    /**
+     * Controls the OpenCollection YAML stored on each `kind: Bruno` entity.
+     * @visibility backend
+     */
+    definition?: {
+      /**
+       * Hard cap on the stored YAML, in bytes. Over the cap the definition is
+       * OMITTED (never truncated — a truncated document is invalid YAML) and
+       * the entity is annotated `bruno.dev/definition-omitted: size`.
+       * Default 1048576.
+       * @visibility backend
+       */
+      maxBytes?: number;
+      /**
+       * How much to strip before storing. `standard` drops environment values,
+       * auth secrets, and header/param values whose NAME looks secret.
+       * `strict` additionally drops request bodies, scripts and tests.
+       * Applies only to the entity copy; `/api/bruno/collections/:id/
+       * opencollection.yml` is unaffected. Default `standard`.
+       * @visibility backend
+       */
+      redaction?: 'standard' | 'strict';
+    };
+    /**
      * Optional provider refresh schedule.
      * @visibility backend
      */

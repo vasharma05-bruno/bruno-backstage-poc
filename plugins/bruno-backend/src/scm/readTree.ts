@@ -2,8 +2,16 @@ import type {
   LoggerService,
   UrlReaderService
 } from '@backstage/backend-plugin-api';
-import { isCollectionFile } from './treeFilter';
+import { selectCollectionFiles } from './treeFilter';
 import type { ScmFileTree } from './types';
+
+/** A tree read together with the reader's identity for it. */
+export interface ScmTreeRead {
+  files: ScmFileTree;
+  /** The reader's tree identity — the commit sha for all three providers.
+   *  Feed it back as `etag` to get a NotModifiedError instead of a download. */
+  etag: string;
+}
 
 /**
  * Reads a collection tree through Backstage's `UrlReaderService`, keeping only
@@ -20,8 +28,66 @@ import type { ScmFileTree } from './types';
  * whose adapter opts in via `readTreeWithUserToken` should pass it. Passing it
  * to a reader that ignores it would read anonymously and look like success.
  *
+ * Passing `etag` turns the call into a revalidation: when the target's tree
+ * identity still matches, the reader throws `NotModifiedError` BEFORE
+ * downloading the tarball, so the round trip costs one metadata API call. That
+ * error PROPAGATES to the caller — it is the cheap path, not a failure, and the
+ * caller is expected to catch it and keep its cached copy.
+ *
  * A `readTree` response is single-consumption: `files()` is called exactly once
  * here, and callers wanting a second view must read again.
+ */
+export async function readTreeWithEtag(args: {
+  reader: UrlReaderService;
+  url: string;
+  logger: LoggerService;
+  etag?: string;
+  userToken?: string;
+}): Promise<ScmTreeRead> {
+  const { reader, url, logger, etag, userToken } = args;
+  // A revalidation is the HOT path: with a 60s cache TTL it runs once per
+  // collection per minute forever, so it must not be an info line. A cold read
+  // is the rare, expensive one and stays at info — it is also what boot check 5
+  // counts to prove the cache is doing its job.
+  if (etag) {
+    logger.debug(`Revalidating Bruno collection tree (ETag): ${url}`);
+  } else {
+    logger.info(`Reading Bruno collection tree via UrlReader: ${url}`);
+  }
+  const options = {
+    ...(etag && { etag }),
+    ...(userToken && { token: userToken })
+  };
+  const response = await reader.readTree(
+    url,
+    Object.keys(options).length ? options : undefined
+  );
+  const treeFiles = await response.files();
+
+  // `file.path` is relative to the tree root, and the reader has already
+  // stripped both the archive root and the requested subpath.
+  const byPath = new Map(
+    treeFiles.map((file) => [file.path.split('\\').join('/'), file])
+  );
+
+  // Admission is set-aware (a bare `.yaml` is only a collection file below an
+  // `opencollection.yaml`), and the returned order is sorted — which is what
+  // makes the generated definition byte-stable across reads.
+  const files: ScmFileTree = new Map();
+  for (const rel of selectCollectionFiles(byPath.keys())) {
+    const buffer = await byPath.get(rel)!.content();
+    files.set(rel, buffer.toString('utf8'));
+  }
+  return { files, etag: response.etag };
+}
+
+/**
+ * The tree-only view of {@link readTreeWithEtag}, for the callers that have no
+ * etag to revalidate against and no use for the one they would get back.
+ *
+ * Kept at its original signature on purpose: it is the shape the
+ * `ScmProvider.readTreeWithUserToken` contract (`scm/types.ts`) is written
+ * against.
  */
 export async function readTreeViaUrlReader(args: {
   reader: UrlReaderService;
@@ -29,23 +95,5 @@ export async function readTreeViaUrlReader(args: {
   logger: LoggerService;
   userToken?: string;
 }): Promise<ScmFileTree> {
-  const { reader, url, logger, userToken } = args;
-  logger.info(`Reading Bruno collection tree via UrlReader: ${url}`);
-  const response = await reader.readTree(
-    url,
-    userToken ? { token: userToken } : undefined
-  );
-  const treeFiles = await response.files();
-
-  const files: ScmFileTree = new Map();
-  for (const file of treeFiles) {
-    // `file.path` is relative to the tree root, and the reader has already
-    // stripped both the archive root and the requested subpath.
-    const rel = file.path.split('\\').join('/');
-    if (isCollectionFile(rel)) {
-      const buffer = await file.content();
-      files.set(rel, buffer.toString('utf8'));
-    }
-  }
-  return files;
+  return (await readTreeWithEtag(args)).files;
 }

@@ -22,13 +22,21 @@ export {
   BRUNO_API_VERSION,
   brunoEntityV1alpha1Schema
 } from './processor/BrunoKindProcessor';
-export { readBrunoCollections } from './service/brunoConfig';
+export {
+  readBrunoCollections,
+  readCacheTtlMs,
+  readDefinitionOptions
+} from './service/brunoConfig';
 export { createCollectionService } from './service/collectionService';
 export { createManifestProbe } from './service/manifestProbe';
 export { createRouter } from './service/router';
 export { generateOcDocsHtml } from './service/generateOcDocsHtml';
 
-export type { CollectionManifest, ManifestProbe } from './service/manifestProbe';
+export type {
+  CollectionManifest,
+  CollectionSnapshot,
+  ManifestProbe
+} from './service/manifestProbe';
 
 // Re-export the shared contract types so the frontend may reuse them.
 export type {

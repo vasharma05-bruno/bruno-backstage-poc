@@ -1,6 +1,12 @@
 import type { Config } from '@backstage/config';
 import type { LoggerService } from '@backstage/backend-plugin-api';
 import type { BrunoCollectionConfig } from '../types';
+import type { DefinitionOptions } from './definitionBuilder';
+
+/** 1 MiB. Admits every realistic collection — the largest real-world reference
+ *  measured was ~600 KB — while bounding both the pathological case and the
+ *  probe cache's memory. */
+const DEFAULT_MAX_BYTES = 1048576;
 
 /**
  * Reads the `bruno.collections` block from Backstage config. Returns [] if
@@ -53,6 +59,67 @@ export function readBrunoCollections(
   }
 
   return collections;
+}
+
+/**
+ * Reads `bruno.definition`. Both fields are optional; an unrecognised
+ * `redaction` value logs and falls back to `'standard'` rather than throwing,
+ * for the same reason the collections reader is tolerant — this is read during
+ * module init, and a typo must not take the backend down.
+ */
+export function readDefinitionOptions(
+  config: Config,
+  logger?: LoggerService
+): DefinitionOptions {
+  // Tolerant for the same reason the collections reader is: this runs during
+  // module init, and a mistyped knob must degrade to the defaults rather than
+  // take the whole backend down at boot. `getOptionalString`/`getOptionalNumber`
+  // throw on a value of the wrong TYPE, which is why the read is guarded too.
+  try {
+    const definition = config
+      .getOptionalConfig('bruno')
+      ?.getOptionalConfig('definition');
+
+    const redaction = definition?.getOptionalString('redaction');
+    if (
+      redaction !== undefined
+      && redaction !== 'standard'
+      && redaction !== 'strict'
+    ) {
+      logger?.error(
+        `bruno.definition.redaction: unrecognised value "${redaction}" `
+        + '(expected "standard" or "strict"); falling back to "standard".'
+      );
+    }
+
+    return {
+      maxBytes: definition?.getOptionalNumber('maxBytes') ?? DEFAULT_MAX_BYTES,
+      redaction: redaction === 'strict' ? 'strict' : 'standard'
+    };
+  } catch (e) {
+    logger?.error(
+      `bruno.definition: ${String((e as Error)?.message ?? e)}; `
+      + 'falling back to the defaults.'
+    );
+    return { maxBytes: DEFAULT_MAX_BYTES, redaction: 'standard' };
+  }
+}
+
+/**
+ * Reads `bruno.cacheTtlSeconds` as milliseconds. Undefined when unset, so the
+ * probe keeps its own default rather than having one duplicated here.
+ */
+export function readCacheTtlMs(config: Config): number | undefined {
+  try {
+    const seconds = config
+      .getOptionalConfig('bruno')
+      ?.getOptionalNumber('cacheTtlSeconds');
+    return seconds === undefined ? undefined : seconds * 1000;
+  } catch {
+    // Same reasoning as above: an unreadable value means "unset", which leaves
+    // the probe on its own default rather than failing the backend's boot.
+    return undefined;
+  }
 }
 
 /**

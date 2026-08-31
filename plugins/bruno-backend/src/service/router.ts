@@ -162,7 +162,7 @@ export async function createRouter(
       return;
     }
     const theme = req.query.theme === 'dark' ? 'dark' : 'light';
-    const yaml = toOpenCollectionYaml(detail);
+    const yaml = toOpenCollectionYaml(detail.collection);
     res.type('text/html').send(generateOcDocsHtml(yaml, detail.name, theme));
   });
 
@@ -173,7 +173,7 @@ export async function createRouter(
       res.status(404).json({ error: `Unknown collection: ${req.params.id}` });
       return;
     }
-    res.type('text/yaml').send(toOpenCollectionYaml(detail));
+    res.type('text/yaml').send(toOpenCollectionYaml(detail.collection));
   });
 
   router.post('/collections/:id/sync', async (req, res) => {

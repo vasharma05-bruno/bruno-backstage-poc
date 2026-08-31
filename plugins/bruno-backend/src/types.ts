@@ -229,6 +229,19 @@ export interface BrunoEntity extends Entity {
     /** Entity references to API entities this collection is part of.
      *  Emits RELATION_PART_OF / RELATION_HAS_PART pairs. Default kind: API. */
     partOf?: string[];
+    /** The generated OpenCollection YAML for the whole collection. Written by
+     *  BrunoKindProcessor; never authored. Absent when generation failed or
+     *  the collection exceeded `bruno.definition.maxBytes`. */
+    definition?: string;
+    /** Executable requests in the collection. Written by BrunoKindProcessor;
+     *  never authored. Facetable, which is what the dashboard's stat tiles
+     *  aggregate over. */
+    requestCount?: number;
+    /** Environment names. Written by BrunoKindProcessor; never authored. A
+     *  string ARRAY on purpose: the catalog indexes one search row per item, so
+     *  a facet query can count UNIQUE environments across all collections — a
+     *  comma-joined string would group as one opaque value. */
+    environments?: string[];
   };
 }
 

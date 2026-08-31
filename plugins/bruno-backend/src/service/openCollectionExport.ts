@@ -17,15 +17,31 @@
  * Divergences (R-A): the output is faithful-for-docs but NOT byte-identical to
  * Bruno's native exporter — collection/folder request-defaults, settings,
  * examples, tags and full `brunoConfig` are absent from our source model.
- * Assertions are omitted (R-C). Secrets embedded in header/param/body VALUES are
- * NOT redacted (R-D) — matches the existing native-viewer/docs-HTML exposure.
+ * Assertions are omitted (R-C).
+ *
+ * R-D, the "secrets in VALUES are not redacted" gap, is now PARTIALLY closed:
+ * header and query/path param values whose NAME looks secret
+ * ({@link SECRET_NAME_PATTERN}) are replaced, because the same YAML is now
+ * stored on a catalog entity, where the audience is "anything that can read the
+ * catalog" rather than one signed-in user entitled to that one collection
+ * (BE-P2 §3). A `{{placeholder}}` value is a REFERENCE, not a secret, and passes
+ * through — redacting it would destroy the docs for no gain.
+ *
+ * The residual, stated rather than hidden: under the default `standard` mode
+ * request BODIES, `script.req`/`script.res` and `tests` are emitted verbatim,
+ * and those are the likeliest places a hardcoded credential hides. They are also
+ * what makes the rendered docs worth anything, so the escape hatch is a config
+ * knob (`bruno.definition.redaction: 'strict'`) rather than a silent default.
+ * See BE-P2 §3 and R8.
  */
 import type {
   CollectionDetail,
   Environment,
   FolderItem,
   Item,
+  KeyValue,
   NormalizedCollection,
+  Param,
   RequestAuth,
   RequestBody,
   RequestItem
@@ -34,6 +50,48 @@ import { brunoToOpenCollection } from '@usebruno/converters';
 import yaml from 'js-yaml';
 
 const REDACTED = '<redacted>';
+
+/** How much to strip from the generated YAML. See BE-P2 §3. */
+export type RedactionMode = 'standard' | 'strict';
+
+/** Options for {@link toOpenCollectionYaml}. */
+export interface OpenCollectionExportOptions {
+  /** ISO timestamp for `extensions.bruno.exportedAt`. `null` OMITS the key —
+   *  required for the catalog-stored variant: a per-call timestamp changes
+   *  `resultHash` every reprocess cycle and rewrites the entity. Default:
+   *  `new Date().toISOString()`, preserving today's route behaviour. */
+  exportedAt?: string | null;
+  /** `'standard'` (default) or `'strict'`. See BE-P2 §3. */
+  redaction?: RedactionMode;
+}
+
+/**
+ * Header / param names whose VALUE is a secret often enough that emitting it is
+ * not worth the risk. Two shapes in one pattern: the well-known headers matched
+ * whole, and the substrings that mark a name as credential-bearing wherever they
+ * appear (`X-Api-Key`, `sessionToken`, `db_password`, …).
+ */
+const SECRET_NAME_PATTERN
+  = /^(authorization|proxy-authorization|cookie|set-cookie)$|api-?key|token|secret|password|passwd|credential|session/i;
+
+/** A `{{var}}` value names a variable rather than carrying its content, so it is
+ *  documentation, not exposure. Mirrors the docs-HTML renderer's `maskSecret`. */
+function isPlaceholder(value: string): boolean {
+  return /^\{\{.*\}\}$/.test(value.trim());
+}
+
+/**
+ * Replaces the values of secret-looking NAMES in a header / param list, leaving
+ * the list itself — names, order, enabled flags — intact so the docs still show
+ * what a request sends.
+ */
+function redactNamedValues<T extends KeyValue | Param>(pairs: T[]): T[] {
+  return pairs.map((pair) =>
+    pair.value && SECRET_NAME_PATTERN.test(pair.name) && !isPlaceholder(pair.value)
+      ? { ...pair, value: REDACTED }
+      : pair
+  );
+}
 
 /**
  * Auth-block field names whose values are secrets across the supported modes
@@ -127,23 +185,35 @@ function mapEnv(env: Environment): unknown {
   };
 }
 
-function mapBody(body?: RequestBody): unknown {
+function mapBody(body: RequestBody | undefined, redaction: RedactionMode): unknown {
   if (!body) {
     return { mode: 'none' };
   }
+  // `strict` keeps the SHAPE — the mode, and the key the converter reads for it
+  // — and drops only the content, so the docs still say "this request posts
+  // JSON" without saying what is in it.
+  const strict = redaction === 'strict';
   switch (body.mode) {
     case 'json':
     case 'text':
     case 'xml':
-      return { mode: body.mode, [body.mode]: body.raw ?? '' };
+      return { mode: body.mode, [body.mode]: strict ? REDACTED : body.raw ?? '' };
     case 'graphql':
-      return { mode: 'graphql', graphql: { query: body.raw ?? '' } };
+      return {
+        mode: 'graphql',
+        graphql: { query: strict ? REDACTED : body.raw ?? '' }
+      };
     case 'formUrlEncoded':
-      return { mode: 'formUrlEncoded', formUrlEncoded: body.form ?? [] };
+      return {
+        mode: 'formUrlEncoded',
+        formUrlEncoded: strict ? [] : body.form ?? []
+      };
     case 'multipartForm':
       return {
         mode: 'multipartForm',
-        multipartForm: (body.form ?? []).map((f) => ({ ...f, type: 'text' }))
+        multipartForm: strict
+          ? []
+          : (body.form ?? []).map((f) => ({ ...f, type: 'text' }))
       };
     default:
       return { mode: 'none' };
@@ -183,7 +253,8 @@ function mapAuth(auth?: RequestAuth): unknown {
   }
 }
 
-function mapRequest(item: RequestItem): unknown {
+function mapRequest(item: RequestItem, redaction: RedactionMode): unknown {
+  const strict = redaction === 'strict';
   return {
     type: item.type === 'graphql' ? 'graphql-request' : 'http-request',
     name: item.name,
@@ -191,52 +262,90 @@ function mapRequest(item: RequestItem): unknown {
     request: {
       method: item.method,
       url: item.url,
-      headers: item.headers,
-      params: item.params,
-      body: mapBody(item.body),
+      // The single choke point for header/param value redaction: everything
+      // reaching the YAML for a request passes through here.
+      headers: redactNamedValues(item.headers),
+      params: redactNamedValues(item.params),
+      body: mapBody(item.body, redaction),
       auth: mapAuth(item.auth),
-      script: { req: item.script?.req ?? null, res: item.script?.res ?? null },
-      tests: item.tests ?? null,
+      // Scripts are the single most common hiding place for a hardcoded
+      // credential, and nothing about their name reveals it, so `strict` drops
+      // them wholesale rather than trying to be clever.
+      script: strict
+        ? { req: null, res: null }
+        : { req: item.script?.req ?? null, res: item.script?.res ?? null },
+      tests: strict ? null : item.tests ?? null,
       docs: item.docs ?? null
     }
   };
 }
 
-function mapFolder(item: FolderItem): unknown {
+function mapFolder(item: FolderItem, redaction: RedactionMode): unknown {
   return {
     type: 'folder',
     name: item.name,
-    items: mapItems(item.items),
+    items: mapItems(item.items, redaction),
     ...(item.docs ? { root: { docs: item.docs } } : {})
   };
 }
 
-function mapItems(items: Item[]): unknown[] {
+function mapItems(items: Item[], redaction: RedactionMode): unknown[] {
   return items.map((item) =>
-    item.type === 'folder' ? mapFolder(item) : mapRequest(item)
+    item.type === 'folder'
+      ? mapFolder(item, redaction)
+      : mapRequest(item, redaction)
   );
 }
 
 function normalizedToBrunoCollection(
-  collection: NormalizedCollection
+  collection: NormalizedCollection,
+  redaction: RedactionMode
 ): BrunoCollectionLike {
   return {
     name: collection.name,
     ...(collection.version ? { brunoConfig: { version: collection.version } } : {}),
     environments: collection.environments.map(mapEnv),
-    items: mapItems(collection.items),
+    items: mapItems(collection.items, redaction),
     ...(collection.readme ? { root: { docs: collection.readme } } : {})
   };
 }
 
-export function toOpenCollectionYaml(detail: CollectionDetail): string {
-  const bruno = normalizedToBrunoCollection(detail.collection);
+/**
+ * Serializes a {@link NormalizedCollection} as an OpenCollection `1.0.0` YAML
+ * document.
+ *
+ * Takes the collection rather than the enclosing `CollectionDetail` because the
+ * only field it ever read was `detail.collection`, and the catalog-entity caller
+ * has a collection but no detail to wrap it in.
+ *
+ * With no options the output is byte-identical to what the `/api/bruno/*` routes
+ * have always produced. `exportedAt: null` makes it byte-STABLE instead, which
+ * is what the entity path needs: per BE-P2 F11 the catalog hashes the processed
+ * entity, so a per-call timestamp would rewrite and re-stitch every Bruno entity
+ * on every reprocess cycle.
+ *
+ * @public
+ */
+export function toOpenCollectionYaml(
+  collection: NormalizedCollection,
+  options?: OpenCollectionExportOptions
+): string {
+  const bruno = normalizedToBrunoCollection(
+    collection,
+    options?.redaction ?? 'standard'
+  );
   const oc = brunoToOpenCollection(bruno);
+  const exportedAt
+    = options?.exportedAt === undefined
+      ? new Date().toISOString()
+      : options.exportedAt;
   oc.extensions = {
     ...(oc.extensions ?? {}),
     bruno: {
       ...(oc.extensions?.bruno ?? {}),
-      exportedAt: new Date().toISOString(),
+      // Omitted entirely — not written as null — when the caller asked for a
+      // stable document; a `null` key would still be a key in the YAML.
+      ...(typeof exportedAt === 'string' && { exportedAt }),
       exportedUsing: 'bruno-for-backstage'
     }
   };
