@@ -14,6 +14,8 @@
  * @public
  */
 
+import type { Entity } from '@backstage/catalog-model';
+
 /** A name/value pair with an enabled flag (headers, form fields, env vars). */
 export interface KeyValue {
   name: string;
@@ -203,4 +205,38 @@ export interface Dashboard {
   stats: DashboardStats;
   collections: DashboardCollection[];
   failures: SourceFailure[];
+}
+
+/**
+ * An entity of `kind: Bruno` — a Bruno collection in source control.
+ *
+ * `metadata.name` is REQUIRED by the platform and cannot be enriched: the
+ * catalog validates the entity envelope before any processor runs
+ * (DefaultCatalogProcessingOrchestrator :44) and rejects any processor that
+ * changes the entity ref (:166). The manifest's name lands in
+ * `metadata.title`; `version` and `description` are enriched in place.
+ */
+export interface BrunoEntity extends Entity {
+  apiVersion: 'usebruno.com/v1alpha1';
+  kind: 'Bruno';
+  spec: {
+    /** The type of Bruno entity, e.g. `bruno-collection`. */
+    type: string;
+    /** Entity reference to the owner; defaults to a Group when unprefixed. */
+    owner?: string;
+    /** Git URL of the collection folder. Required — it is what gets fetched. */
+    url: string;
+    /** Entity references to API entities this collection is part of.
+     *  Emits RELATION_PART_OF / RELATION_HAS_PART pairs. Default kind: API. */
+    partOf?: string[];
+  };
+}
+
+/** One entry of `bruno.collections[]` in app-config. */
+export interface BrunoCollectionConfig {
+  type: 'url';
+  url: string;
+  partOf: string[];
+  /** Optional entity-name override; see config.d.ts for why it exists. */
+  name?: string;
 }

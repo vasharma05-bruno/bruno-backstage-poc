@@ -1,0 +1,21 @@
+# A declarative `kind: Bruno` entity.
+#
+# The kind is defined by BrunoKindProcessor in the bruno-backend plugin —
+# `catalog.rules` in app-config only *permits* the kind from a location, it
+# does not define one.
+#
+# `metadata.name` is REQUIRED and cannot be enriched: the catalog validates the
+# entity envelope before any processor runs. `title`, `description` and
+# `version` are optional and are filled in from the collection's bruno.json /
+# opencollection.yml|.yaml when omitted here; a value written here WINS over
+# the fetched one.
+apiVersion: usebruno.com/v1alpha1
+kind: Bruno
+metadata:
+  name: my-bruno-collection
+spec:
+  type: bruno-collection
+  owner: guests
+  url: https://github.com/bruno-collections/github-rest-api-collection
+  partOf:
+    - api:default/github-rest-api

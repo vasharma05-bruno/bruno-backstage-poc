@@ -45,6 +45,8 @@ import type { BrunoConnectionRow } from '../store/connectionStore';
 import type { ImportedCollectionRow } from '../store/collectionsStore';
 import {
   createScmProviderRegistry,
+  isBrunoJsonManifest,
+  isOpenCollectionManifest,
   normalizePathStyleUrl,
   readTreeViaUrlReader,
   type ScmProvider
@@ -324,7 +326,7 @@ export async function createCollectionService(options: {
       = findBrunoJson(tree) !== undefined || findOpenCollectionYml(tree) !== undefined;
     if (!hasManifest) {
       throw new InputError(
-        `No Bruno collection found at ${normalized} (missing bruno.json / opencollection.yml)`
+        `No Bruno collection found at ${normalized} (missing bruno.json / opencollection.yml/.yaml)`
       );
     }
     const source: BrunoSourceConfig = {
@@ -638,12 +640,13 @@ async function walkLocal(
       }
       await walkLocal(full, root, files);
     } else if (entry.isFile()) {
-      // Keep .bru files, bruno.json, OpenCollection .yml files, and the
-      // collection README.
+      // Keep .bru files, bruno.json, .yml files, the opencollection.yaml
+      // manifest, and the collection README.
       if (
         entry.name.endsWith('.bru')
-        || entry.name === 'bruno.json'
+        || isBrunoJsonManifest(entry.name)
         || entry.name.endsWith('.yml')
+        || isOpenCollectionManifest(entry.name)
         || /^readme\.md$/i.test(entry.name)
       ) {
         const rel = toPosix(path.relative(root, full));
@@ -728,7 +731,7 @@ function parseCollection(
   logger: LoggerService
 ): NormalizedCollection {
   // OpenCollection (yml) collections are handled by a self-contained parallel
-  // path. `opencollection.yml` wins over `bruno.json` if both are present.
+  // path. `opencollection.yml/.yaml` wins over `bruno.json` if both are present.
   if (detectFormat(tree) === 'yml') {
     return parseCollectionYml(source, tree, logger);
   }
@@ -787,8 +790,8 @@ function findBrunoJson(tree: FileTree): string | undefined {
 
 /**
  * Detects the collection format. A tree is treated as OpenCollection (`yml`)
- * when it contains an `opencollection.yml` manifest anywhere; otherwise the
- * classic `.bru`/`bruno.json` path is used. `opencollection.yml` wins over
+ * when it contains an `opencollection.yml/.yaml` manifest anywhere; otherwise
+ * the classic `.bru`/`bruno.json` path is used. `opencollection.yml/.yaml` wins over
  * `bruno.json`, matching Bruno's `getCollectionFormat`.
  */
 function detectFormat(tree: FileTree): 'bru' | 'yml' {
@@ -798,8 +801,18 @@ function detectFormat(tree: FileTree): 'bru' | 'yml' {
 function findOpenCollectionYml(tree: FileTree): string | undefined {
   let best: string | undefined;
   for (const key of tree.files.keys()) {
-    if (key === 'opencollection.yml' || key.endsWith('/opencollection.yml')) {
-      if (best === undefined || key.length < best.length) {
+    if (isOpenCollectionManifest(key)) {
+      // Shortest path wins, so the shallowest manifest is chosen. Note this
+      // also settles the two spellings inside one directory: `.yml` is one
+      // character shorter than `.yaml`, so `.yml` always wins — which is what
+      // Bruno writes today. The length-tie branch below is for equal-length
+      // paths in *sibling* directories, replacing Map iteration order with a
+      // deterministic choice.
+      if (
+        best === undefined
+        || key.length < best.length
+        || (key.length === best.length && key < best)
+      ) {
         best = key;
       }
     }
@@ -810,7 +823,7 @@ function findOpenCollectionYml(tree: FileTree): string | undefined {
 /**
  * Collects EVERY collection root in the tree (not just the shortest, unlike
  * `findBrunoJson`/`findOpenCollectionYml`). A root is the directory of a
- * `bruno.json` or `opencollection.yml` manifest. When both formats sit in the
+ * `bruno.json` or `opencollection.yml/.yaml` manifest. When both formats sit in the
  * same directory, `yml` wins on tie (matching `detectFormat`). Sorted by
  * `rootPrefix` for stable output.
  */
@@ -819,12 +832,7 @@ function findAllCollectionRoots(tree: FileTree): string[] {
   // format (yml wins) on each sliced sub-tree, so only the root path matters.
   const roots = new Set<string>();
   for (const key of tree.files.keys()) {
-    if (
-      key === 'bruno.json'
-      || key.endsWith('/bruno.json')
-      || key === 'opencollection.yml'
-      || key.endsWith('/opencollection.yml')
-    ) {
+    if (isBrunoJsonManifest(key) || isOpenCollectionManifest(key)) {
       roots.add(posixDirname(key));
     }
   }

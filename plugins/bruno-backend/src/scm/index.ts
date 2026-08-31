@@ -12,6 +12,7 @@ import type { ScmProvider } from './types';
 export type { ScmProvider } from './types';
 export { normalizePathStyleUrl } from './normalize';
 export { readTreeViaUrlReader } from './readTree';
+export { isOpenCollectionManifest, isBrunoJsonManifest } from './treeFilter';
 
 export interface ScmProviderRegistry {
   byUrl(url: string): ScmProvider;

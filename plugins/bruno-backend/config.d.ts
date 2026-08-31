@@ -37,6 +37,37 @@ export interface Config {
       target: string;
     }>;
     /**
+     * Bruno collections to materialize as `kind: Bruno` entities, without a
+     * catalog-info.yaml. Ingested through the same path as an authored
+     * entity: fetch the folder, require a bruno.json or
+     * opencollection.yml/.yaml, then enrich name/version/description.
+     * @visibility backend
+     */
+    collections?: Array<{
+      /** The source type. Only `url` is supported. @visibility backend */
+      type: 'url';
+      /**
+       * Git URL of the Bruno collection FOLDER (a tree or blob URL on a host
+       * configured under `integrations`).
+       * @visibility backend
+       */
+      url: string;
+      /**
+       * Entity reference(s) to the API entities this collection is part of.
+       * A bare string is accepted and treated as a single-element list.
+       * @visibility backend
+       */
+      partOf?: string | string[];
+      /**
+       * Optional entity-name override. The default name is derived from the
+       * last path segment of `url`; set this when two configured collections
+       * would otherwise collide, or to pin a name against a URL change.
+       * NOT part of the PRD's config shape — a documented superset.
+       * @visibility backend
+       */
+      name?: string;
+    }>;
+    /**
      * Optional provider refresh schedule.
      * @visibility backend
      */

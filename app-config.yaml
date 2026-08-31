@@ -141,6 +141,12 @@ proxy:
 
 # Bruno for Backstage — collection sources scanned by BrunoEntityProvider and
 # served by the backend plugin at /api/bruno/*. See docs/POC-DECISIONS.md.
+#
+# NOTE: `sources` must stay under this `bruno:` root key. Without it the
+# `schedule` block below re-parses as `proxy.schedule` (silently — YAML is
+# happy) and the provider falls back to its defaults with zero sources.
+bruno:
+  sources: []
     # RISK #1 / Q4 — the private-repo path. Fetched server-side via Backstage's
     # UrlReader using integrations.github creds; the token never reaches the
     # browser. Uncomment and set GITHUB_TOKEN to demo a (public or private) repo:
@@ -148,6 +154,16 @@ proxy:
     #   name: Bruno Tests (GitHub)
     #   type: url
     #   target: https://github.com/usebruno/bruno/tree/main/packages/bruno-tests/collection/echo
+  # PRD §"Creating Bruno entities, other than catalog-info.yaml".
+  # Each entry becomes a `kind: Bruno` entity emitted by
+  # BrunoCollectionEntityProvider. `metadata.name` is derived from the last
+  # path segment of `url`; title/version/description come from the
+  # collection's bruno.json or opencollection.yml/.yaml.
+  collections: []
+    # - type: url
+    #   url: https://github.com/bruno-collections/github-rest-api-collection
+    #   partOf:
+    #     - api:default/github-rest-api
   schedule:
     frequencySeconds: 60
     timeoutSeconds: 30
@@ -246,7 +262,7 @@ catalog:
     entityFilename: catalog-info.yaml
     pullRequestBranchName: backstage-integration
   rules:
-    - allow: [Component, System, API, Resource, Location]
+    - allow: [Component, System, API, Resource, Location, Bruno]
   locations:
     # Local example data, file locations are relative to the backend process, typically `packages/backend`
     - type: file
@@ -258,6 +274,9 @@ catalog:
     #   node scripts/bruno-catalog/generate.mjs
     - type: file
       target: ../../examples/bruno-collections.yaml
+
+    - type: file
+      target: ../../examples/bruno-entity.yaml
 
     # Local example template
     - type: file
