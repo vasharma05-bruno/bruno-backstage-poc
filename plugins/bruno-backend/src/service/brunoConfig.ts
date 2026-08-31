@@ -41,6 +41,7 @@ export function readBrunoCollections(
         type: 'url',
         url: c.getString('url'),
         partOf: readPartOf(c.getOptional('partOf')),
+        owner: c.getOptionalString('owner'),
         name: c.getOptionalString('name')
       });
     } catch (e) {

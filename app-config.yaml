@@ -162,6 +162,7 @@ bruno:
   collections: []
     # - type: url
     #   url: https://github.com/bruno-collections/github-rest-api-collection
+    #   owner: guests
     #   partOf:
     #     - api:default/github-rest-api
   schedule:

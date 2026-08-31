@@ -587,7 +587,7 @@ The only theoretical workaround — re-reading the raw descriptor bytes from `lo
 
 **Open questions for the requester**
 
-- **Q1** — should `bruno.collections[]` carry an `owner`? The PRD's block has only `type`/`url`/`partOf`, so config-created entities emit no `ownedBy` relation and show "unknown owner". Two-line change if wanted.
+- **Q1 — RESOLVED (yes).** `bruno.collections[]` now accepts `owner`, threaded through `readBrunoCollections` to `spec.owner` so config-created entities emit the same `ownedBy`/`ownerOf` pair as authored ones. A documented superset of the PRD's config block, like `name`.
 - **Q2** — is the `name?:` config override (a documented PRD superset) acceptable, or should a name collision be a hard boot failure?
 - **Q3** — should an unparseable `spec.partOf` entry be fatal rather than warned?
 - **Q4** — `bruno.json` carries no description field in the Bruno spec, so `metadata.description` usually stays empty unless authored. Should Phase 1 also mine `<root>/collection.bru`'s `docs` block? (`collection.bru` is currently skipped at `collectionService.ts:987-988`.) Excluded from Phase 1 to keep extraction to two well-defined manifests.

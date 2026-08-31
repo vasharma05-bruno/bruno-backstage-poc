@@ -126,7 +126,15 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
         continue;
       }
       claimed.set(name, url);
-      entities.push(buildEntity({ name, url, partOf: entry.partOf, manifest }));
+      entities.push(
+        buildEntity({
+          name,
+          url,
+          partOf: entry.partOf,
+          owner: entry.owner,
+          manifest
+        })
+      );
     }
 
     await this.connection.applyMutation({
@@ -148,9 +156,10 @@ function buildEntity(input: {
   name: string;
   url: string;
   partOf: string[];
+  owner?: string;
   manifest?: CollectionManifest;
 }): BrunoEntity {
-  const { name, url, partOf, manifest } = input;
+  const { name, url, partOf, owner, manifest } = input;
   const location = `url:${url}`;
 
   return {
@@ -171,6 +180,7 @@ function buildEntity(input: {
     spec: {
       type: 'bruno-collection',
       url,
+      ...(owner && { owner }),
       ...(partOf.length > 0 && { partOf })
     }
   };

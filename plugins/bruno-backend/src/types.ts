@@ -237,6 +237,8 @@ export interface BrunoCollectionConfig {
   type: 'url';
   url: string;
   partOf: string[];
+  /** Entity reference to the owner; defaults to a Group when unprefixed. */
+  owner?: string;
   /** Optional entity-name override; see config.d.ts for why it exists. */
   name?: string;
 }

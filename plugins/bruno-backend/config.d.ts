@@ -59,6 +59,14 @@ export interface Config {
        */
       partOf?: string | string[];
       /**
+       * Entity reference to the owner of the collection. Unprefixed values
+       * default to a Group, matching the authored `spec.owner`. Without it a
+       * config-created collection has no `ownedBy` relation and reads as
+       * unowned in the catalog.
+       * @visibility backend
+       */
+      owner?: string;
+      /**
        * Optional entity-name override. The default name is derived from the
        * last path segment of `url`; set this when two configured collections
        * would otherwise collide, or to pin a name against a URL change.
