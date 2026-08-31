@@ -159,12 +159,18 @@ bruno:
   # BrunoCollectionEntityProvider. `metadata.name` is derived from the last
   # path segment of `url`; title/version/description come from the
   # collection's bruno.json or opencollection.yml/.yaml.
-  collections: []
-    # - type: url
-    #   url: https://github.com/bruno-collections/github-rest-api-collection
-    #   owner: guests
-    #   partOf:
-    #     - api:default/github-rest-api
+  collections:
+    - type: url
+      url: https://github.com/vasharma05-bruno/public-bruno-collection/tree/main/collection
+      # `name` override: the default is the URL's last path segment, which here
+      # is the generic "collection" (the folder inside the repo). Pinning it
+      # keeps the entity ref readable and stable if the folder is ever renamed.
+      name: public-bruno-collection
+      owner: guests
+      # partOf: add API entity refs here to create the collection -> API
+      # relation that the Bruno Card on an API page reads, e.g.
+      #   partOf:
+      #     - api:default/some-api
   # PRD §"Post ingestion" / §"Entity Sync". The generated OpenCollection YAML
   # is stored inline on each Bruno entity's `spec.definition`, mirroring how a
   # kind: API entity stores its OpenAPI document.
