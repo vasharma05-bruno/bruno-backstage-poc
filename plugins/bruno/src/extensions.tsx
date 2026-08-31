@@ -6,6 +6,7 @@ import {
 } from '@backstage/plugin-catalog-react/alpha';
 import {
   PageBlueprint,
+  PluginHeaderActionBlueprint,
   createRouteRef
 } from '@backstage/frontend-plugin-api';
 import { BrunoIcon } from './components/BrunoLogo';
@@ -72,6 +73,30 @@ export const brunoPage = PageBlueprint.make({
     routeRef: brunoPageRouteRef,
     loader: () =>
       import('./components/BrunoPage').then((m) => <m.BrunoPage />)
+  }
+});
+
+/**
+ * The `Add Bruno Collection` button in the page header, and the two modals
+ * behind it.
+ *
+ * `PluginHeaderActionBlueprint` rather than putting the button inside
+ * `BrunoPage`: the action then lives in the `PageLayout` header alongside the
+ * page title, which is where Backstage's own pages put their primary actions
+ * (`techDocsSupportAction` does exactly this), instead of competing with the
+ * `ContentHeader` inside the content area.
+ *
+ * Header actions are PLUGIN-scoped, not page-scoped — `PageBlueprint` asks the
+ * header-actions API for every action belonging to the page's plugin. This
+ * plugin owns two pages, and the other one (`brunoDocsPage`) sets
+ * `noHeader: true` and so renders no header at all, which is what makes the
+ * button appear on `/bruno` alone without any filtering of our own.
+ */
+export const brunoAddCollectionAction = PluginHeaderActionBlueprint.make({
+  name: 'add-collection',
+  params: {
+    loader: () =>
+      import('./components/AddCollection').then((m) => <m.AddCollectionAction />)
   }
 });
 

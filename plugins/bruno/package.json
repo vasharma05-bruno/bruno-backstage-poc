@@ -26,6 +26,7 @@
     "@backstage/integration-react": "^1.2.20",
     "@backstage/plugin-catalog": "^2.0.7",
     "@backstage/plugin-catalog-common": "^1.1.10",
+    "@backstage/plugin-catalog-import": "^0.13.15",
     "@backstage/plugin-catalog-react": "^3.2.0",
     "@backstage/ui": "^0.17.0",
     "@material-ui/core": "^4.12.2",

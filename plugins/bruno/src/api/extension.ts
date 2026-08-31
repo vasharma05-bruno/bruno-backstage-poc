@@ -1,5 +1,5 @@
 import { ApiBlueprint } from '@backstage/frontend-plugin-api';
-import { discoveryApiRef } from '@backstage/core-plugin-api';
+import { discoveryApiRef, fetchApiRef } from '@backstage/core-plugin-api';
 import { brunoApiRef } from './BrunoApi';
 import { BrunoClient } from './BrunoClient';
 
@@ -18,8 +18,12 @@ export const brunoApi = ApiBlueprint.make({
     defineParams({
       api: brunoApiRef,
       deps: {
-        discoveryApi: discoveryApiRef
+        discoveryApi: discoveryApiRef,
+        // `fetchApi`, not `window.fetch`: it attaches the Backstage identity
+        // token, which the probe route requires (`httpAuth.credentials`).
+        fetchApi: fetchApiRef
       },
-      factory: ({ discoveryApi }) => new BrunoClient({ discoveryApi })
+      factory: ({ discoveryApi, fetchApi }) =>
+        new BrunoClient({ discoveryApi, fetchApi })
     })
 });

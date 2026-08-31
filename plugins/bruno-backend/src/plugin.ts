@@ -4,6 +4,8 @@ import {
 } from '@backstage/backend-plugin-api';
 import { catalogServiceRef } from '@backstage/plugin-catalog-node';
 import { createRouter } from './service/router';
+import { readCacheTtlMs, readDefinitionOptions } from './service/brunoConfig';
+import { createManifestProbe } from './service/manifestProbe';
 
 /**
  * The Bruno backend plugin. Registers under plugin id `bruno`, so its routes
@@ -24,15 +26,33 @@ export const brunoPlugin = createBackendPlugin({
         // Reads `kind: Bruno` entities for the entity-keyed docs route. Calls
         // are made with the REQUESTING user's credentials, not the plugin's, so
         // the route inherits the catalog's own visibility rules.
-        catalog: catalogServiceRef
+        catalog: catalogServiceRef,
+        // Reads collection folders for the add-collection scan, with the
+        // SERVER's `integrations` credentials.
+        reader: coreServices.urlReader
       },
-      async init({ httpRouter, logger, config, httpAuth, catalog }) {
+      async init({ httpRouter, logger, config, httpAuth, catalog, reader }) {
+        // A SECOND probe instance: the catalog module builds its own
+        // (module.ts), and the two cannot be shared because they are separate
+        // backend features with no wiring between them — and sharing one
+        // in-process would be wrong anyway on a multi-replica deployment. The
+        // cost is one duplicated tree read the first time a scanned collection
+        // is then ingested; every read after that is an ETag revalidation.
+        const probe = createManifestProbe({
+          config,
+          reader,
+          logger,
+          ttlMs: readCacheTtlMs(config),
+          definition: readDefinitionOptions(config, logger)
+        });
+
         httpRouter.use(
           await createRouter({
             logger,
             config,
             catalog,
-            httpAuth
+            httpAuth,
+            probe
           })
         );
 

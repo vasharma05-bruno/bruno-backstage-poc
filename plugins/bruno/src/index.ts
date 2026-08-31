@@ -24,5 +24,8 @@ export { BrunoIcon } from './components/BrunoLogo';
  * `lib/brunoEntity.ts` is the shape the UI reads.
  */
 export { brunoApiRef } from './api/BrunoApi';
-export type { BrunoApi } from './api/BrunoApi';
+// `ProbeFound`/`ProbeResult` travel with `BrunoApi` because they are the return
+// type of one of its methods — exporting the interface without them would leave
+// a consumer unable to name what `probeCollection` resolves to.
+export type { BrunoApi, ProbeFound, ProbeResult } from './api/BrunoApi';
 export { BrunoClient } from './api/BrunoClient';

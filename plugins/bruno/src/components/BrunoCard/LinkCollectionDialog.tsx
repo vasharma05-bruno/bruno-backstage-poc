@@ -234,14 +234,18 @@ export function LinkCollectionDialog(props: {
       variant="outlined"
       className={brandClasses.accentOutlinedButton}
       startIcon={<AddIcon />}
-      // The dashboard's add-collection flow is a later phase; this only takes
-      // the user there. `useRouteRef` returns undefined when the page is not
-      // mounted in this app, and a dead button is worse than a disabled one.
+      // `useRouteRef` returns undefined when the page is not mounted in this
+      // app, and a dead button is worse than a disabled one.
       disabled={!dashboardRoute}
       onClick={() => {
         if (dashboardRoute) {
           close();
-          navigate(dashboardRoute());
+          // The add-collection flow lives on the dashboard, so this API has to
+          // travel with the navigation rather than as a prop. `AddCollectionAction`
+          // reads both parameters and strips them from the URL.
+          navigate(
+            `${dashboardRoute()}?add=1&partOf=${encodeURIComponent(apiRef)}`
+          );
         }
       }}
     >

@@ -8,6 +8,7 @@ import type { Config } from '@backstage/config';
 import type { CatalogService } from '@backstage/plugin-catalog-node';
 import express from 'express';
 import Router from 'express-promise-router';
+import type { ManifestProbe } from './manifestProbe';
 import {
   DEFINITION_BYTES_ANNOTATION,
   DEFINITION_OMITTED_ANNOTATION
@@ -19,30 +20,105 @@ export interface RouterOptions {
   config: Config;
   catalog: CatalogService;
   httpAuth: HttpAuthService;
+  /** Reads a collection folder from source control, using the SERVER's
+   *  integration credentials. Backs the add-collection scan. */
+  probe: ManifestProbe;
 }
 
 /**
  * Builds the Express router for `/api/bruno/*`.
  *
- *   GET /health                          -> { status: 'ok' }
- *   GET /entities/:namespace/:name/docs  -> text/html (docs for a kind:Bruno entity)
+ *   GET  /health                          -> { status: 'ok' }
+ *   GET  /entities/:namespace/:name/docs  -> text/html (docs for a kind:Bruno entity)
+ *   POST /collections/probe               -> { found, ... } (does this URL hold a collection?)
  *
  * Deliberately this small. Everything the UI knows about a collection now
  * travels on the `kind: Bruno` entity itself, so the catalog is the read model
- * and this plugin serves only what an entity cannot carry: a RENDERED document,
- * which needs an origin whose Content-Security-Policy admits the OpenCollection
- * renderer bundle.
+ * and this plugin serves only the two things an entity cannot carry: a RENDERED
+ * document, which needs an origin whose Content-Security-Policy admits the
+ * OpenCollection renderer bundle, and a read of a repository that has not been
+ * catalogued yet, which a browser cannot perform.
  */
 export async function createRouter(
   options: RouterOptions
 ): Promise<express.Router> {
-  const { logger, config, catalog, httpAuth } = options;
+  const { logger, config, catalog, httpAuth, probe } = options;
 
   const router = Router();
   router.use(express.json());
 
   router.get('/health', (_req, res) => {
     res.json({ status: 'ok' });
+  });
+
+  // Does this URL hold a Bruno collection? The scan behind the add-collection
+  // dialog's URL field (PRD: "scan the link to find a bruno.json/
+  // opencollection.yaml file").
+  //
+  // It has to happen on the SERVER. `catalogImportApi.analyzeUrl` is the
+  // obvious candidate and is the wrong one — it looks for a `catalog-info.yaml`,
+  // which is precisely the file that does not exist yet at this point in the
+  // flow. And a browser cannot read a private repository: the credentials for
+  // these hosts are the backend's `integrations` config, and moving them to the
+  // client to avoid one round trip would be indefensible.
+  //
+  // The three outcomes are deliberately not three status codes. `no-manifest`
+  // is a 200 because the read SUCCEEDED — the answer is simply no, and the
+  // dialog renders it as a field-level message rather than a failure. Only an
+  // unreadable URL is a 4xx.
+  //
+  // POC scope: any authenticated user may ask the backend to read any URL its
+  // integrations can reach, which is both an SSRF surface and a way to confirm
+  // the existence of private repositories. Documented, not fixed, along with
+  // the rest of the Beta hardening — see docs/execution/BE-P1-plan.md §3.D.
+  router.post('/collections/probe', async (req, res) => {
+    await httpAuth.credentials(req, { allow: ['user'] });
+
+    const url = (req.body as { url?: unknown })?.url;
+    if (typeof url !== 'string' || !url.trim()) {
+      res.status(400).json({
+        found: false,
+        reason: 'unreadable',
+        message: 'A collection URL is required.'
+      });
+      return;
+    }
+
+    let snapshot;
+    try {
+      // The same probe the processor and the provider share, so this scan warms
+      // the cache that the ingestion a few seconds later will read from — the
+      // tree is fetched once for both. It generates the OpenCollection document
+      // as a side effect, which is more work than the question needs; reusing
+      // the one seam is worth more than a narrower read that would have to be
+      // kept in step with it.
+      snapshot = await probe.probe(url);
+    } catch (e) {
+      const message = String((e as Error)?.message ?? e);
+      // Logged at info: an unreachable URL here is a user typing a repository
+      // they cannot see, not a fault in the deployment.
+      logger.info(`Bruno collection probe failed for ${url}: ${message}`);
+      res.status(400).json({ found: false, reason: 'unreadable', message });
+      return;
+    }
+
+    if (!snapshot) {
+      res.json({ found: false, reason: 'no-manifest' });
+      return;
+    }
+
+    // Only the manifest fields. `snapshot.definition` is the whole generated
+    // OpenCollection document — up to `bruno.definition.maxBytes` — and the
+    // dialog has no use for it; it belongs on the entity, written by the
+    // processor once the collection is actually catalogued.
+    res.json({
+      found: true,
+      format: snapshot.format,
+      manifestPath: snapshot.manifestPath,
+      ...(snapshot.name && { name: snapshot.name }),
+      ...(snapshot.version && { version: snapshot.version }),
+      ...(snapshot.description && { description: snapshot.description })
+    });
   });
 
   // The `kind: Bruno` entity's docs, built from the OpenCollection YAML the
