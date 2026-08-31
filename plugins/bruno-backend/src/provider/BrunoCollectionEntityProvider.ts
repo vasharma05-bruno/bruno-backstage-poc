@@ -97,7 +97,7 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
         // a transient read failure would delete an already-published entity.
         logger.error(
           `Bruno collection ${url}: could not read it: ${
-            (e as Error).message
+            String((e as Error)?.message ?? e)
           }; emitting without collection metadata.`
         );
         unreadable = true;

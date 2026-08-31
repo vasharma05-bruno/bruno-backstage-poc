@@ -154,7 +154,7 @@ export function createManifestProbe(options: {
     } catch (e) {
       lruSet(normalized, {
         kind: 'error',
-        message: (e as Error).message,
+        message: String((e as Error)?.message ?? e),
         fetchedAt: Date.now()
       });
       throw e;
@@ -283,7 +283,7 @@ function extractOpenCollection(
   } catch (e) {
     logger.warn(
       `Could not parse opencollection.yml/.yaml at ${url}: ${
-        (e as Error).message
+        String((e as Error)?.message ?? e)
       }`
     );
     return {};

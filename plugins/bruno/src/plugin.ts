@@ -19,7 +19,7 @@ import {
  *
  * Extensions:
  *  - brunoApi         -> registers brunoApiRef (ApiBlueprint)
- *  - brunoCard             -> entity card on kind:api + spec.type:bruno-collection
+ *  - brunoCard             -> entity card on kind:api
  *  - brunoCollectionOverviewCard -> collection-root README card on kind:api
  *  - brunoCollectionTreeCard -> read-only collection tree card on kind:api
  *  - brunoDocsContent      -> entity tab rendering the linked collection's

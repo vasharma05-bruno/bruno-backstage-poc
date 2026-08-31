@@ -215,8 +215,12 @@ export class BrunoKindProcessor implements CatalogProcessor {
     const sourceLocation
       = existingSourceLocation ?? `url:${this.options.probe.normalize(url)}/`;
 
-    // Returning the SAME reference keeps `resultHash` stable, so the engine
-    // takes its no-change path instead of rewriting the entity every cycle.
+    // Nothing to enrich: hand back the input untouched rather than allocating
+    // an identical copy. Note this is an allocation guard, not a correctness
+    // one — the engine's no-change detection hashes the serialized result, not
+    // object identity, so the outcome is the same either way. Processing always
+    // restarts from the unprocessed entity, so for an authored descriptor that
+    // omits title/description/version this branch is never taken.
     if (
       title === meta.title
       && description === meta.description
@@ -339,7 +343,7 @@ export class BrunoKindProcessor implements CatalogProcessor {
         // DefaultCatalogProcessingEngine :164-194 and performStitching :57-62.
         this.options.logger.warn(
           `Bruno collection ${stringifyEntityRef(entity)}: ignoring `
-          + `unparseable spec.partOf entry "${ref}": ${(e as Error).message}`
+          + `unparseable spec.partOf entry "${ref}": ${String((e as Error)?.message ?? e)}`
         );
         continue;
       }
