@@ -21,6 +21,11 @@ export interface KeyValue {
   name: string;
   value: string;
   enabled: boolean;
+  /** Set on environment variables Bruno marks secret. `brunoToOpenCollection`
+   *  omits the VALUE of such a variable and emits `secret: true` in its place —
+   *  that converter behaviour is the entire redaction contract of Bruno's
+   *  "Generate docs", so the flag has to survive parsing to reach it. */
+  secret?: boolean;
 }
 
 /** A request parameter — either a query or a path parameter. */

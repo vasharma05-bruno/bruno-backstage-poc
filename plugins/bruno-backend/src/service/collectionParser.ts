@@ -327,7 +327,10 @@ function parseEnvironments(
       const variables: KeyValue[] = (parsed.variables ?? []).map((v) => ({
         name: v.name,
         value: v.value ?? '',
-        enabled: v.enabled !== false
+        enabled: v.enabled !== false,
+        // Carried through rather than dropped: the OpenCollection converter is
+        // what withholds a secret variable's value, and it keys off this flag.
+        ...(v.secret === true && { secret: true })
       }));
       environments.push({ name, variables });
     } catch (e) {
@@ -716,13 +719,21 @@ function parseEnvironmentsYml(
     try {
       const parsed = parseYmlEnvironment(contents, { format: 'yml' }) as {
         name?: string;
-        variables?: Array<{ name: string; value?: string; enabled?: boolean }>;
+        variables?: Array<{
+          name: string;
+          value?: string;
+          enabled?: boolean;
+          secret?: boolean;
+        }>;
       };
       const name = parsed.name || stripOpenCollectionExtension(baseName(key));
       const variables: KeyValue[] = (parsed.variables ?? []).map((v) => ({
         name: v.name,
         value: v.value ?? '',
-        enabled: v.enabled !== false
+        enabled: v.enabled !== false,
+        // Carried through rather than dropped: the OpenCollection converter is
+        // what withholds a secret variable's value, and it keys off this flag.
+        ...(v.secret === true && { secret: true })
       }));
       environments.push({ name, variables });
     } catch (e) {

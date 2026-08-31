@@ -169,15 +169,16 @@ bruno:
   # is stored inline on each Bruno entity's `spec.definition`, mirroring how a
   # kind: API entity stores its OpenAPI document.
   #
-  # SECURITY: an entity is readable by anything that can read the catalog, which
-  # is strictly broader than the per-user, per-collection
-  # /api/bruno/collections/:id/opencollection.yml route. `standard` redacts
-  # environment values, auth secrets, and header/param values with secret-looking
-  # names; it does NOT redact request bodies, scripts or tests. Set `strict` if
-  # your collections carry credentials in those places.
+  # The document is produced by the same pipeline as Bruno's own "Generate docs"
+  # (brunoToOpenCollection), so a collection documented from Backstage matches
+  # the one documented from Bruno. That pipeline withholds the values of
+  # environment variables flagged `secret` and exports everything else verbatim
+  # — including auth values, headers, bodies and scripts. A credential
+  # hardcoded in a .bru file therefore reaches the catalog, where any catalog
+  # reader can see it; keep secrets in secret environment variables (or as
+  # {{placeholders}}) and they stay out of the docs.
   definition:
     maxBytes: 1048576
-    redaction: standard
   # Also the upper bound on how long a Sync takes to show new content.
   cacheTtlSeconds: 60
   schedule:

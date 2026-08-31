@@ -11,10 +11,7 @@
 import type { LoggerService } from '@backstage/backend-plugin-api';
 import type { BrunoSourceConfig } from '../types';
 import { countRequests, parseCollection } from './collectionParser';
-import {
-  toOpenCollectionYaml,
-  type RedactionMode
-} from './openCollectionExport';
+import { toOpenCollectionYaml } from './openCollectionExport';
 
 /** The outcome of one generation attempt. Never an exception — see below. */
 export interface BuiltDefinition {
@@ -36,7 +33,6 @@ export interface BuiltDefinition {
 /** The `bruno.definition` config block, resolved. */
 export interface DefinitionOptions {
   maxBytes: number;
-  redaction: RedactionMode;
 }
 
 /**
@@ -80,8 +76,7 @@ export function buildDefinition(input: {
     const yaml = toOpenCollectionYaml(normalized, {
       // Stable across runs: no per-call timestamp, or the entity is rewritten
       // and re-stitched every 100-150s reprocess cycle (BE-P2 F11).
-      exportedAt: null,
-      redaction: options.redaction
+      exportedAt: null
     });
 
     // Derived from the same parse, so they cost nothing extra and are pure

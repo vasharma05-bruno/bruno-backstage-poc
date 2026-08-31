@@ -62,46 +62,35 @@ export function readBrunoCollections(
 }
 
 /**
- * Reads `bruno.definition`. Both fields are optional; an unrecognised
- * `redaction` value logs and falls back to `'standard'` rather than throwing,
- * for the same reason the collections reader is tolerant — this is read during
- * module init, and a typo must not take the backend down.
+ * Reads `bruno.definition`. Tolerant for the same reason the collections reader
+ * is: this runs during module init, and a mistyped knob must degrade to the
+ * defaults rather than take the whole backend down at boot.
+ * `getOptionalNumber` throws on a value of the wrong TYPE, which is why the
+ * read is guarded too.
+ *
+ * There is deliberately no redaction knob. The generated YAML mirrors Bruno's
+ * own "Generate docs" output, whose only redaction is the converter withholding
+ * secret environment-variable values — adding a Backstage-only mode would make
+ * the two diverge for the same collection.
  */
 export function readDefinitionOptions(
   config: Config,
   logger?: LoggerService
 ): DefinitionOptions {
-  // Tolerant for the same reason the collections reader is: this runs during
-  // module init, and a mistyped knob must degrade to the defaults rather than
-  // take the whole backend down at boot. `getOptionalString`/`getOptionalNumber`
-  // throw on a value of the wrong TYPE, which is why the read is guarded too.
   try {
     const definition = config
       .getOptionalConfig('bruno')
       ?.getOptionalConfig('definition');
 
-    const redaction = definition?.getOptionalString('redaction');
-    if (
-      redaction !== undefined
-      && redaction !== 'standard'
-      && redaction !== 'strict'
-    ) {
-      logger?.error(
-        `bruno.definition.redaction: unrecognised value "${redaction}" `
-        + '(expected "standard" or "strict"); falling back to "standard".'
-      );
-    }
-
     return {
-      maxBytes: definition?.getOptionalNumber('maxBytes') ?? DEFAULT_MAX_BYTES,
-      redaction: redaction === 'strict' ? 'strict' : 'standard'
+      maxBytes: definition?.getOptionalNumber('maxBytes') ?? DEFAULT_MAX_BYTES
     };
   } catch (e) {
     logger?.error(
       `bruno.definition: ${String((e as Error)?.message ?? e)}; `
       + 'falling back to the defaults.'
     );
-    return { maxBytes: DEFAULT_MAX_BYTES, redaction: 'standard' };
+    return { maxBytes: DEFAULT_MAX_BYTES };
   }
 }
 

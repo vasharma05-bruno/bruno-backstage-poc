@@ -97,15 +97,6 @@ export interface Config {
        * @visibility backend
        */
       maxBytes?: number;
-      /**
-       * How much to strip before storing. `standard` drops environment values,
-       * auth secrets, and header/param values whose NAME looks secret.
-       * `strict` additionally drops request bodies, scripts and tests.
-       * Applies only to the entity copy; `/api/bruno/collections/:id/
-       * opencollection.yml` is unaffected. Default `standard`.
-       * @visibility backend
-       */
-      redaction?: 'standard' | 'strict';
     };
     /**
      * Optional provider refresh schedule.

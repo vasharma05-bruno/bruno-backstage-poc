@@ -129,38 +129,65 @@ Per F11 the only thing that protects `resultHash` is that the generated string i
 
 ## 3. Security — storing collection data on a catalog entity
 
-**What the existing generator already redacts** (`openCollectionExport.ts`):
-- `mapEnv` (`:119-128`) — every environment variable value is **dropped**; each var is emitted as `{ name, secret: true, enabled }`.
-- `mapAuth` (`:153-184`) — `basic.password`, `digest.password`, `bearer.token`, `apikey.value` become `<redacted>`; `username`, `apikey.key`, `placement` are preserved.
+> **REVISED 2026-08-31 by the requester, and this supersedes the original §3.**
+> The YAML must come from the **same pipeline as Bruno's own "Generate docs"**,
+> with no Backstage-only redaction on top. The bespoke redaction this section
+> originally specified has been removed.
 
-**What it does NOT redact** (documented at `openCollectionExport.ts:21` as R-D, and verified):
-- Header values and query/path param values — `mapRequest:186-203` copies `item.headers` and `item.params` verbatim. An `Authorization: Bearer eyJ…` hardcoded in a `.bru` file goes straight through.
-- Request **bodies** — `mapBody:130-151` emits `body.raw` / `body.form` verbatim.
-- `script.req`, `script.res`, `tests`, `docs` — `mapRequest:198-200` copies them verbatim. Scripts are the single most common place a hardcoded credential hides.
+**What Bruno's "Generate docs" actually redacts — verified, not assumed.**
+Both the desktop app (`bruno-app/.../GenerateDocumentation/index.js` →
+`transformCollectionToSaveToExportAsFile` → `brunoToOpenCollection` →
+`jsyaml.dump`) and the CLI (`bruno docs generate`) funnel through
+`brunoToOpenCollection`. Redaction happens in exactly **one** place:
 
-**Verdict: the existing redaction is NOT sufficient for entity storage.** Not because it got weaker, but because the exposure changes category:
+- `bruno-converters/src/opencollection/environment.ts:90-92` —
+  `toOpenCollectionEnvironments` omits the **value** of an environment variable
+  flagged `secret` and writes `secret: true` instead. Non-secret variables keep
+  their values.
 
-| | today (`router.ts:169`) | on the entity |
-|---|---|---|
-| Reader | one signed-in user, `httpAuth.credentials(req,{allow:['user']})` (`router.ts:170`) | anything that can read the catalog |
-| Scope | one collection, on demand | every `GET /api/catalog/entities`, every service token, every user's browser |
-| Lifetime | generated per request, never stored | persisted in `final_entity` / `refresh_state`, and in every DB backup |
+**What it does NOT redact**, verified by reading the source:
+- **Auth values.** `bruno-converters/src/opencollection/common/auth.ts` contains
+  zero redaction; `basic.password`, `bearer.token`, `digest.password`,
+  `apikey.value`, `oauth2.clientSecret` are all copied through, and
+  `transformCollectionToSaveToExportAsFile` copies them into the transform.
+- **Header and query/path param values.**
+- **Request bodies, `script.req`/`script.res`, `tests`, `docs`.**
 
-**MUST land in Phase 2 (not optional):**
+Separately, the app and CLI both **exclude environments entirely** unless the
+user opts in (a checkbox list in the app, `--envs` in the CLI).
 
-1. **Name-based redaction of header and param values**, at the same single choke point in `openCollectionExport.ts`. Add a `SECRET_NAME_PATTERN` covering `authorization`, `proxy-authorization`, `cookie`, `set-cookie`, and any name containing `api-key`/`apikey`/`token`/`secret`/`password`/`passwd`/`credential`/`session`, case-insensitive. Applied in `mapRequest` to `headers` and `params`.
-2. **`{{placeholder}}` passthrough.** A value matching `/^\{\{.*\}\}$/` after trimming is a *reference*, not a secret, and redacting it destroys the docs. This mirrors the existing `maskSecret` behaviour in `generateCollectionHtml.ts`.
-3. **One config knob, `bruno.definition.redaction: 'standard' | 'strict'`, default `'standard'`.**
-   - `standard` = env values + auth secrets (existing) + header/param values by name (new).
-   - `strict` = additionally drops `script.req`, `script.res`, `tests`, and replaces every request body with `{ mode, <mode>: '<redacted>' }`.
-   The knob applies **only to the entity-stored variant**. The router's `/docs` and `/opencollection.yml` responses are unchanged, so full-fidelity output remains available behind user auth to someone who is already entitled to that collection.
-4. **`redactCollectionDetail` (`openCollectionExport.ts:96-109`) is untouched** — it serves `router.ts:136` and has a different contract.
+**Decision: match Bruno exactly, everywhere.** One pipeline, Bruno's semantics,
+no extra redaction — for both `GET /collections/:id/opencollection.yml` and the
+entity's `spec.definition`. Rationale given by the requester: a collection
+documented from Backstage and the same collection documented from Bruno must
+produce the same document; a Backstage-only redaction pass makes the two
+silently diverge and makes the Backstage-rendered docs worse than Bruno's for
+the same input.
 
-**Residual, stated plainly, not silently shipped:** under the default `standard` mode, request **bodies**, **scripts**, **tests** and secrets hidden in innocuously-named headers are stored on the entity in plaintext. Bodies and docs are what make the Phase 4 docs tab worth anything, so defaulting them off would gut the feature; the honest position is that the default is a *documented* trade-off with a one-line escape hatch. Whether `strict` should be the default is **Q1 in §8** and is a decision for the requester, not for the implementer.
+**The consequence, recorded rather than hidden.** `spec.definition` lives on a
+catalog entity, readable by anything that can read the catalog — strictly
+broader than the per-user, per-collection docs route. So a credential that is
+**hardcoded** into a `.bru` file — in an auth block, a header value, a body, or
+a script — reaches the catalog in plaintext. The mitigation is the same one
+Bruno itself relies on: keep credentials in **secret environment variables** or
+as `{{placeholders}}`, and they never enter the document. This is R8 and it is
+accepted, not open.
 
-**Two things that are fine:** per F9 the definition never reaches `entity_search` as a searchable value (`buildEntitySearch.cjs.js:69-79` nulls anything over 200 chars), and no secret is placed in an annotation. And per BE-P1 §5.10, `ManifestProbe` still has **no `userToken` parameter** — Phase 2 does not add one; every read is via the host's `integrations.*` credential.
+**`bruno.definition.redaction` does not exist.** It was specified by the
+original §3, implemented, and then removed when this decision was taken. Do not
+reintroduce it without revisiting the Bruno-parity requirement above.
 
----
+**`redactCollectionDetail` (`openCollectionExport.ts`) is unchanged and stays
+strict.** It serves the plugin's own JSON detail endpoint
+(`GET /collections/:id`), has no Bruno-parity obligation, and has never emitted
+auth values or environment values. That asymmetry is deliberate; the code says
+so at the function.
+
+**Two things that remain true:** per F9 the definition never reaches
+`entity_search` as a searchable value (`buildEntitySearch.cjs.js:69-79` nulls
+anything over 200 chars), and per BE-P1 §5.10 `ManifestProbe` still has **no
+`userToken` parameter** — every read uses the host's `integrations.*`
+credential.
 
 ## 4. The `.yaml` body-parser defect — every site enumerated
 
@@ -201,6 +228,13 @@ export function selectCollectionFiles(paths: Iterable<string>): string[]
 ---
 
 ## 5. Ordered edit list
+
+> **Superseded in part.** Every mention of a `redaction` option / `RedactionMode`
+> / `bruno.definition.redaction` below (§5.F.3-4, §5.G, §5.H.3, §5.I, §5.N, §5.O)
+> was implemented and then **removed** when §3 was revised — the export now
+> mirrors Bruno's "Generate docs" with no Backstage-only redaction. Read those
+> items for the rest of their content; ignore the redaction plumbing.
+
 
 Order matters. A→B are the lowest layer and compile standalone; C depends on B; D–E on B/C; F on D–E; G–J on F.
 

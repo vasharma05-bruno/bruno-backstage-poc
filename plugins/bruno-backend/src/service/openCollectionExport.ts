@@ -7,52 +7,49 @@
  * item types), NOT our flat `NormalizedCollection`. This module reshapes the
  * latter into a minimal `BrunoCollectionLike` and hands it to the converter.
  *
- * Redaction (single choke point, D-D): secrets are dropped WHILE building the
- * BrunoCollectionLike — the cached `detail.collection` is never mutated. Auth
- * secret values (`basic.password`, `bearer.token`, `digest.password`,
- * `apikey.value`) become `REDACTED`; every environment variable value is dropped
- * via `secret: true`. Usernames, apikey key-names, urls, and header/param
- * names+values are preserved.
+ * REDACTION IS THE CONVERTER'S, NOT OURS. This pipeline deliberately mirrors
+ * Bruno's own "Generate docs" — the desktop app's
+ * `transformCollectionToSaveToExportAsFile` -> `brunoToOpenCollection` ->
+ * `js-yaml.dump`, and the CLI's `bruno docs generate` — so that a collection
+ * documented from Backstage and the same collection documented from Bruno
+ * produce the same document. That pipeline redacts in exactly ONE place:
+ * `toOpenCollectionEnvironments` omits the value of an environment variable
+ * flagged `secret` and emits `secret: true` instead
+ * (bruno-converters `opencollection/environment.ts`).
+ *
+ * Everything else is exported verbatim, and that is the deliberate, requested
+ * behaviour rather than an oversight: auth passwords/tokens/clientSecrets
+ * (there is no redaction whatsoever in the converter's auth mapping), header
+ * and query/param values, request bodies, scripts and tests. An earlier
+ * revision of this file redacted those with a hand-rolled name-matching pass;
+ * it was removed because it made Backstage's output silently diverge from
+ * Bruno's for the same collection.
+ *
+ * The consequence, stated plainly: the same YAML is stored on a `kind: Bruno`
+ * catalog entity, where the audience is "anything that can read the catalog"
+ * and not just one signed-in user entitled to that one collection. A credential
+ * hardcoded in a `.bru` file — rather than referenced as `{{var}}` or held in a
+ * secret environment variable — reaches the catalog in plaintext. Keeping
+ * secrets in secret env vars is what keeps them out of the docs, in Bruno and
+ * here alike.
  *
  * Divergences (R-A): the output is faithful-for-docs but NOT byte-identical to
  * Bruno's native exporter — collection/folder request-defaults, settings,
  * examples, tags and full `brunoConfig` are absent from our source model.
  * Assertions are omitted (R-C).
- *
- * R-D, the "secrets in VALUES are not redacted" gap, is now PARTIALLY closed:
- * header and query/path param values whose NAME looks secret
- * ({@link SECRET_NAME_PATTERN}) are replaced, because the same YAML is now
- * stored on a catalog entity, where the audience is "anything that can read the
- * catalog" rather than one signed-in user entitled to that one collection
- * (BE-P2 §3). A `{{placeholder}}` value is a REFERENCE, not a secret, and passes
- * through — redacting it would destroy the docs for no gain.
- *
- * The residual, stated rather than hidden: under the default `standard` mode
- * request BODIES, `script.req`/`script.res` and `tests` are emitted verbatim,
- * and those are the likeliest places a hardcoded credential hides. They are also
- * what makes the rendered docs worth anything, so the escape hatch is a config
- * knob (`bruno.definition.redaction: 'strict'`) rather than a silent default.
- * See BE-P2 §3 and R8.
  */
 import type {
   CollectionDetail,
   Environment,
   FolderItem,
   Item,
-  KeyValue,
   NormalizedCollection,
-  Param,
   RequestAuth,
   RequestBody,
   RequestItem
 } from '../types';
 import { brunoToOpenCollection } from '@usebruno/converters';
 import yaml from 'js-yaml';
-
-const REDACTED = '<redacted>';
-
-/** How much to strip from the generated YAML. See BE-P2 §3. */
-export type RedactionMode = 'standard' | 'strict';
 
 /** Options for {@link toOpenCollectionYaml}. */
 export interface OpenCollectionExportOptions {
@@ -61,43 +58,20 @@ export interface OpenCollectionExportOptions {
    *  `resultHash` every reprocess cycle and rewrites the entity. Default:
    *  `new Date().toISOString()`, preserving today's route behaviour. */
   exportedAt?: string | null;
-  /** `'standard'` (default) or `'strict'`. See BE-P2 §3. */
-  redaction?: RedactionMode;
 }
 
 /**
- * Header / param names whose VALUE is a secret often enough that emitting it is
- * not worth the risk. Two shapes in one pattern: the well-known headers matched
- * whole, and the substrings that mark a name as credential-bearing wherever they
- * appear (`X-Api-Key`, `sessionToken`, `db_password`, …).
+ * Replacement for a secret value in {@link redactCollectionDetail}. The YAML
+ * export deliberately has no such constant — it mirrors Bruno's exporter, which
+ * redacts nothing outside secret environment variables.
  */
-const SECRET_NAME_PATTERN
-  = /^(authorization|proxy-authorization|cookie|set-cookie)$|api-?key|token|secret|password|passwd|credential|session/i;
-
-/** A `{{var}}` value names a variable rather than carrying its content, so it is
- *  documentation, not exposure. Mirrors the docs-HTML renderer's `maskSecret`. */
-function isPlaceholder(value: string): boolean {
-  return /^\{\{.*\}\}$/.test(value.trim());
-}
-
-/**
- * Replaces the values of secret-looking NAMES in a header / param list, leaving
- * the list itself — names, order, enabled flags — intact so the docs still show
- * what a request sends.
- */
-function redactNamedValues<T extends KeyValue | Param>(pairs: T[]): T[] {
-  return pairs.map((pair) =>
-    pair.value && SECRET_NAME_PATTERN.test(pair.name) && !isPlaceholder(pair.value)
-      ? { ...pair, value: REDACTED }
-      : pair
-  );
-}
+const REDACTED = '<redacted>';
 
 /**
  * Auth-block field names whose values are secrets across the supported modes
  * (`basic.password`, `bearer.token`, `digest.password`, `apikey.value`, plus
- * common OAuth fields). Mirrors the per-mode redaction {@link mapAuth} applies
- * to the YAML export.
+ * common OAuth fields). Used ONLY by {@link redactCollectionDetail} below — the
+ * YAML export deliberately does not redact auth (see the module comment).
  */
 const AUTH_SECRET_KEYS = new Set([
   'password',
@@ -139,15 +113,18 @@ function redactItemsInPlace(items: Item[]): void {
 
 /**
  * Returns a deep copy of a {@link CollectionDetail} with secrets stripped, for
- * the JSON detail endpoint. Applies the SAME redaction stance as the YAML
- * export ({@link toOpenCollectionYaml}) through this single choke point: every
- * environment-variable value is dropped (env vars routinely hold tokens/keys
- * and can't be told apart from non-secrets), and auth-block secret fields
- * become `<redacted>`. The cached `detail` is never mutated (structuredClone).
+ * the JSON detail endpoint.
  *
- * As with the export (R-D), secrets hardcoded into header/param/body *values*
- * are NOT redacted here — that stays documented and is tracked as a hardening
- * item.
+ * This is a SEPARATE contract from {@link toOpenCollectionYaml} and is
+ * deliberately stricter: the YAML export mirrors Bruno's "Generate docs" and so
+ * carries auth values, whereas this endpoint feeds the plugin's own UI, has no
+ * Bruno-parity obligation, and has never emitted them. Every environment
+ * variable value is dropped (env vars routinely hold tokens and cannot be told
+ * apart from non-secrets here) and auth-block secret fields become
+ * `<redacted>`. The cached `detail` is never mutated (structuredClone).
+ *
+ * Secrets hardcoded into header/param/body *values* are NOT redacted here —
+ * documented, and tracked as a hardening item.
  *
  * @public
  */
@@ -174,52 +151,61 @@ interface BrunoCollectionLike {
   root?: { docs?: string };
 }
 
+/**
+ * Passes environment variables through as Bruno's own exporter does: the
+ * converter's `toOpenCollectionEnvironments` withholds the value of a variable
+ * flagged `secret` and writes `secret: true` in its place, and emits the value
+ * for every other variable. That single behaviour IS the redaction contract of
+ * Bruno's "Generate docs"; this function must not add to it or the two outputs
+ * diverge for the same collection.
+ */
 function mapEnv(env: Environment): unknown {
   return {
     name: env.name,
     variables: env.variables.map((v) => ({
       name: v.name,
-      secret: true,
-      enabled: v.enabled
+      value: v.value,
+      enabled: v.enabled,
+      ...(v.secret === true && { secret: true })
     }))
   };
 }
 
-function mapBody(body: RequestBody | undefined, redaction: RedactionMode): unknown {
+function mapBody(body: RequestBody | undefined): unknown {
   if (!body) {
     return { mode: 'none' };
   }
-  // `strict` keeps the SHAPE — the mode, and the key the converter reads for it
-  // — and drops only the content, so the docs still say "this request posts
-  // JSON" without saying what is in it.
-  const strict = redaction === 'strict';
   switch (body.mode) {
     case 'json':
     case 'text':
     case 'xml':
-      return { mode: body.mode, [body.mode]: strict ? REDACTED : body.raw ?? '' };
+      return { mode: body.mode, [body.mode]: body.raw ?? '' };
     case 'graphql':
       return {
         mode: 'graphql',
-        graphql: { query: strict ? REDACTED : body.raw ?? '' }
+        graphql: { query: body.raw ?? '' }
       };
     case 'formUrlEncoded':
       return {
         mode: 'formUrlEncoded',
-        formUrlEncoded: strict ? [] : body.form ?? []
+        formUrlEncoded: body.form ?? []
       };
     case 'multipartForm':
       return {
         mode: 'multipartForm',
-        multipartForm: strict
-          ? []
-          : (body.form ?? []).map((f) => ({ ...f, type: 'text' }))
+        multipartForm: (body.form ?? []).map((f) => ({ ...f, type: 'text' }))
       };
     default:
       return { mode: 'none' };
   }
 }
 
+/**
+ * Emits auth blocks exactly as Bruno's exporter does — values included. The
+ * converter's auth mapping performs no redaction of its own, so anything
+ * stripped here would be a Backstage-only divergence from the document Bruno
+ * generates for the same collection.
+ */
 function mapAuth(auth?: RequestAuth): unknown {
   if (!auth || auth.mode === 'none') {
     return undefined;
@@ -230,21 +216,27 @@ function mapAuth(auth?: RequestAuth): unknown {
     case 'basic':
       return {
         mode: 'basic',
-        basic: { username: String(auth.username ?? ''), password: REDACTED }
+        basic: {
+          username: String(auth.username ?? ''),
+          password: String(auth.password ?? '')
+        }
       };
     case 'bearer':
-      return { mode: 'bearer', bearer: { token: REDACTED } };
+      return { mode: 'bearer', bearer: { token: String(auth.token ?? '') } };
     case 'digest':
       return {
         mode: 'digest',
-        digest: { username: String(auth.username ?? ''), password: REDACTED }
+        digest: {
+          username: String(auth.username ?? ''),
+          password: String(auth.password ?? '')
+        }
       };
     case 'apikey':
       return {
         mode: 'apikey',
         apikey: {
           key: String(auth.key ?? ''),
-          value: REDACTED,
+          value: String(auth.value ?? ''),
           placement: auth.placement ?? null
         }
       };
@@ -253,8 +245,7 @@ function mapAuth(auth?: RequestAuth): unknown {
   }
 }
 
-function mapRequest(item: RequestItem, redaction: RedactionMode): unknown {
-  const strict = redaction === 'strict';
+function mapRequest(item: RequestItem): unknown {
   return {
     type: item.type === 'graphql' ? 'graphql-request' : 'http-request',
     name: item.name,
@@ -262,50 +253,40 @@ function mapRequest(item: RequestItem, redaction: RedactionMode): unknown {
     request: {
       method: item.method,
       url: item.url,
-      // The single choke point for header/param value redaction: everything
-      // reaching the YAML for a request passes through here.
-      headers: redactNamedValues(item.headers),
-      params: redactNamedValues(item.params),
-      body: mapBody(item.body, redaction),
+      headers: item.headers,
+      params: item.params,
+      body: mapBody(item.body),
       auth: mapAuth(item.auth),
-      // Scripts are the single most common hiding place for a hardcoded
-      // credential, and nothing about their name reveals it, so `strict` drops
-      // them wholesale rather than trying to be clever.
-      script: strict
-        ? { req: null, res: null }
-        : { req: item.script?.req ?? null, res: item.script?.res ?? null },
-      tests: strict ? null : item.tests ?? null,
+      script: { req: item.script?.req ?? null, res: item.script?.res ?? null },
+      tests: item.tests ?? null,
       docs: item.docs ?? null
     }
   };
 }
 
-function mapFolder(item: FolderItem, redaction: RedactionMode): unknown {
+function mapFolder(item: FolderItem): unknown {
   return {
     type: 'folder',
     name: item.name,
-    items: mapItems(item.items, redaction),
+    items: mapItems(item.items),
     ...(item.docs ? { root: { docs: item.docs } } : {})
   };
 }
 
-function mapItems(items: Item[], redaction: RedactionMode): unknown[] {
+function mapItems(items: Item[]): unknown[] {
   return items.map((item) =>
-    item.type === 'folder'
-      ? mapFolder(item, redaction)
-      : mapRequest(item, redaction)
+    item.type === 'folder' ? mapFolder(item) : mapRequest(item)
   );
 }
 
 function normalizedToBrunoCollection(
-  collection: NormalizedCollection,
-  redaction: RedactionMode
+  collection: NormalizedCollection
 ): BrunoCollectionLike {
   return {
     name: collection.name,
     ...(collection.version ? { brunoConfig: { version: collection.version } } : {}),
     environments: collection.environments.map(mapEnv),
-    items: mapItems(collection.items, redaction),
+    items: mapItems(collection.items),
     ...(collection.readme ? { root: { docs: collection.readme } } : {})
   };
 }
@@ -330,10 +311,7 @@ export function toOpenCollectionYaml(
   collection: NormalizedCollection,
   options?: OpenCollectionExportOptions
 ): string {
-  const bruno = normalizedToBrunoCollection(
-    collection,
-    options?.redaction ?? 'standard'
-  );
+  const bruno = normalizedToBrunoCollection(collection);
   const oc = brunoToOpenCollection(bruno);
   const exportedAt
     = options?.exportedAt === undefined
