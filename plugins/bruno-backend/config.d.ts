@@ -5,38 +5,6 @@ export interface Config {
    */
   bruno?: {
     /**
-     * The Bruno collection sources to load.
-     * @visibility backend
-     */
-    sources?: Array<{
-      /**
-       * A unique, url-safe id for the collection (used as the collection id
-       * and the catalog entity name).
-       * @visibility backend
-       */
-      id: string;
-      /**
-       * Human-readable display name (falls back to the name in bruno.json).
-       * @visibility backend
-       */
-      name: string;
-      /**
-       * The source type: read from the local filesystem, or fetch from a URL
-       * (e.g. a GitHub, GitLab, or Bitbucket tree/blob URL) via Backstage's
-       * UrlReader.
-       * @visibility backend
-       */
-      type: 'local' | 'url';
-      /**
-       * For `local`: a path to the collection directory (relative to the
-       * Backstage working dir / packages/backend / repo root). For `url`: a
-       * source-control tree or blob URL (GitHub, GitLab, Bitbucket, …) on a
-       * host configured under `integrations`.
-       * @visibility backend
-       */
-      target: string;
-    }>;
-    /**
      * Bruno collections to materialize as `kind: Bruno` entities, without a
      * catalog-info.yaml. Ingested through the same path as an authored
      * entity: fetch the folder, require a bruno.json or

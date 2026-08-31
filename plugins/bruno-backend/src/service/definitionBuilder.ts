@@ -62,10 +62,11 @@ export function buildDefinition(input: {
 }): BuiltDefinition {
   const { tree, url, name, logger, options } = input;
   try {
-    // The parser is written against `bruno.sources` entries; this is the same
-    // shape, synthesized. `name` is only a FALLBACK — a manifest inside the tree
-    // overrides it, which is why the probe's manifest name can be passed here
-    // without risking a mismatch with the parsed collection.
+    // The parser takes a `BrunoSourceConfig` describing where the tree came
+    // from; this is that shape, synthesized. `name` is only a FALLBACK — a
+    // manifest inside the tree overrides it, which is why the probe's manifest
+    // name can be passed here without risking a mismatch with the parsed
+    // collection.
     const source: BrunoSourceConfig = {
       id: url,
       name: name ?? lastPathSegment(url),

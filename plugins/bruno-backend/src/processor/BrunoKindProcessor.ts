@@ -351,7 +351,8 @@ export class BrunoKindProcessor implements CatalogProcessor {
     const environments = manifest.environments;
 
     // Authored metadata WINS over the fetched value — the inverse of the
-    // `bruno.sources` path, where config is only a fallback display name.
+    // parser's own fallback, where a synthesized source name fills in only for
+    // a collection whose manifest carries none.
     // `metadata.name` is deliberately NOT in this list: the catalog freezes the
     // entity ref before any processor runs and throws a ConflictError if a
     // processor changes it (DefaultCatalogProcessingOrchestrator :52, :166).

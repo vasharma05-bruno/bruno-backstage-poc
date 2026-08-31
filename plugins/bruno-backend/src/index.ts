@@ -16,7 +16,6 @@ export { brunoPlugin as default };
 export { brunoCatalogModule } from './module';
 
 export { BrunoCollectionEntityProvider } from './provider/BrunoCollectionEntityProvider';
-export { BrunoEntityProvider } from './provider/BrunoEntityProvider';
 export {
   BrunoKindProcessor,
   BRUNO_API_VERSION,
@@ -27,7 +26,6 @@ export {
   readCacheTtlMs,
   readDefinitionOptions
 } from './service/brunoConfig';
-export { createCollectionService } from './service/collectionService';
 export { createManifestProbe } from './service/manifestProbe';
 export { createRouter } from './service/router';
 export { generateOcDocsHtml } from './service/generateOcDocsHtml';
@@ -43,17 +41,8 @@ export type {
   Assertion,
   BrunoCollectionConfig,
   BrunoEntity,
-  BrunoSourceConfig,
-  CollectionDetail,
-  CollectionSummary,
-  Dashboard,
-  DashboardCollection,
-  DashboardStats,
-  DiscoveredCollection,
-  DiscoverResult,
   Environment,
   FolderItem,
-  ImportedCollection,
   Item,
   KeyValue,
   NormalizedCollection,
@@ -61,6 +50,5 @@ export type {
   RequestAuth,
   RequestBody,
   RequestItem,
-  RequestScript,
-  SourceFailure
+  RequestScript
 } from './types';

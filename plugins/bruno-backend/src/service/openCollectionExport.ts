@@ -1,6 +1,6 @@
 /**
  * Adapter + serializer producing an OpenCollection `1.0.0` YAML string from a
- * cached `CollectionDetail`.
+ * parsed `NormalizedCollection`.
  *
  * `@usebruno/converters`' `brunoToOpenCollection` consumes Bruno's in-memory
  * `BrunoCollection` (nested auth/body blocks, `'http-request'`/`'graphql-request'`
@@ -39,7 +39,6 @@
  * Assertions are omitted (R-C).
  */
 import type {
-  CollectionDetail,
   Environment,
   FolderItem,
   Item,
@@ -54,93 +53,11 @@ import yaml from 'js-yaml';
 /** Options for {@link toOpenCollectionYaml}. */
 export interface OpenCollectionExportOptions {
   /** ISO timestamp for `extensions.bruno.exportedAt`. `null` OMITS the key —
-   *  required for the catalog-stored variant: a per-call timestamp changes
-   *  `resultHash` every reprocess cycle and rewrites the entity. Default:
-   *  `new Date().toISOString()`, preserving today's route behaviour. */
+   *  required for the catalog-stored variant, and so what every in-tree caller
+   *  passes: a per-call timestamp changes `resultHash` every reprocess cycle and
+   *  rewrites the entity. Default: `new Date().toISOString()`, for a one-off
+   *  export that wants to record when it was taken. */
   exportedAt?: string | null;
-}
-
-/**
- * Replacement for a secret value in {@link redactCollectionDetail}. The YAML
- * export deliberately has no such constant — it mirrors Bruno's exporter, which
- * redacts nothing outside secret environment variables.
- */
-const REDACTED = '<redacted>';
-
-/**
- * Auth-block field names whose values are secrets across the supported modes
- * (`basic.password`, `bearer.token`, `digest.password`, `apikey.value`, plus
- * common OAuth fields). Used ONLY by {@link redactCollectionDetail} below — the
- * YAML export deliberately does not redact auth (see the module comment).
- */
-const AUTH_SECRET_KEYS = new Set([
-  'password',
-  'token',
-  'secret',
-  'value',
-  'passphrase',
-  'privateKey',
-  'clientSecret',
-  'accessToken',
-  'refreshToken'
-]);
-
-function redactAuthInPlace(auth: RequestAuth | undefined): void {
-  if (!auth) {
-    return;
-  }
-  for (const key of Object.keys(auth)) {
-    if (
-      key !== 'mode'
-      && AUTH_SECRET_KEYS.has(key)
-      && typeof auth[key] === 'string'
-      && auth[key] !== ''
-    ) {
-      auth[key] = REDACTED;
-    }
-  }
-}
-
-function redactItemsInPlace(items: Item[]): void {
-  for (const item of items) {
-    if (item.type === 'folder') {
-      redactItemsInPlace(item.items);
-    } else {
-      redactAuthInPlace(item.auth);
-    }
-  }
-}
-
-/**
- * Returns a deep copy of a {@link CollectionDetail} with secrets stripped, for
- * the JSON detail endpoint.
- *
- * This is a SEPARATE contract from {@link toOpenCollectionYaml} and is
- * deliberately stricter: the YAML export mirrors Bruno's "Generate docs" and so
- * carries auth values, whereas this endpoint feeds the plugin's own UI, has no
- * Bruno-parity obligation, and has never emitted them. Every environment
- * variable value is dropped (env vars routinely hold tokens and cannot be told
- * apart from non-secrets here) and auth-block secret fields become
- * `<redacted>`. The cached `detail` is never mutated (structuredClone).
- *
- * Secrets hardcoded into header/param/body *values* are NOT redacted here —
- * documented, and tracked as a hardening item.
- *
- * @public
- */
-export function redactCollectionDetail(
-  detail: CollectionDetail
-): CollectionDetail {
-  const clone = structuredClone(detail);
-  for (const env of clone.collection.environments) {
-    for (const v of env.variables) {
-      if (v.value) {
-        v.value = REDACTED;
-      }
-    }
-  }
-  redactItemsInPlace(clone.collection.items);
-  return clone;
 }
 
 interface BrunoCollectionLike {
@@ -295,15 +212,11 @@ function normalizedToBrunoCollection(
  * Serializes a {@link NormalizedCollection} as an OpenCollection `1.0.0` YAML
  * document.
  *
- * Takes the collection rather than the enclosing `CollectionDetail` because the
- * only field it ever read was `detail.collection`, and the catalog-entity caller
- * has a collection but no detail to wrap it in.
- *
- * With no options the output is byte-identical to what the `/api/bruno/*` routes
- * have always produced. `exportedAt: null` makes it byte-STABLE instead, which
- * is what the entity path needs: per BE-P2 F11 the catalog hashes the processed
- * entity, so a per-call timestamp would rewrite and re-stitch every Bruno entity
- * on every reprocess cycle.
+ * With no options the output carries an `exportedAt` timestamp.
+ * `exportedAt: null` makes it byte-STABLE instead, which is what the entity path
+ * needs — and is what every caller now passes: per BE-P2 F11 the catalog hashes
+ * the processed entity, so a per-call timestamp would rewrite and re-stitch
+ * every Bruno entity on every reprocess cycle.
  *
  * @public
  */

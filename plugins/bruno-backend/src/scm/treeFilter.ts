@@ -80,8 +80,8 @@ export function stripOpenCollectionExtension(name: string): string {
  * Set-aware rather than per-path because a bare `.yaml` cannot be classified in
  * isolation: a blanket clause would pull `catalog-info.yaml` and `.github/**`
  * into the tree and shift `commonRootPrefix` — the fallback collection root when
- * no manifest is found — silently mis-rooting manifest-less collections on the
- * `bruno.sources` path. A `.yaml` is therefore admitted only when the set
+ * no manifest is found — silently mis-rooting a manifest-less collection.
+ * A `.yaml` is therefore admitted only when the set
  * actually contains an `opencollection.yaml`, and only at or below that
  * manifest's directory, where every `.yaml` really is a collection body file.
  *

@@ -139,21 +139,13 @@ proxy:
       allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD']
       allowedHeaders: ['Authorization', 'Content-Type', 'Accept']
 
-# Bruno for Backstage — collection sources scanned by BrunoEntityProvider and
-# served by the backend plugin at /api/bruno/*. See docs/POC-DECISIONS.md.
+# Bruno for Backstage — collections ingested into the catalog as `kind: Bruno`
+# entities, and the docs the backend plugin serves for them at /api/bruno/*.
 #
-# NOTE: `sources` must stay under this `bruno:` root key. Without it the
-# `schedule` block below re-parses as `proxy.schedule` (silently — YAML is
-# happy) and the provider falls back to its defaults with zero sources.
+# NOTE: every key below must stay under this `bruno:` root key. Without it the
+# `schedule` block re-parses as `proxy.schedule` (silently — YAML is happy) and
+# the provider falls back to its defaults with zero collections.
 bruno:
-  sources: []
-    # RISK #1 / Q4 — the private-repo path. Fetched server-side via Backstage's
-    # UrlReader using integrations.github creds; the token never reaches the
-    # browser. Uncomment and set GITHUB_TOKEN to demo a (public or private) repo:
-    # - id: bruno-tests-remote
-    #   name: Bruno Tests (GitHub)
-    #   type: url
-    #   target: https://github.com/usebruno/bruno/tree/main/packages/bruno-tests/collection/echo
   # PRD §"Creating Bruno entities, other than catalog-info.yaml".
   # Each entry becomes a `kind: Bruno` entity emitted by
   # BrunoCollectionEntityProvider. `metadata.name` is derived from the last
