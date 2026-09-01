@@ -93,12 +93,7 @@ export function createBitbucketCloudScmProvider(options: {
     /**
      * Resolves the repo's default branch via `@backstage/integration`'s
      * Bitbucket Cloud helper, which authenticates with the host's integration
-     * credential.
-     *
-     * `opts.userToken` is deliberately unused: the helper takes only a config,
-     * and a Bitbucket Cloud config cannot carry a bare token (see
-     * `readTreeWithUserToken`'s absence below). A private Bitbucket repo
-     * therefore needs a host-configured service credential here too.
+     * credential — the only credential this seam has (see `scm/types.ts`).
      */
     async resolveDefaultBranch(url) {
       const integration = integrations.bitbucketCloud.byUrl(url);
@@ -110,20 +105,19 @@ export function createBitbucketCloudScmProvider(options: {
     }
 
     /*
-     * `readTreeWithUserToken` is intentionally ABSENT, not unimplemented.
-     *
-     * There is nowhere to put a per-user Bitbucket Cloud OAuth token:
+     * A per-user read path was never possible here and is now not possible
+     * anywhere in this seam, so nothing is missing from this adapter. Recording
+     * the Bitbucket-specific reason anyway, because it is the one that would
+     * have bitten first had the decision gone the other way:
      * `BitbucketCloudUrlReader.readTree` ignores the per-call `options.token`
      * entirely and authenticates only from `this.integration.config`, and
      * `getBitbucketCloudRequestOptions` drops a bare `token` unless a `username`
-     * accompanies it (`if (username && (token ?? appPassword))`) — which would
-     * turn a private read into a SILENT ANONYMOUS one rather than an error.
-     *
-     * Leaving the method off makes the caller surface an explicit "needs a
-     * host-configured credential" error instead. Private Bitbucket Cloud repos
-     * are reachable through `integrations.bitbucketCloud` (`username` + `token`,
-     * or `clientId` + `clientSecret`). Verified against @backstage/integration
-     * and @backstage/backend-defaults.
+     * accompanies it (`if (username && (token ?? appPassword))`) — so a
+     * user-token read would have been a SILENT ANONYMOUS one rather than an
+     * error. Private Bitbucket Cloud repos are reachable through
+     * `integrations.bitbucketCloud` (`username` + `token`, or `clientId` +
+     * `clientSecret`). Verified against @backstage/integration and
+     * @backstage/backend-defaults.
      */
   };
 }

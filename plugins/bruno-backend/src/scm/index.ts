@@ -8,10 +8,10 @@ import { createGitlabScmProvider } from './gitlab';
 import type { ScmProvider } from './types';
 
 // Only what consumers outside `scm/` actually use. Everything else in the seam
-// — the per-provider adapters, `normalize`, `readTreeViaUrlReader`,
-// `selectCollectionFiles`, the `ScmProvider`/`ScmTreeRead` shapes — is imported
-// directly by its sibling modules, so re-exporting it here would only widen the
-// surface without giving anyone a shorter path to it.
+// — the per-provider adapters, `normalize`, `selectCollectionFiles`, the
+// `ScmProvider`/`ScmTreeRead` shapes — is imported directly by its sibling
+// modules, so re-exporting it here would only widen the surface without giving
+// anyone a shorter path to it.
 export { readTreeWithEtag } from './readTree';
 export {
   isOpenCollectionManifest,

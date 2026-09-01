@@ -32,10 +32,9 @@ export function isBrunoJsonManifest(relPath: string): boolean {
  * request/environment files, the `bruno.json` manifest, OpenCollection YAML
  * (`opencollection.yml` or `opencollection.yaml`), and the collection README.
  *
- * Reached only through {@link selectCollectionFiles}, which every remote read
- * path goes through — the UrlReader one and the per-provider user-token ones
- * alike — so no provider can drift into fetching a different file set than
- * another.
+ * Reached only through {@link selectCollectionFiles}, which the one remote read
+ * path goes through, so no provider can drift into fetching a different file set
+ * than another.
  *
  * The `.yaml` spelling is admitted by name rather than by extension: a blanket
  * `.yaml` clause would pull `catalog-info.yaml` and `.github/**` into the tree,

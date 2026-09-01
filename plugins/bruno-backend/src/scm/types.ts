@@ -1,8 +1,3 @@
-import type {
-  LoggerService,
-  UrlReaderService
-} from '@backstage/backend-plugin-api';
-
 /** A flat map of collection-relative file path -> file contents. */
 export type ScmFileTree = Map<string, string>;
 
@@ -22,36 +17,35 @@ export interface ParsedRepoUrl {
   subpath: string;
 }
 
-/** Arguments for a provider's user-token read. */
-export interface ScmUserTokenReadArgs {
-  /** The normalized collection URL to read. */
-  url: string;
-  /** The caller's own OAuth token. Never log it. */
-  userToken: string;
-  /**
-   * The plugin's injected `UrlReaderService`. Providers whose reader honours a
-   * per-call `options.token` read through this rather than hand-rolling an API
-   * client, so Backstage's proxy config and archive-based fetch still apply.
-   */
-  reader: UrlReaderService;
-  logger: LoggerService;
-}
-
 /**
  * Per-provider URL grammar and ref resolution. One implementation per SCM
  * provider; selected by `ScmIntegration.type` (see `createScmProviderRegistry`).
  *
+ * ONE CREDENTIAL, BY DECISION. Every read in this seam authenticates with the
+ * host's `integrations.<type>` credential and nothing else. There is no
+ * per-user read path and no place to put a caller's OAuth token — not an
+ * omission, a choice: a repository the service credential cannot see is simply
+ * unreadable here, and the user's own SCM token is used in exactly one place in
+ * this codebase, the frontend's pull-request flows (`plugins/bruno/src/lib/
+ * unlinkPr.ts` and the three dialogs that call `scmAuthApi.getCredentials`).
+ * Those write on the user's behalf and must be attributed to them; reads must
+ * not vary by who is looking, because the catalog entity they produce is shared.
+ *
+ * A `readTreeWithUserToken` member and a `userToken` retry tier on
+ * `resolveDefaultBranch` used to exist here. Do not reintroduce either: the
+ * probe behind both consumers runs under a catalog processor and a scheduled
+ * provider, where no user request exists to take a token from, so the parameter
+ * could only ever be filled by a token borrowed from an unrelated request.
+ *
  * RETAINED DELIBERATELY, and only partly reached today. `manifestProbe` is the
  * one consumer, and it calls `normalizeUrl` and `assertConfigured` only. These
- * four have no caller on this branch:
+ * three have no caller on this branch:
  *
  *   composeCollectionUrl    multi-collection discovery — composes the stored
  *                           `spec.url` for each root found inside one repo
  *   repoRootFromUrl         the same discovery path, reducing a collection URL
  *                           back to its repo
  *   resolveDefaultBranch    names a ref when a pasted URL carries none
- *   readTreeWithUserToken   reads a private repo with the CALLER's OAuth token,
- *                           after the host credential has failed
  *
  * They are not scaffolding written ahead of use — they had callers, in
  * `service/collectionService.ts` and `provider/BrunoEntityProvider.ts`, and the
@@ -59,12 +53,10 @@ export interface ScmUserTokenReadArgs {
  * still-live implementations are on `feat/multi-scm`, which predates that
  * rewrite.
  *
- * Keeping them is a decision, taken because `readTreeWithUserToken` is the only
- * route to a private GitLab or Bitbucket repo while neither has a configured
- * service token — deleting it would drop a capability, not just unused code —
- * and because discovery is planned work rather than an abandoned idea. So do
- * not "clean these up" on the strength of a caller count; the count is expected
- * to be zero until that work is rebased onto the current architecture.
+ * Keeping them is a decision, taken because discovery is planned work rather
+ * than an abandoned idea. So do not "clean these up" on the strength of a caller
+ * count; the count is expected to be zero until that work is rebased onto the
+ * current architecture.
  */
 export interface ScmProvider {
   /** The `ScmIntegration.type` this adapter serves, e.g. `'github'`. */
@@ -111,24 +103,14 @@ export interface ScmProvider {
   assertConfigured(url: string): void;
 
   /**
-   * Resolves the repo's default branch. Called only when the URL carries no
-   * explicit ref, and only to name a ref in a composed URL.
-   */
-  resolveDefaultBranch(
-    url: string,
-    opts?: { userToken?: string }
-  ): Promise<string>;
-
-  /**
-   * Reads a collection tree using the CALLER's OAuth token, for a private repo
-   * the host's service credential cannot see. Called only after the
-   * service-credential read has already failed.
+   * Resolves the repo's default branch, using the host's integration credential.
+   * Called only when the URL carries no explicit ref, and only to name a ref in
+   * a composed URL.
    *
-   * `undefined` means this provider has no per-user read path at all — not that
-   * it is unimplemented here. Bitbucket Cloud's `UrlReader` ignores
-   * `options.token` and its integration config silently drops a bare token, so
-   * there is nowhere to put a user token; such providers reach private repos
-   * only through a host-configured service credential.
+   * A credential that merely EXISTS is not necessarily authorized — a PAT scoped
+   * to one org 404s on a repo somebody can see perfectly well — so this can fail
+   * on a repo a human would call readable. That is the same limit the tree read
+   * has, and it fails the same way: with the host's own error.
    */
-  readTreeWithUserToken?(args: ScmUserTokenReadArgs): Promise<ScmFileTree>;
+  resolveDefaultBranch(url: string): Promise<string>;
 }

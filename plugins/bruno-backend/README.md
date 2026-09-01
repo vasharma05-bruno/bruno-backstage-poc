@@ -102,13 +102,12 @@ There is deliberately **no redaction knob** — see
 [Credential isolation](#credential-isolation) for why.
 
 Collection folders are read through Backstage's `UrlReaderService` using the
-host's `integrations.*` credentials. Public `github.com`, `gitlab.com` and
-`bitbucket.org` need no configuration at all (`@backstage/integration` appends a
-default entry for each); private repositories need the matching `integrations`
-block. Bitbucket Cloud is the one host with no per-user fallback — its
-`UrlReader` ignores a per-call token — so a private Bitbucket repo requires
-`integrations.bitbucketCloud`. Provider-specific URL grammar and credential
-handling live under [`src/scm/`](src/scm/).
+host's `integrations.*` credentials, and nothing else. Public `github.com`,
+`gitlab.com` and `bitbucket.org` need no configuration at all
+(`@backstage/integration` appends a default entry for each); a private repository
+on any host needs the matching `integrations` block, because there is no per-user
+read path — see [Credential isolation](#credential-isolation). Provider-specific
+URL grammar and credential handling live under [`src/scm/`](src/scm/).
 
 ## HTTP API
 
@@ -405,13 +404,26 @@ the backend. **They never leave the backend.** No route returns a token, and non
 of the HTTP responses or generated HTML contain credentials — the only network
 egress is Backstage → the SCM host.
 
-`ManifestProbe` deliberately has **no `userToken` parameter**. No user request
-exists behind a processor or a scheduled provider run, and not having the
-parameter at all is the strongest guarantee that a caller's OAuth token can never
-reach a log line there. The provider likewise logs reader errors as a structured
-second argument, never string-interpolated, because the error can echo the
-request it made and interpolating it would put the plugin bearer token in the
-log.
+**Reads never use a caller's SCM token.** Not `ManifestProbe`, which has no
+`userToken` parameter, and not the `src/scm/` adapters, which have no per-user
+read path at all. Two reasons it is built this way. No user request exists behind
+a catalog processor or a scheduled provider run, so a token there could only be
+one borrowed from an unrelated request; and a read whose credential varies by
+who is looking would make `spec.definition` — a single shared catalog entity —
+depend on which user's tick happened to refresh it. The consequence is worth
+being explicit about: a private repository that the host's `integrations.*`
+credential cannot see is unreadable by this plugin, even for a user whose own
+account can see it.
+
+The user's own SCM token is used in exactly one place in this project, and it is
+never a read: the frontend's pull-request flows resolve it through
+`scmAuthApi.getCredentials({ additionalScope: { repoWrite: true } })` so that a
+`catalog-info.yaml` or `spec.partOf` PR is authored by the actual user. That
+token stays in the browser and is never sent to this backend.
+
+The provider likewise logs reader errors as a structured second argument, never
+string-interpolated, because the error can echo the request it made and
+interpolating it would put the plugin bearer token in the log.
 
 ### What the generated document *does* contain
 

@@ -10,13 +10,7 @@ import {
   safeHost
 } from './normalize';
 import { joinPosix } from '../posixPath';
-import { readTreeViaUrlReader } from './readTree';
-import type {
-  ParsedRepoUrl,
-  ScmFileTree,
-  ScmProvider,
-  ScmUserTokenReadArgs
-} from './types';
+import type { ParsedRepoUrl, ScmProvider } from './types';
 
 /**
  * GitLab's web URL grammar:
@@ -130,16 +124,17 @@ export function createGitlabScmProvider(options: {
     },
 
     /**
-     * Resolves the project's default branch from the GitLab projects API.
+     * Resolves the project's default branch from the GitLab projects API, using
+     * the host's integration credential — or anonymously, when the host
+     * configured none, which is all a public project needs.
      *
-     * Two tiers, in the same order as the tree read: the host's integration
-     * credential (or anonymous, when none is configured) first, and only on
-     * failure a retry with the caller's own OAuth token. The order matters —
-     * preferring the caller's token makes a stale or under-scoped GitLab session
-     * break discovery on a PUBLIC project that anonymous access reads fine.
-     * Neither token is ever logged.
+     * There used to be a second tier here that retried with the caller's own
+     * OAuth token. It is gone on purpose (see `scm/types.ts`): a private project
+     * the integration credential cannot see now fails with GitLab's own error
+     * instead of succeeding only for users who happen to have connected an
+     * account. The credential is never logged.
      */
-    async resolveDefaultBranch(url, opts) {
+    async resolveDefaultBranch(url) {
       const integration = integrations.gitlab.byUrl(url);
       if (!integration) {
         this.assertConfigured(url);
@@ -151,26 +146,7 @@ export function createGitlabScmProvider(options: {
         joinPosix(owner, repo),
         getGitLabIntegrationRelativePath(config)
       );
-      try {
-        return await fetchDefaultBranch(integration, projectPath);
-      } catch (error) {
-        if (!opts?.userToken) {
-          throw error;
-        }
-        return await fetchDefaultBranch(integration, projectPath, opts.userToken);
-      }
-    },
-
-    /**
-     * Reads a private project with the caller's own GitLab OAuth token through
-     * the injected `UrlReaderService`. `GitlabUrlReader.readTree` threads a
-     * per-call `options.token` into all three of its requests (project lookup,
-     * commit lookup, archive download), so no hand-rolled API client is needed
-     * and the read keeps the reader's archive fetch, proxy handling, and ETag
-     * support. The token is never logged.
-     */
-    readTreeWithUserToken(args: ScmUserTokenReadArgs): Promise<ScmFileTree> {
-      return readTreeViaUrlReader(args);
+      return fetchDefaultBranch(integration, projectPath);
     }
   };
 }
@@ -194,9 +170,9 @@ function stripInstanceRelativePath(
 }
 
 /**
- * Reads `default_branch` for one project. `token` overrides the integration's
- * own credential when given; omitted, `getGitLabRequestOptions` falls back to
- * `config.token`, or to anonymous when the host configured none.
+ * Reads `default_branch` for one project. `getGitLabRequestOptions` supplies the
+ * integration's own `config.token`, or no credential at all when the host
+ * configured none.
  *
  * Issued through `integration.fetch`, not the global `fetch`, so the host's
  * proxy and agent configuration applies — the same call `GitlabUrlReader` makes.
@@ -205,13 +181,12 @@ function stripInstanceRelativePath(
  */
 async function fetchDefaultBranch(
   integration: GitLabIntegration,
-  projectPath: string,
-  token?: string
+  projectPath: string
 ): Promise<string> {
   const { config } = integration;
   const response = await integration.fetch(
     `${config.apiBaseUrl}/projects/${encodeURIComponent(projectPath)}`,
-    getGitLabRequestOptions(config, token)
+    getGitLabRequestOptions(config)
   );
   if (!response.ok) {
     throw new Error(

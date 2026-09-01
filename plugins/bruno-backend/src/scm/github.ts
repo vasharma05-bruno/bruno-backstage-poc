@@ -8,13 +8,7 @@ import {
   normalizePathStyleUrl,
   originPlusSegments
 } from './normalize';
-import { selectCollectionFiles } from './treeFilter';
-import type {
-  ParsedRepoUrl,
-  ScmFileTree,
-  ScmProvider,
-  ScmUserTokenReadArgs
-} from './types';
+import type { ParsedRepoUrl, ScmProvider } from './types';
 
 /** Parses `owner/repo` and an optional `/tree/<ref>/<subpath>` from a URL. */
 function parseRepoUrl(url: string): ParsedRepoUrl {
@@ -89,17 +83,18 @@ export function createGithubScmProvider(options: {
     assertConfigured() {},
 
     /**
-     * Resolves the repo's default branch via Octokit, in the same two tiers as
-     * the tree read: the host credential first (a PAT or a GitHub App
-     * installation token, whichever was configured), then a retry with the
-     * caller's own OAuth token.
+     * Resolves the repo's default branch via Octokit, with the host credential —
+     * a PAT or a GitHub App installation token, whichever `integrations.github`
+     * configured — and nothing else.
      *
-     * The retry matters because a host credential that merely EXISTS is not
-     * necessarily authorized — a PAT scoped to one org 404s on a repo the caller
-     * can see perfectly well, and without the retry discovery would fail on a
-     * repo `readTreeWithUserToken` could have read. Neither token is logged.
+     * A host credential that merely EXISTS is not necessarily authorized: a PAT
+     * scoped to one org 404s on a repo the caller can see perfectly well. There
+     * used to be a retry with the caller's own OAuth token for exactly that
+     * case; it is gone on purpose (see `scm/types.ts`), so such a repo now fails
+     * here with GitHub's own error rather than succeeding for some users and not
+     * others. The credential is never logged.
      */
-    async resolveDefaultBranch(url, opts) {
+    async resolveDefaultBranch(url) {
       const { owner, repo } = parseRepoUrl(url);
       let hostToken: string | undefined;
       try {
@@ -109,92 +104,15 @@ export function createGithubScmProvider(options: {
           = (await githubCredentials.getCredentials({ url })).token || undefined;
       } catch {
         // No host credential for this repo (e.g. a GitHub App not installed
-        // there); the caller's token below is the only option.
+        // there). Fall through and try anonymously — which is all a public repo
+        // needs, and the honest failure for a private one.
       }
-      const readDefaultBranch = async (auth?: string): Promise<string> => {
-        const octokit = new Octokit({ auth, baseUrl: apiBaseUrlFor(url) });
-        const { data } = await octokit.repos.get({ owner, repo });
-        return data.default_branch;
-      };
-      try {
-        return await readDefaultBranch(hostToken);
-      } catch (error) {
-        if (!opts?.userToken || opts.userToken === hostToken) {
-          throw error;
-        }
-        return await readDefaultBranch(opts.userToken);
-      }
-    },
-
-    /**
-     * Reads a private tree with the caller's own GitHub OAuth token via the
-     * GitHub REST API.
-     *
-     * This predates the discovery that `GithubUrlReader.readTree` honours a
-     * per-call `options.token` and is therefore redundant, but it is the path
-     * that has been exercised against real private repos, so it stays until
-     * MSCM-P2 retires it deliberately. Its cost is a recursive tree call plus
-     * one blob call per file — the worst available pattern for rate limits, and
-     * another reason P2 should land. The token reaches only the Octokit client:
-     * never logged, returned, or stored.
-     */
-    async readTreeWithUserToken(
-      args: ScmUserTokenReadArgs
-    ): Promise<ScmFileTree> {
-      const { url, userToken, logger } = args;
-      const { owner, repo, ref: parsedRef, subpath } = parseRepoUrl(url);
       const octokit = new Octokit({
-        auth: userToken,
+        auth: hostToken,
         baseUrl: apiBaseUrlFor(url)
       });
-
-      let ref = parsedRef;
-      if (!ref) {
-        const { data } = await octokit.repos.get({ owner, repo });
-        ref = data.default_branch;
-      }
-
-      const { data: tree } = await octokit.git.getTree({
-        owner,
-        repo,
-        tree_sha: ref,
-        recursive: 'true'
-      });
-
-      if (tree.truncated) {
-        logger.warn(
-          `GitHub tree for ${owner}/${repo} was truncated; some files may be missing.`
-        );
-      }
-
-      // Two passes, not a per-entry predicate: admission is set-aware (a bare
-      // `.yaml` only counts below an `opencollection.yaml`), so the whole
-      // candidate set has to exist before anything can be classified. It also
-      // means the expensive part — one blob call per file — runs only over the
-      // files that survived selection, in the sorted order the parser needs for
-      // a byte-stable definition.
-      const prefix = subpath === '' ? '' : `${subpath}/`;
-      const shaByRel = new Map<string, string>();
-      for (const entry of tree.tree) {
-        if (entry.type !== 'blob' || !entry.path || !entry.sha) {
-          continue;
-        }
-        if (prefix !== '' && !entry.path.startsWith(prefix)) {
-          continue;
-        }
-        shaByRel.set(entry.path.slice(prefix.length), entry.sha);
-      }
-
-      const files: ScmFileTree = new Map();
-      for (const rel of selectCollectionFiles(shaByRel.keys())) {
-        const { data: blob } = await octokit.git.getBlob({
-          owner,
-          repo,
-          file_sha: shaByRel.get(rel)!
-        });
-        files.set(rel, Buffer.from(blob.content, 'base64').toString('utf8'));
-      }
-      return files;
+      const { data } = await octokit.repos.get({ owner, repo });
+      return data.default_branch;
     }
   };
 }

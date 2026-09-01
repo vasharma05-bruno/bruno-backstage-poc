@@ -90,8 +90,10 @@ integrations:
   ### NOT required to read PUBLIC repos on gitlab.com / bitbucket.org —
   ### @backstage/integration appends a default entry for all three public hosts,
   ### so the plugin reads them anonymously with no config at all. These blocks
-  ### are what a PRIVATE repo needs when the reader should use a shared service
-  ### credential rather than each user's own OAuth token.
+  ### are the ONLY way a PRIVATE repo is readable: the plugin has no per-user read
+  ### path on any host, so a private repo with no `integrations` entry is
+  ### unreadable even for a user whose own account can see it. See
+  ### plugins/bruno-backend/README.md#credential-isolation.
   ###
   ### Left commented on purpose: a partial entry is worse than none. Bitbucket
   ### Cloud THROWS AT STARTUP for a `username` with no `token`/`appPassword`,
@@ -106,13 +108,12 @@ integrations:
   #   #   baseUrl: https://gitlab.company.com
   #   #   token: ${GITLAB_SELF_HOSTED_TOKEN}
   ###
-  ### ACTIVE: Bitbucket Cloud is the one host where a private repo has no
-  ### user-token fallback at all — `BitbucketCloudUrlReader` ignores a per-call
-  ### token, so without this entry a private repo 404s. `clientId`/`clientSecret`
-  ### use Bitbucket's client_credentials grant, i.e. the reader authenticates AS
-  ### THE OAUTH CONSUMER (the same consumer as `auth.providers.bitbucket` may be
-  ### reused). No `host` key here: @backstage/integration hardcodes
-  ### bitbucket.org for this integration type and errors on unknown keys.
+  ### ACTIVE: without this entry a private Bitbucket repo 404s.
+  ### `clientId`/`clientSecret` use Bitbucket's client_credentials grant, i.e. the
+  ### reader authenticates AS THE OAUTH CONSUMER (the same consumer as
+  ### `auth.providers.bitbucket` may be reused). No `host` key here:
+  ### @backstage/integration hardcodes bitbucket.org for this integration type
+  ### and errors on unknown keys.
   ###
   ### A BLANK value is fatal, not ignored: ConfigReader rejects empty-string
   ### ("got empty-string, wanted string"), and since every `core.urlReader`
@@ -237,7 +238,13 @@ auth:
       development:
         clientId: ${AUTH_GITHUB_CLIENT_ID}
         clientSecret: ${AUTH_GITHUB_CLIENT_SECRET}
-        # Requested so the plugin can reuse the user's token for private repos.
+        # `repo` is requested at sign-in because the PLUGIN'S PULL-REQUEST FLOWS
+        # need write access to the descriptor's repository (add
+        # `catalog-info.yaml`, edit `spec.partOf`). It is NOT used for reading
+        # collections — those go through `integrations.github` above, server-side.
+        # ScmAuth would also escalate to `repo` on demand at PR time; asking here
+        # instead keeps the consent out of the middle of the flow, where a popup
+        # blocker is most likely to bite.
         additionalScopes:
           - repo
         signIn:
@@ -256,11 +263,11 @@ auth:
       development:
         clientId: ${AUTH_GITLAB_CLIENT_ID}
         clientSecret: ${AUTH_GITLAB_CLIENT_SECRET}
-        # The plugin requests `read_user read_api read_repository` on demand via
-        # ScmAuth when a private project needs the user's own token. Enable those
-        # scopes on the GitLab OAuth application or the consent popup will fail.
-        # They are not listed as additionalScopes here so sign-in stays cheap —
-        # the escalation happens in the "Connect GitLab" gesture instead.
+        # Sign-in only. The plugin never asks for a GitLab user token: reads use
+        # `integrations.gitlab` server-side, and the pull-request flows are
+        # GitHub-only. `ScmAuth.forGitlab` is still registered in
+        # packages/app/src/modules/auth/scmAuth.ts, but nothing calls it, so no
+        # repository scope needs enabling on the OAuth application.
         # Self-hosted GitLab only — must match the instance base URL exactly:
         # audience: https://gitlab.company.com
         signIn:
@@ -273,15 +280,10 @@ auth:
       development:
         clientId: ${AUTH_BITBUCKET_CLIENT_ID}
         clientSecret: ${AUTH_BITBUCKET_CLIENT_SECRET}
-        # ScmAuth requests `account` on demand — narrowed from the stock
-        # `account team pullrequest snippet issue project` in scmAuth.ts, since
-        # the plugin cannot use a Bitbucket user token for reads anyway.
-        # NOTE: a Bitbucket Cloud user token still cannot read a private repo
-        # through this plugin — neither its UrlReader nor its integration config
-        # accepts a per-user bearer token, so private Bitbucket needs the
-        # `integrations.bitbucketCloud` service credential above. The consent
-        # popup is offered for symmetry, but the read falls back with an explicit
-        # message saying so. See plugins/bruno-backend/src/scm/bitbucketCloud.ts.
+        # Sign-in only, as for GitLab above. ScmAuth's scope mapping is narrowed
+        # to `account` in scmAuth.ts — the plugin never uses a Bitbucket user
+        # token for anything: reads use the `integrations.bitbucketCloud` service
+        # credential above, and nothing here writes to Bitbucket.
         signIn:
           resolvers:
             - resolver: userIdMatchingUserEntityAnnotation

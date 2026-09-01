@@ -17,16 +17,11 @@ export interface ScmTreeRead {
  * Reads a collection tree through Backstage's `UrlReaderService`, keeping only
  * the files the parser needs.
  *
- * Credential isolation: credentials come from the host's `integrations.*` config
- * and are applied server-side by the reader. `userToken`, when given, is the
- * caller's own OAuth token, forwarded as the reader's per-call `options.token`.
- * Neither is ever logged or returned — the only egress is Backstage -> the SCM
- * host.
- *
- * `options.token` is honoured by the GitHub and GitLab readers and IGNORED by
- * every other one (verified against the installed readers), so only providers
- * whose adapter opts in via `readTreeWithUserToken` should pass it. Passing it
- * to a reader that ignores it would read anonymously and look like success.
+ * Credential isolation: the ONLY credential is the host's `integrations.*`
+ * config, applied server-side by the reader. There is deliberately no parameter
+ * for a caller's own OAuth token — see `scm/types.ts` — so nothing here can be
+ * made to authenticate as a user, and the only egress is Backstage -> the SCM
+ * host. The credential is never logged or returned.
  *
  * Passing `etag` turns the call into a revalidation: when the target's tree
  * identity still matches, the reader throws `NotModifiedError` BEFORE
@@ -42,9 +37,8 @@ export async function readTreeWithEtag(args: {
   url: string;
   logger: LoggerService;
   etag?: string;
-  userToken?: string;
 }): Promise<ScmTreeRead> {
-  const { reader, url, logger, etag, userToken } = args;
+  const { reader, url, logger, etag } = args;
   // A revalidation is the HOT path: with a 60s cache TTL it runs once per
   // collection per minute forever, so it must not be an info line. A cold read
   // is the rare, expensive one and stays at info — it is also what boot check 5
@@ -54,14 +48,7 @@ export async function readTreeWithEtag(args: {
   } else {
     logger.info(`Reading Bruno collection tree via UrlReader: ${url}`);
   }
-  const options = {
-    ...(etag && { etag }),
-    ...(userToken && { token: userToken })
-  };
-  const response = await reader.readTree(
-    url,
-    Object.keys(options).length ? options : undefined
-  );
+  const response = await reader.readTree(url, etag ? { etag } : undefined);
   const treeFiles = await response.files();
 
   // `file.path` is relative to the tree root, and the reader has already
@@ -79,21 +66,4 @@ export async function readTreeWithEtag(args: {
     files.set(rel, buffer.toString('utf8'));
   }
   return { files, etag: response.etag };
-}
-
-/**
- * The tree-only view of {@link readTreeWithEtag}, for the callers that have no
- * etag to revalidate against and no use for the one they would get back.
- *
- * Kept at its original signature on purpose: it is the shape the
- * `ScmProvider.readTreeWithUserToken` contract (`scm/types.ts`) is written
- * against.
- */
-export async function readTreeViaUrlReader(args: {
-  reader: UrlReaderService;
-  url: string;
-  logger: LoggerService;
-  userToken?: string;
-}): Promise<ScmFileTree> {
-  return (await readTreeWithEtag(args)).files;
 }
