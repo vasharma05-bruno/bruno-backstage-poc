@@ -95,6 +95,62 @@ emits one entity per source:
 The frontend card and Collection Docs tab attach when
 `spec.type === 'bruno-collection'`.
 
+## Adding a collection from the UI
+
+> **This README is stale everywhere except this section.** The opening summary
+> and the `## HTTP API`, `## Configuration` and `## Catalog entities` sections
+> above describe `kind: API` entities, a `bruno.sources` config block and a
+> connection store that no longer exist — the config key is `bruno.collections`
+> (`src/service/brunoConfig.ts`) and the kind is `Bruno`. Rewriting them is a
+> separate task; it is flagged here rather than done.
+
+The catalog has **no write model**. Entities come from a Location (a descriptor
+that must already exist) or from an EntityProvider — there is no
+insert-an-entity API. So "Add Bruno Collection" in the dashboard cannot write to
+the catalog. It writes here instead, and `BrunoCollectionEntityProvider`
+materialises the stored rows into `kind: Bruno` entities on its next scheduled
+tick, exactly as it already does for `bruno.collections[]` entries.
+
+**Table `bruno_ui_collections`** (`src/store/uiCollectionStore.ts`), created on
+first boot, no formal migrations:
+
+| column       | notes                                                        |
+| ------------ | ------------------------------------------------------------ |
+| `name`       | `metadata.name` of the Bruno entity. Primary key.            |
+| `url`        | The normalized collection folder URL.                        |
+| `owner`      | Optional `spec.owner`.                                       |
+| `part_of`    | `spec.partOf`, as a JSON array in a `text` column.           |
+| `created_by` | Entity ref of the user who added it. Recorded, not enforced. |
+| `created_at` | ISO timestamp.                                               |
+
+**Routes**, all under `/api/bruno`:
+
+| Method & path              | Auth        | Notes                                                                |
+| -------------------------- | ----------- | -------------------------------------------------------------------- |
+| `POST /collections`        | `user`      | Body `{ url, name, owner?, partOf? }`. Validates the URL holds a manifest, rejects a name already taken by another UI collection or by an `app-config.yaml` entry — compared case-insensitively, because an entity ref is lower-cased, so `Payments` and `payments` are one entity. `201` with `{ name, namespace, entityRef, url, refreshSeconds }`. |
+| `GET /collections`         | `user` \| `service` | Every stored row. Called by the provider with a plugin token, and by the dashboard's pending-collections strip to name the collections the catalog does not have yet. A **user** principal gets rows with `created_by` omitted — it is a user entity ref for every collection in the instance — which is what makes the route safe to expose to a browser at all. |
+| `DELETE /collections/:name` | `user`     | `404` when no row exists, which is how an attempt to delete a config- or descriptor-origin collection says so instead of silently succeeding. |
+
+**Latency.** A collection added from the UI appears in the catalog — and a
+deleted one disappears from it — within `bruno.schedule.frequencySeconds`
+(default 60). That is the provider's tick, and it is the number both routes
+return as `refreshSeconds` so the UI can quote the real value.
+
+**Dev-database caveat.** The default dev config (`app-config.yaml`) is
+`better-sqlite3` with `connection: ':memory:'`, so UI-created collections **do
+not survive a backend restart**. The catalog is equally ephemeral, so the two
+stay consistent and nothing ends up inconsistent — but do not restart the
+backend between creating a collection and checking that its entity appeared.
+
+**Degraded reads are never destructive.** The provider emits a `full` mutation,
+which the catalog applies by set difference: anything the provider emitted
+before and does not emit now is deleted. If the service-to-service read of
+`GET /collections` fails and the process has no successful read cached, the
+provider **skips the refresh entirely** rather than emitting the configured
+collections alone — a config-only emission would delete every UI-created
+collection in the instance. The cost is that configured collections are also not
+refreshed on that tick.
+
 ## RISK #1 — credential isolation
 
 For `type: url` sources, the collection tree is fetched **server-side** by

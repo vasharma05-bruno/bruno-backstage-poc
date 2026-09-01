@@ -179,6 +179,10 @@ bruno:
     maxBytes: 1048576
   # Also the upper bound on how long a Sync takes to show new content.
   cacheTtlSeconds: 60
+  # Also the latency of the Bruno dashboard's add and remove: a collection added
+  # from the UI is stored by the bruno backend plugin and only becomes a catalog
+  # entity on the next provider tick, and a removed one disappears on the tick
+  # after that. Both dialogs quote this number back to the user.
   schedule:
     frequencySeconds: 60
     timeoutSeconds: 30

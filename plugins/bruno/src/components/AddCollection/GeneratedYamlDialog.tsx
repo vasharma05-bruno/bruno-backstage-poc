@@ -26,7 +26,7 @@ import {
   useApiHolder
 } from '@backstage/core-plugin-api';
 import { scmAuthApiRef, scmIntegrationsApiRef } from '@backstage/integration-react';
-import { catalogApiRef } from '@backstage/plugin-catalog-react';
+import { EntityRefLink, catalogApiRef } from '@backstage/plugin-catalog-react';
 import { CatalogImportClient, catalogImportApiRef } from '@backstage/plugin-catalog-import';
 import type { CatalogImportApi } from '@backstage/plugin-catalog-import';
 import { repoRootFromCollectionUrl } from '../../lib/scmUrl';
@@ -49,6 +49,11 @@ const useStyles = makeStyles((theme) => ({
     '& > li': {
       marginBottom: theme.spacing(0.5)
     }
+  },
+  landing: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: theme.spacing(1)
   }
 }));
 
@@ -58,6 +63,41 @@ type Stage
     | { status: 'submitting' }
     | { status: 'submitted'; link: string }
     | { status: 'error'; message: string };
+
+/**
+ * Whether the entity the create registered has reached the catalog yet.
+ *
+ * A SECOND union rather than more members on {@link Stage}, because the two run
+ * concurrently: the collection lands on the provider's schedule, and the user
+ * may well be editing a pull request title while it does. Folding them together
+ * would make every pull-request state also assert something about the catalog.
+ */
+type Landing
+  = | { status: 'waiting' }
+    | { status: 'landed' }
+    | { status: 'timed-out' };
+
+/**
+ * How often the catalog is asked whether the entity has appeared.
+ *
+ * The entity does not arrive any sooner for being asked about, so this is
+ * bounding the "it is there and we have not noticed" gap, not the wait itself.
+ * The provider tick is `refreshSeconds` (60 s by default) and lands at an
+ * arbitrary point in that window, so 3 s costs about twenty cheap reads across
+ * a whole flow and makes the success feel immediate when it comes.
+ */
+const LANDING_POLL_MS = 3000;
+
+/**
+ * How long past the schedule to keep asking, in seconds.
+ *
+ * Two full provider cycles plus a margin for the catalog's own stitching. Past
+ * that the answer is not "it failed" — the row is stored and a later tick will
+ * pick it up — so the give-up state says that rather than reporting an error.
+ */
+function landingTimeoutSeconds(refreshSeconds: number): number {
+  return refreshSeconds * 2 + 30;
+}
 
 /** The two SCM types `catalogImportApi.submitPullRequest` can actually write to. */
 const PR_CAPABLE_TYPES = ['github', 'azure'];
@@ -142,15 +182,22 @@ function downloadText(filename: string, text: string): void {
 }
 
 /**
- * Modal 2 of the add-collection flow: here is your descriptor, and here is how
- * to get it into your repository.
+ * Modal 2 of the add-collection flow: your collection is registered, here is
+ * its descriptor, and here is how to get that into your repository too.
+ *
+ * Nothing on this screen is required. The collection already exists as a stored
+ * row by the time this opens, so Close is a complete, successful ending — the
+ * download and the pull request are for users who also want the descriptor
+ * committed. That is why the landing notice at the top is the headline and the
+ * YAML below it is framed as optional.
  *
  * Two exits on purpose, and the second one is the constrained one. Downloading
  * always works and always produces the right file in the right place, because
- * the user puts it there. The pull request is a convenience with four hard
- * limits baked into `plugin-catalog-import`, every one of which is stated on
- * screen BEFORE the button rather than discovered as a failure after it — see
- * the limits list below. That asymmetry is why Download is the plain, always
+ * the user puts it there. The pull request is a convenience with several hard
+ * limits baked into `plugin-catalog-import` — and one more that this flow
+ * creates, since the collection is already registered — every one of which is
+ * stated on screen BEFORE the button rather than discovered as a failure after
+ * it; see the limits list below. That asymmetry is why Download is the plain, always
  * enabled action and the pull request is the one that can be disabled.
  *
  * The preview deliberately does NOT use `PreviewCatalogInfoComponent`, despite
@@ -171,17 +218,34 @@ export function GeneratedYamlDialog(props: {
   yaml: string;
   /** The entity's name, for the pull request's default title. */
   name: string;
+  /** Ref of the entity the create registered, for the landing poll and link. */
+  entityRef: string;
+  /**
+   * The provider's refresh interval, as reported by the create. Quoted on
+   * screen, so the wait the user is told about is the one actually configured.
+   */
+  refreshSeconds: number;
 }): JSX.Element {
-  const { open, onClose, collectionUrl, yaml, name } = props;
+  const {
+    open,
+    onClose,
+    collectionUrl,
+    yaml,
+    name,
+    entityRef,
+    refreshSeconds
+  } = props;
   const classes = useStyles();
   const brandClasses = useBrandStyles();
   const catalogImportApi = useCatalogImportApi();
   const apis = useApiHolder();
   const configApi = apis.get(configApiRef);
+  const catalogApi = apis.get(catalogApiRef);
   const scmAuth = apis.get(scmAuthApiRef);
   const scmIntegrations = apis.get(scmIntegrationsApiRef);
 
   const [stage, setStage] = useState<Stage>({ status: 'review' });
+  const [landing, setLanding] = useState<Landing>({ status: 'waiting' });
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
 
@@ -241,8 +305,80 @@ export function GeneratedYamlDialog(props: {
     };
   }, [catalogFilename, catalogImportApi, name, open]);
 
+  /**
+   * Watches for the entity to appear in the catalog.
+   *
+   * The wait is real and unavoidable: the create wrote a row to the Bruno
+   * backend's store, and `BrunoCollectionEntityProvider` turns that into a
+   * catalog entity on its own schedule. So this dialog opens on a collection
+   * that is registered but not yet queryable, and the honest thing is to watch
+   * rather than to assert.
+   *
+   * Fires ONCE IMMEDIATELY before starting the interval, because a provider tick
+   * can easily land between the create returning and this rendering — without
+   * the leading call that user would watch a spinner for three seconds for
+   * nothing.
+   *
+   * A THROWN error is treated as another "not yet" and the poll continues. The
+   * two realistic throws here are a token refresh and a backend restart, both
+   * transient, and ending the wait on one would report a timeout for a
+   * collection that lands four seconds later. A resolved `undefined` is the same
+   * "not yet": `getEntityByRef` answers a missing ref with `undefined` rather
+   * than by rejecting, so the two paths are genuinely the same fact.
+   *
+   * `catalogApi` is read from the holder rather than with `useApi` for the same
+   * reason the import client is: a host app need not register it, and a missing
+   * catalog must cost the poll, not the dialog.
+   */
+  useEffect(() => {
+    if (!open || !catalogApi) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const deadline = Date.now() + landingTimeoutSeconds(refreshSeconds) * 1000;
+
+    const settle = (next: Landing): void => {
+      setLanding(next);
+      clearInterval(timer);
+    };
+
+    const poll = (): void => {
+      catalogApi
+        .getEntityByRef(entityRef)
+        .then((entity) => {
+          if (cancelled) {
+            return;
+          }
+          if (entity) {
+            settle({ status: 'landed' });
+          } else if (Date.now() >= deadline) {
+            settle({ status: 'timed-out' });
+          }
+        })
+        .catch(() => {
+          if (!cancelled && Date.now() >= deadline) {
+            settle({ status: 'timed-out' });
+          }
+        });
+    };
+
+    // Scheduled BEFORE the first call, so `timer` can be a `const` that the
+    // `settle` closure above closes over without a temporal-dead-zone hazard.
+    // Ordering costs nothing: `poll` settles on a promise, so the immediate
+    // call cannot reach `settle` until after this statement has run either way.
+    const timer = setInterval(poll, LANDING_POLL_MS);
+    poll();
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [catalogApi, entityRef, open, refreshSeconds]);
+
   const close = (): void => {
     setStage({ status: 'review' });
+    setLanding({ status: 'waiting' });
     onClose();
   };
 
@@ -293,9 +429,18 @@ export function GeneratedYamlDialog(props: {
   };
 
   /**
-   * The four things `catalogImportApi.submitPullRequest` will do that the user
-   * would otherwise only find out about afterwards. Stated up front, with the
-   * one that is checkable checked (`prSupported`) and the button pre-disabled.
+   * Everything `catalogImportApi.submitPullRequest` will do that the user would
+   * otherwise only find out about afterwards, plus the one thing THIS flow
+   * causes. Stated up front, with the one that is checkable checked
+   * (`prSupported`) and the button pre-disabled.
+   *
+   * The last item is the new one and it is not a limitation of the import API:
+   * the collection is already registered by the time this dialog opens, so a
+   * merged descriptor that is later registered as a location is a SECOND claim
+   * on the same entity name. It is warn-before-the-click rather than
+   * detect-and-repair on purpose — the recovery is one delete from the
+   * dashboard, and silently removing a user's collection because they opened a
+   * pull request would be a far worse surprise than the conflict it avoids.
    *
    * Two `WarningPanel` details matter here. `defaultExpanded`, because it is an
    * Accordion whose body starts collapsed — an unexpanded warning is not a
@@ -330,7 +475,70 @@ export function GeneratedYamlDialog(props: {
         made, so a backend that does not know <code>kind: Bruno</code> will
         reject it here.
       </li>
+      <li>
+        This collection is already registered from the Bruno UI. If you merge
+        this pull request and then also register the file as a catalog location,
+        two sources will claim the entity name <code>{name}</code>. Backstage
+        keeps whichever source claimed it first — the one you just created — and
+        logs a conflict for the other, so the descriptor will appear to do
+        nothing. Delete this collection from the Bruno dashboard first if you
+        want the descriptor to own it.
+      </li>
     </ul>
+  );
+
+  /**
+   * Whether the entity has reached the catalog, in the user's terms.
+   *
+   * Rendered above everything else in both stages, because it is the only thing
+   * on screen that is about the collection rather than about the descriptor —
+   * and because the user can be mid-pull-request when it lands.
+   *
+   * None of the three states claims more than is known. `waiting` says the
+   * collection is added (it is — the row is stored) and that the CATALOG has not
+   * caught up, without offering a link that would 404. `timed-out` is
+   * deliberately not written as a failure: nothing has gone wrong that
+   * re-submitting would fix, and telling the user otherwise would produce a
+   * second collection under a second name.
+   */
+  const landingNotice = (
+    <>
+      {landing.status === 'waiting' && (
+        <>
+          <Typography variant="body2" className={classes.landing}>
+            <CircularProgress size={16} />
+            <strong>{name} has been added.</strong>
+          </Typography>
+          <Typography variant="body2" color="textSecondary">
+            Backstage re-reads its collection list every {refreshSeconds}{' '}
+            seconds, so the entity appears in the catalog shortly; this message
+            becomes a link when it does. You can close this window — the
+            collection is registered either way.
+          </Typography>
+        </>
+      )}
+      {landing.status === 'landed' && (
+        <Typography variant="body2" className={classes.landing}>
+          <strong>{name} is in the catalog.</strong>
+          <EntityRefLink entityRef={entityRef} defaultKind="Bruno" />
+        </Typography>
+      )}
+      {landing.status === 'timed-out' && (
+        <>
+          <Typography variant="body2">
+            <strong>
+              {name} is registered but has not appeared in the catalog yet.
+            </strong>
+          </Typography>
+          <Typography variant="body2" color="textSecondary">
+            That usually means the collection could not be re-read from source
+            control on the last refresh — check the backend log for{' '}
+            <code>BrunoCollectionEntityProvider</code>. It will appear on a later
+            refresh; nothing needs to be re-submitted.
+          </Typography>
+        </>
+      )}
+    </>
   );
 
   let content: JSX.Element;
@@ -339,9 +547,17 @@ export function GeneratedYamlDialog(props: {
   if (stage.status === 'submitted') {
     content = (
       <>
-        <Typography variant="body2">
-          Pull request opened. The collection appears in the catalog once it is
-          merged and Backstage reads the new <code>{catalogFilename}</code>.
+        {landingNotice}
+        {/*
+          Deliberately not "the collection appears in the catalog once it is
+          merged" any more: it is already registered, and the pull request only
+          decides whether the descriptor also lives in the repository. Saying
+          otherwise here would contradict the notice directly above.
+        */}
+        <Typography variant="body2" className={classes.section}>
+          Pull request opened. Merging it puts{' '}
+          <code>{catalogFilename}</code> in the repository; your collection is
+          registered either way.
         </Typography>
         <Typography variant="body2" className={classes.section}>
           <Link to={stage.link}>{stage.link}</Link>
@@ -361,10 +577,13 @@ export function GeneratedYamlDialog(props: {
     const submitting = stage.status === 'submitting';
     content = (
       <>
-        <Typography variant="body2">
-          This is the entity descriptor for your collection. Nothing has been
-          added to the catalog yet — Backstage reads entities from source
-          control, so this file has to land in a repository first.
+        {landingNotice}
+
+        <Typography variant="body2" className={classes.section}>
+          Your collection is registered. This is the equivalent{' '}
+          <code>catalog-info.yaml</code> — you only need it if you also want the
+          descriptor committed to your repository. Downloading it and opening a
+          pull request are both optional.
         </Typography>
 
         <Box className={classes.section}>
@@ -467,7 +686,7 @@ export function GeneratedYamlDialog(props: {
       disableEscapeKeyDown={stage.status === 'submitting'}
       onClose={close}
     >
-      <DialogTitle>Add {name} to the catalog</DialogTitle>
+      <DialogTitle>{name} added</DialogTitle>
       <DialogContent>{content}</DialogContent>
       <DialogActions>{actions}</DialogActions>
     </Dialog>

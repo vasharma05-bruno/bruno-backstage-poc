@@ -29,12 +29,22 @@ export {
 export { createManifestProbe } from './service/manifestProbe';
 export { createRouter } from './service/router';
 export { generateOcDocsHtml } from './service/generateOcDocsHtml';
+export { createUiCollectionStore } from './store/uiCollectionStore';
+export { createStoredCollectionReader } from './provider/storedCollections';
 
 export type {
   CollectionManifest,
   CollectionSnapshot,
   ManifestProbe
 } from './service/manifestProbe';
+export type {
+  UiCollectionRow,
+  UiCollectionStore
+} from './store/uiCollectionStore';
+export type {
+  StoredCollection,
+  StoredCollectionReader
+} from './provider/storedCollections';
 
 // Re-export the shared contract types so the frontend may reuse them.
 export type {

@@ -5,6 +5,7 @@ import type {
 import { MiddlewareFactory } from '@backstage/backend-defaults/rootHttpRouter';
 import type { Entity } from '@backstage/catalog-model';
 import type { Config } from '@backstage/config';
+import { ConflictError, InputError, NotFoundError } from '@backstage/errors';
 import type { CatalogService } from '@backstage/plugin-catalog-node';
 import express from 'express';
 import Router from 'express-promise-router';
@@ -13,7 +14,24 @@ import {
   DEFINITION_BYTES_ANNOTATION,
   DEFINITION_OMITTED_ANNOTATION
 } from '../processor/BrunoKindProcessor';
+import { collectionNameFromUrl } from '../provider/BrunoCollectionEntityProvider';
+import { readBrunoCollections } from './brunoConfig';
+import type { UiCollectionStore } from '../store/uiCollectionStore';
 import { generateOcDocsHtml } from './generateOcDocsHtml';
+
+/**
+ * `metadata.name`'s grammar, from `@backstage/catalog-model`'s entity envelope
+ * schema: alphanumerics, dashes, underscores and dots, starting and ending
+ * alphanumeric, at most 63 characters.
+ *
+ * Duplicated from `plugins/bruno/src/components/AddCollection/
+ * generateCatalogInfo.ts:38-39` rather than imported — the two plugins are
+ * separate packages and the frontend already duplicates `BRUNO_API_VERSION`
+ * for the same reason. Keep the two in step. A drift here is not silent: the
+ * catalog rejects a name this accepts and the entity never appears.
+ */
+const ENTITY_NAME_PATTERN = /^[a-zA-Z0-9]([-_.a-zA-Z0-9]*[a-zA-Z0-9])?$/;
+const MAX_ENTITY_NAME_LENGTH = 63;
 
 export interface RouterOptions {
   logger: LoggerService;
@@ -23,26 +41,57 @@ export interface RouterOptions {
   /** Reads a collection folder from source control, using the SERVER's
    *  integration credentials. Backs the add-collection scan. */
   probe: ManifestProbe;
+  /** The write model for collections added from the Bruno dashboard. Read back
+   *  service-to-service by `BrunoCollectionEntityProvider`. */
+  uiCollections: UiCollectionStore;
+  /** `bruno.schedule.frequencySeconds` — the provider's tick, and therefore how
+   *  long a created collection takes to appear and a deleted one to vanish.
+   *  Returned on the create and delete responses so the UI can quote the real
+   *  number instead of hardcoding the default. */
+  refreshSeconds: number;
 }
 
 /**
  * Builds the Express router for `/api/bruno/*`.
  *
- *   GET  /health                          -> { status: 'ok' }
- *   GET  /entities/:namespace/:name/docs  -> text/html (docs for a kind:Bruno entity)
- *   POST /collections/probe               -> { found, ... } (does this URL hold a collection?)
+ *   GET    /health                          -> { status: 'ok' }
+ *   GET    /entities/:namespace/:name/docs  -> text/html (docs for a kind:Bruno entity)
+ *   POST   /collections/probe               -> { found, ... } (does this URL hold a collection?)
+ *   POST   /collections                     -> 201 (add a collection; auth: user)
+ *   GET    /collections                     -> UiCollectionRow[] (auth: user | service;
+ *                                              a user's rows omit `createdBy`)
+ *   DELETE /collections/:name               -> { deleted: true } (auth: user)
  *
- * Deliberately this small. Everything the UI knows about a collection now
- * travels on the `kind: Bruno` entity itself, so the catalog is the read model
- * and this plugin serves only the two things an entity cannot carry: a RENDERED
- * document, which needs an origin whose Content-Security-Policy admits the
- * OpenCollection renderer bundle, and a read of a repository that has not been
- * catalogued yet, which a browser cannot perform.
+ * The first three are read-only and were the whole of this plugin: everything
+ * the UI knows about an EXISTING collection travels on the `kind: Bruno` entity
+ * itself, so the catalog is the read model and this plugin served only the two
+ * things an entity cannot carry — a RENDERED document, which needs an origin
+ * whose Content-Security-Policy admits the OpenCollection renderer bundle, and
+ * a read of a repository that has not been catalogued yet, which a browser
+ * cannot perform.
+ *
+ * The last three are why this plugin grew a database again. The catalog is a
+ * read model with no WRITE model: entities come from a Location (a descriptor
+ * that must already exist) or from an EntityProvider, and there is no
+ * insert-an-entity API anywhere in Backstage. So the Bruno UI's "add a
+ * collection" cannot write to the catalog at all — it writes HERE, and
+ * `BrunoCollectionEntityProvider` materialises the stored rows into entities on
+ * its next tick, exactly as it already does for `bruno.collections[]`. This
+ * plugin is now the authoritative store for UI-created collections; the catalog
+ * is downstream of it and always will be.
  */
 export async function createRouter(
   options: RouterOptions
 ): Promise<express.Router> {
-  const { logger, config, catalog, httpAuth, probe } = options;
+  const {
+    logger,
+    config,
+    catalog,
+    httpAuth,
+    probe,
+    uiCollections,
+    refreshSeconds
+  } = options;
 
   const router = Router();
   router.use(express.json());
@@ -119,6 +168,228 @@ export async function createRouter(
       ...(snapshot.version && { version: snapshot.version }),
       ...(snapshot.description && { description: snapshot.description })
     });
+  });
+
+  // The three routes below are registered AFTER `POST /collections/probe` on
+  // purpose. `probe` is the only literal path segment under `/collections`, and
+  // keeping it earlier in the router's stack means it still wins if anyone
+  // later adds a `POST /collections/:name`. As things stand Express cannot
+  // confuse them anyway — the parameterised route is a DELETE — and a
+  // `DELETE /collections/probe` binds `:name='probe'` and 404s honestly.
+
+  // Adds a collection to the catalog from the Bruno dashboard.
+  //
+  // The row this writes is the only record of the collection; the entity is
+  // produced from it by `BrunoCollectionEntityProvider` within
+  // `bruno.schedule.frequencySeconds`. That is why the response carries
+  // `refreshSeconds`: the dialog has to tell the user how long "shortly" is,
+  // and the honest answer is instance-specific.
+  //
+  // Auth is `['user']` and deliberately excludes services. This is a
+  // user-initiated write whose `created_by` column is read straight off the
+  // principal; there is no service caller, because the provider only ever
+  // READS. Admitting `['service']` would let any backend plugin holding a
+  // plugin token mint catalog-visible entities with no user attribution, and
+  // `created_by` would have to become a spoofable body field to carry anything
+  // at all.
+  //
+  // POC scope, matching the posture on the probe route above: any authenticated
+  // user may ask the backend to read any URL its integrations can reach (an
+  // SSRF surface and a private-repository existence oracle), and any
+  // authenticated user may add a collection that everyone else then sees.
+  // Documented, not fixed — see docs/execution/BE-P1-plan.md §3.D.
+  router.post('/collections', async (req, res) => {
+    const credentials = await httpAuth.credentials(req, { allow: ['user'] });
+    const createdBy = credentials.principal.userEntityRef;
+
+    const body = (req.body ?? {}) as {
+      url?: unknown;
+      name?: unknown;
+      owner?: unknown;
+      partOf?: unknown;
+    };
+
+    const rawUrl = body.url;
+    if (typeof rawUrl !== 'string' || !rawUrl.trim()) {
+      throw new InputError('A collection URL is required.');
+    }
+    const name = body.name;
+    if (typeof name !== 'string' || !name.trim()) {
+      throw new InputError('An entity name is required.');
+    }
+    if (name.length > MAX_ENTITY_NAME_LENGTH || !ENTITY_NAME_PATTERN.test(name)) {
+      throw new InputError(
+        `"${name}" is not a valid entity name. Use up to `
+        + `${MAX_ENTITY_NAME_LENGTH} letters, digits, dashes, underscores and `
+        + 'dots, starting and ending with a letter or digit.'
+      );
+    }
+    const owner
+      = typeof body.owner === 'string' && body.owner ? body.owner : undefined;
+    const partOf
+      = Array.isArray(body.partOf)
+        && body.partOf.every((v) => typeof v === 'string')
+        ? (body.partOf as string[])
+        : [];
+
+    // Stored NORMALIZED, so the provider's `claimed` key and the entity's
+    // `url:` location annotation are the same string a `bruno.collections[]`
+    // entry would have produced. The provider normalizes again on every tick;
+    // `normalize` is idempotent, so the two paths converge on one identity.
+    let normalized: string;
+    try {
+      normalized = probe.normalize(rawUrl);
+    } catch (e) {
+      throw new InputError(
+        `Backstage could not use this URL: ${String((e as Error)?.message ?? e)}`
+      );
+    }
+
+    // Manifest validation is REQUIRED here, where the equivalent check on the
+    // provider is deliberately lenient. A collection that cannot be read is
+    // emitted anyway on a refresh (a transient outage must not delete an
+    // existing entity), but a folder that has never held a manifest must not
+    // become a row: it would be skipped on every tick forever and the user
+    // would be left waiting for an entity that is never coming.
+    //
+    // Reuses the router's own probe instance rather than the module's — the two
+    // are separate by design (see plugin.ts) — so this read warms the cache the
+    // ingest a few seconds later reads from.
+    let snapshot;
+    try {
+      snapshot = await probe.probe(rawUrl);
+    } catch (e) {
+      throw new InputError(
+        `Backstage could not read this URL: ${String((e as Error)?.message ?? e)}`
+      );
+    }
+    if (!snapshot) {
+      throw new InputError(
+        `No bruno.json or opencollection.yml/.yaml found at ${normalized}. `
+        + 'Point at the folder that holds the collection.'
+      );
+    }
+
+    // Two duplicate-name checks with one meaning. The first is another UI
+    // collection; the second is a `bruno.collections[]` entry, and without it
+    // the create SUCCEEDS and the entity then never appears — the provider's
+    // first-wins `claimed` guard skips the UI entry silently, because config
+    // entries are iterated first on purpose.
+    const existing = await uiCollections.getByName(name);
+    if (existing) {
+      throw new ConflictError(
+        `A collection named "${name}" has already been added from the Bruno UI `
+        + `(${existing.url}). Pick a different name.`
+      );
+    }
+    for (const entry of readBrunoCollections(config, logger)) {
+      let configName: string;
+      try {
+        configName = entry.name ?? collectionNameFromUrl(probe.normalize(entry.url));
+      } catch {
+        // An unusable URL in config is the provider's problem to log, not a
+        // reason to fail this request; it can never claim a name either.
+        continue;
+      }
+      // Lower-cased on BOTH sides, for the reason spelled out on
+      // `UiCollectionStore.getByName`: an entity ref is lower-cased when it is
+      // stringified, so a config entry named `Payments` and a UI collection
+      // named `payments` are a collision, not two names. Comparing raw strings
+      // lets this create through, and the provider then skips it on every tick
+      // forever.
+      if (
+        configName.toLocaleLowerCase('en-US')
+        === name.toLocaleLowerCase('en-US')
+      ) {
+        throw new ConflictError(
+          `A collection named "${name}" is already defined in app-config.yaml `
+          + `(${entry.url}), and a configured collection always wins. Pick a `
+          + 'different name.'
+        );
+      }
+    }
+
+    await uiCollections.insert({
+      name,
+      url: normalized,
+      owner,
+      partOf,
+      createdBy
+    });
+
+    res.status(201).json({
+      name,
+      namespace: 'default',
+      entityRef: `bruno:default/${name}`,
+      url: normalized,
+      refreshSeconds
+    });
+  });
+
+  // Every UI-created collection, for `BrunoCollectionEntityProvider` and for
+  // the dashboard's pending-collections strip.
+  //
+  // `['service']` is REQUIRED and was the original point of the route: the
+  // provider calls it with a plugin token minted by `auth.getPluginRequestToken`,
+  // whose principal type is `service`. Without `'service'` in the allow-list
+  // every provider tick is a 403 and no UI-created collection ever reaches the
+  // catalog.
+  //
+  // `'user'` was withheld until there was a user-facing consumer, and now there
+  // is one. A collection is stored the instant `POST /collections` returns but
+  // is not an entity until the provider's next tick, so the dashboard's list is
+  // unchanged for up to `bruno.schedule.frequencySeconds` after a create — and
+  // a user who closed modal 2 (which is a safe exit, by design) lands on a page
+  // that says nothing at all about the collection they just added. The strip
+  // compares this list against the catalog and names what has not landed yet;
+  // it cannot be built from the catalog, because the whole subject is what the
+  // catalog does not have.
+  //
+  // The reason `'user'` was withheld is honoured rather than dropped: the rows
+  // carry `created_by`, a user entity ref, for every UI collection in the
+  // INSTANCE, and none of that is the requesting user's business. So a user
+  // principal gets rows with `createdBy` omitted. That omission is what makes
+  // the widening safe — the remaining fields (name, url, partOf, owner) are all
+  // about to be public on a catalog entity anyway, a minute from now. Service
+  // callers get whole rows: the provider is the store's own reader, and
+  // `created_by` is stored for the ownership check the DELETE route's IDOR note
+  // describes.
+  router.get('/collections', async (req, res) => {
+    const credentials = await httpAuth.credentials(req, {
+      allow: ['user', 'service']
+    });
+    const rows = await uiCollections.listAll();
+    if (credentials.principal.type === 'user') {
+      res.json(rows.map(({ createdBy: _createdBy, ...row }) => row));
+      return;
+    }
+    res.json(rows);
+  });
+
+  // Removes a UI-created collection. The entity disappears from the catalog on
+  // the provider's next tick, when the `full` mutation no longer names it.
+  //
+  // A missing row is a 404 with an explanation rather than an idempotent
+  // success, because the interesting case is not "already deleted" — it is a
+  // collection that came from `app-config.yaml` or from a `catalog-info.yaml`
+  // and cannot be removed from here at all. Silently succeeding would leave the
+  // user watching a row that never goes away.
+  //
+  // POC scope (IDOR): any authenticated user may delete any UI-created
+  // collection. `created_by` is recorded and NOT enforced. Beta hardening is a
+  // permission plus an ownership check against that column.
+  router.delete('/collections/:name', async (req, res) => {
+    await httpAuth.credentials(req, { allow: ['user'] });
+    const { name } = req.params;
+    const removed = await uiCollections.delete(name);
+    if (!removed) {
+      throw new NotFoundError(
+        `No collection named "${name}" was added from the Bruno UI. `
+        + 'Collections defined in app-config.yaml, or by a catalog-info.yaml in '
+        + 'source control, are removed by editing that file.'
+      );
+    }
+    res.json({ deleted: true, name, refreshSeconds });
   });
 
   // The `kind: Bruno` entity's docs, built from the OpenCollection YAML the

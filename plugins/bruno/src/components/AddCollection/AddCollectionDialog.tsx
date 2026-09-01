@@ -111,10 +111,13 @@ function nameFromUrl(url: string): string {
  * right for an existing entity and wrong for a new one, so the check happens
  * here instead.
  *
- * Submitting does NOT create anything. It hands the collected fields up to
- * {@link AddCollectionAction}, which generates the descriptor and opens modal 2
- * — the catalog has no "create entity" endpoint, and everything about a
- * collection lives in source control (see `lib/unlinkPr.ts`).
+ * Submitting CREATES the collection. It still is not the catalog that creates
+ * it: the catalog has no "create entity" endpoint — entities come from a
+ * Location that must already exist or from an EntityProvider — so the fields go
+ * to the Bruno backend's own store and `BrunoCollectionEntityProvider`
+ * materialises the entity from there on its next tick. That indirection is the
+ * reason the collection appears within `bruno.schedule.frequencySeconds` rather
+ * than instantly, and modal 2 is where that wait is explained.
  */
 export function AddCollectionDialog(props: {
   open: boolean;
@@ -125,10 +128,28 @@ export function AddCollectionDialog(props: {
    * its API across the navigation.
    */
   initialPartOf?: string;
-  /** Called with the completed input when the user submits. */
-  onSubmit: (input: BrunoEntityInput) => void;
+  /**
+   * Creates the collection, resolving `true` when it was created.
+   *
+   * The boolean is what decides whether the form empties itself — see
+   * {@link reset}. It is a promise because the create is a round trip the user
+   * has to be held through; the dialog stays open and inert for its duration
+   * rather than closing optimistically.
+   */
+  onSubmit: (input: BrunoEntityInput) => Promise<boolean>;
+  /** Whether a create is in flight, which locks the dialog's actions. */
+  submitting?: boolean;
+  /** The last create failure, shown under the actions. */
+  error?: string;
 }): JSX.Element {
-  const { open, onClose, initialPartOf, onSubmit } = props;
+  const {
+    open,
+    onClose,
+    initialPartOf,
+    onSubmit,
+    submitting = false,
+    error
+  } = props;
   const classes = useStyles();
   const brandClasses = useBrandStyles();
   const brunoApi = useApi(brunoApiRef);
@@ -273,10 +294,10 @@ export function AddCollectionDialog(props: {
   /**
    * Empties the form.
    *
-   * Called on submit as well as on cancel. The dialog stays MOUNTED once the
-   * flow hands off to modal 2 (it is only `open={false}`), so without this the
-   * next press of "Add Bruno Collection" would open a form already filled in
-   * with the collection the user just finished registering.
+   * Called on cancel, and on a submit that SUCCEEDED. The dialog stays MOUNTED
+   * once the flow hands off to modal 2 (it is only `open={false}`), so without
+   * this the next press of "Add Bruno Collection" would open a form already
+   * filled in with the collection the user just finished registering.
    */
   const reset = (): void => {
     setUrl('');
@@ -295,17 +316,30 @@ export function AddCollectionDialog(props: {
   const nameError = name ? validateEntityName(name) : undefined;
   const canSubmit = probe.status === 'found' && !!name && !nameError;
 
-  const submit = (): void => {
+  /**
+   * Submits, and clears the form ONLY if the collection was created.
+   *
+   * `reset()` used to sit on the unconditional path here, which was correct
+   * while submitting could not fail. Now it can, and the failure that dominates
+   * is a name already taken — a `409` the user answers by changing one field.
+   * Emptying the form on that would throw away a URL that had to be probed, an
+   * API selection and an owner, to punish a typo in the one field that was
+   * wrong. The awaited boolean is the minimal signal that distinguishes the two
+   * cases; it needs no extra state.
+   */
+  const submit = async (): Promise<void> => {
     if (!canSubmit) {
       return;
     }
-    onSubmit({
+    const created = await onSubmit({
       name,
       url: url.trim(),
       partOf: selectedApis.map((e) => stringifyEntityRef(e)),
       owner: owner ? stringifyEntityRef(owner) : undefined
     });
-    reset();
+    if (created) {
+      reset();
+    }
   };
 
   /** The one-line verdict under the URL field. */
@@ -362,13 +396,26 @@ export function AddCollectionDialog(props: {
   }
 
   return (
-    <Dialog open={open} maxWidth="md" fullWidth onClose={close}>
+    <Dialog
+      open={open}
+      maxWidth="md"
+      fullWidth
+      // Dismissing mid-create would empty the form (`close` resets) while the
+      // create it started is still running, so the user would lose the fields
+      // and then be handed modal 2 for a collection they can no longer see the
+      // inputs of. Same reasoning as modal 2's guard around the pull request.
+      disableBackdropClick={submitting}
+      disableEscapeKeyDown={submitting}
+      onClose={close}
+    >
       <DialogTitle>Add a Bruno collection</DialogTitle>
       <DialogContent>
         <Typography variant="body2">
-          Point Backstage at a collection in source control. Nothing is created
-          yet — the next step shows you the <code>catalog-info.yaml</code> this
-          produces, which you can download or open as a pull request.
+          Point Backstage at a collection in source control. Submitting
+          registers it in the catalog. The next step shows the equivalent{' '}
+          <code>catalog-info.yaml</code>, which you can download or open as a
+          pull request if you also want the descriptor in your repository — both
+          are optional.
         </Typography>
 
         <Box className={classes.field}>
@@ -472,16 +519,35 @@ export function AddCollectionDialog(props: {
             TextFieldProps={{ placeholder: 'Search groups' }}
           />
         </Box>
+
+        {/*
+          The create failure sits with the form rather than replacing it: the
+          message is almost always about one field ("a collection named X was
+          already added"), and it is only actionable while the rest of the
+          answers are still on screen.
+        */}
+        {error && (
+          <Typography
+            variant="body2"
+            color="error"
+            className={classes.field}
+          >
+            {error}
+          </Typography>
+        )}
       </DialogContent>
       <DialogActions>
-        <Button onClick={close}>Cancel</Button>
+        <Button onClick={close} disabled={submitting}>
+          Cancel
+        </Button>
         <Button
           variant="contained"
           className={brandClasses.accentButton}
-          disabled={!canSubmit}
-          onClick={submit}
+          disabled={!canSubmit || submitting}
+          startIcon={submitting ? <CircularProgress size={16} /> : undefined}
+          onClick={() => void submit()}
         >
-          Generate catalog-info.yaml
+          {submitting ? 'Adding…' : 'Add collection'}
         </Button>
       </DialogActions>
     </Dialog>

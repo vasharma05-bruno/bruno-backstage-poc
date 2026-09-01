@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import Box from '@material-ui/core/Box';
+import DeleteOutlineIcon from '@material-ui/icons/DeleteOutline';
 import { Content, ContentHeader, Link, SupportButton } from '@backstage/core-components';
-import type { TableColumn } from '@backstage/core-components';
+import type { TableColumn, TableProps } from '@backstage/core-components';
 import type { Entity } from '@backstage/catalog-model';
 import { CatalogTable } from '@backstage/plugin-catalog';
 import type { CatalogTableRow } from '@backstage/plugin-catalog';
@@ -17,6 +18,7 @@ import {
   useEntityList
 } from '@backstage/plugin-catalog-react';
 import {
+  collectionOrigin,
   environments,
   partOfRefs,
   requestCount,
@@ -24,6 +26,8 @@ import {
   version
 } from '../../lib/brunoEntity';
 import { elideCollectionUrl } from '../../lib/scmUrl';
+import { DeleteCollectionDialog } from './DeleteCollectionDialog';
+import { PendingCollections } from './PendingCollections';
 import { StatTiles } from './StatTiles';
 import type { StatTile } from './StatTiles';
 
@@ -200,6 +204,68 @@ function BrunoStatTiles(): JSX.Element {
 }
 
 /**
+ * The collections table, plus the remove affordance on the rows that have one.
+ *
+ * Its own component for the same reason `BrunoStatTiles` is: the action's
+ * `onClick` has to put an entity into component state so the confirmation
+ * dialog can be rendered for it, and `BrunoPage` below is a stateless
+ * composition of providers.
+ *
+ * The gate is `collectionOrigin(entity) === 'ui'` and nothing else. That
+ * accessor reads the `usebruno.com/origin` annotation the provider stamps, and
+ * it CANNOT return `'ui'` from its own location-annotation fallback — a UI
+ * collection and a committed descriptor are the same file shape, which is the
+ * ambiguity the annotation was added to resolve. So an entity that has not been
+ * processed yet, or was ingested by an older backend, has no delete button
+ * rather than a button that fails. Re-deriving the origin from
+ * `backstage.io/managed-by-location` here would be a second, worse answer to a
+ * question `lib/brunoEntity.ts` already answers for `changeRoute` too.
+ *
+ * `hidden` rather than `disabled`: a disabled icon on every config-origin row
+ * is a permanent piece of furniture that means nothing to the operator who put
+ * those rows in `app-config.yaml`, and the reason it is disabled has nowhere to
+ * live in a table cell.
+ */
+function BrunoCollectionsTable(): JSX.Element {
+  const [pending, setPending] = useState<Entity | undefined>();
+
+  // Memoised for the same reason `columns` is a module constant: `CatalogTable`
+  // hands this array to material-table, which treats a new `actions` identity
+  // as a reason to rebuild the actions column on every render — and this
+  // component re-renders on every entity-list change underneath it. `setPending`
+  // is a stable setter, so there is nothing for the array to depend on.
+  const actions = useMemo<TableProps<CatalogTableRow>['actions']>(
+    () => [
+      (row) => ({
+        icon: () => <DeleteOutlineIcon fontSize="small" />,
+        tooltip: 'Remove this collection',
+        hidden: collectionOrigin(row.entity) !== 'ui',
+        onClick: () => setPending(row.entity)
+      })
+    ],
+    []
+  );
+
+  return (
+    <>
+      {/*
+        An explicit title, because the generated one would read "All brunos":
+        it is built as `<user filter> <type> <pluralize(kind label)>`, and
+        `pluralize('Bruno')` has no idea our kind is a collection.
+      */}
+      <CatalogTable columns={columns} actions={actions} title="Collections" />
+      {pending && (
+        <DeleteCollectionDialog
+          open
+          entity={pending}
+          onClose={() => setPending(undefined)}
+        />
+      )}
+    </>
+  );
+}
+
+/**
  * The Bruno Collections dashboard, at `/bruno`.
  *
  * A direct mirror of `DefaultApiExplorerPage`
@@ -250,12 +316,14 @@ export function BrunoPage(): JSX.Element {
           </CatalogFilterLayout.Filters>
           <CatalogFilterLayout.Content>
             {/*
-              An explicit title, because the generated one would read "All
-              brunos": it is built as
-              `<user filter> <type> <pluralize(kind label)>`, and
-              `pluralize('Bruno')` has no idea our kind is a collection.
+              Above the table and inside the provider, because it reports on
+              collections the table CANNOT show yet — they are stored but not
+              catalogued — and because it calls `useEntityList().refresh` when
+              one of them lands, which is what makes the table pick it up. It
+              renders nothing at all when there is nothing outstanding.
             */}
-            <CatalogTable columns={columns} title="Collections" />
+            <PendingCollections />
+            <BrunoCollectionsTable />
           </CatalogFilterLayout.Content>
         </CatalogFilterLayout>
       </EntityListProvider>

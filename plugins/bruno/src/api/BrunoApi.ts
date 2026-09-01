@@ -43,6 +43,89 @@ export type ProbeResult
     | { found: false; reason: 'unreadable'; message: string };
 
 /**
+ * What {@link BrunoApi.createCollection} needs to register a collection.
+ *
+ * The same four fields `BrunoEntityInput` collects for the descriptor, because
+ * the two describe the same collection — one as a stored row, one as YAML. They
+ * are separate types rather than one shared type because the descriptor's shape
+ * is fixed by the catalog's entity envelope and this one is fixed by the
+ * backend's route body; letting either drag the other is how a rename in one
+ * ends up silently changing the wire format of the other.
+ */
+export interface CreateCollectionInput {
+  /** `metadata.name` of the entity to create. Must be unique in the instance. */
+  name: string;
+  /** The collection folder in source control. Normalized by the backend. */
+  url: string;
+  /** Entity references for `spec.partOf`. */
+  partOf: string[];
+  /** `spec.owner`, when one was picked. */
+  owner?: string;
+}
+
+/** What the backend recorded, once a collection has been registered. */
+export interface CreatedCollection {
+  name: string;
+  namespace: string;
+  /** Ref of the entity that WILL exist, once the provider has run. */
+  entityRef: string;
+  /**
+   * The NORMALIZED collection URL the backend stored, which is not necessarily
+   * the string that was submitted.
+   */
+  url: string;
+  /**
+   * The provider's refresh interval, so the dialog can quote the real number
+   * instead of hardcoding the 60 s default. It is configurable
+   * (`bruno.schedule.frequencySeconds`), and a wrong figure on screen is worse
+   * than no figure — a user told "a minute" on a ten-minute schedule concludes
+   * the create failed.
+   */
+  refreshSeconds: number;
+}
+
+/**
+ * One stored collection, as a browser is allowed to see it.
+ *
+ * Deliberately NOT the backend's whole row. `GET /collections` answers a user
+ * principal with `createdBy` omitted — it is a user entity ref for every UI
+ * collection in the instance, and disclosing who added what is not something
+ * the dashboard needs to do its job — so the field is absent from this type
+ * rather than optional. An optional field invites a caller to render it and get
+ * `undefined` forever.
+ *
+ * Everything that IS here is about to be visible on a catalog entity anyway,
+ * within `bruno.schedule.frequencySeconds`. That is the whole point: this list
+ * is the same collections the catalog will hold, read a refresh interval early.
+ */
+export interface StoredCollectionSummary {
+  /** `metadata.name` of the entity this row will produce. */
+  name: string;
+  /** The normalized collection folder in source control. */
+  url: string;
+  /** Entity references destined for `spec.partOf`. */
+  partOf: string[];
+  /** `spec.owner`, when one was picked. */
+  owner?: string;
+  /** ISO timestamp of when the row was stored. */
+  createdAt: string;
+}
+
+/** What the backend confirmed, once a collection has been removed. */
+export interface DeletedCollection {
+  name: string;
+  /**
+   * The provider's refresh interval again, and the reason this is not a `void`
+   * call. Deleting is eventually consistent in exactly the way creating is: the
+   * row is gone, the entity is not, and the dashboard still shows the row the
+   * user just deleted. The confirmation has to quote how long that lasts, and
+   * the response is the only place the real figure is available to a frontend
+   * with no config read of its own.
+   */
+  refreshSeconds: number;
+}
+
+/**
  * Client for the `bruno` backend plugin.
  *
  * All calls resolve the backend base URL through the discovery API for plugin
@@ -52,17 +135,29 @@ export type ProbeResult
  * EXISTS travels on the `kind: Bruno` entity itself — the catalog is the read
  * model, so listing, filtering, counting and relation-walking all go through
  * `@backstage/plugin-catalog-react` rather than through this client. What is
- * left are the two things no entity can answer:
+ * left are the four things no entity can answer:
  *
  *  - a RENDERED document: the docs page has to be served from an origin whose
  *    Content-Security-Policy allows the OpenCollection renderer's bundle, which
  *    rules out assembling the HTML in the browser (see `useEntityDocsSession`);
  *  - a question about a repository that is NOT in the catalog yet, which is
- *    what the add-collection flow asks before it will generate a descriptor.
+ *    what the add-collection flow asks before it will generate a descriptor;
+ *  - bringing a collection INTO existence, and taking one back out;
+ *  - and, following from that, which collections have been brought into
+ *    existence but are not entities YET — a question the catalog answers "none"
+ *    to by construction, because the gap is exactly what it does not know about.
  *
- * The backend still exposes the connection-store routes this interface used to
- * wrap (`/connections`, `/dashboard`, `/collections/*`); removing them is a
- * separate backend task. They simply have no frontend caller any more.
+ * That third one is here because the catalog is a read model with no write
+ * model. There is no "create entity" endpoint anywhere in `catalogApi`:
+ * entities come from a Location (a descriptor that must already exist
+ * somewhere a reader can fetch) or from an EntityProvider. So a browser cannot
+ * create one directly. Instead these two calls write to the `bruno` backend's
+ * own store, and `BrunoCollectionEntityProvider` materialises the catalog
+ * entity from it on its next tick — which is why both of them are eventually
+ * consistent rather than immediate, and why every caller has to say so on
+ * screen. The fourth call reads that same store back, which is the only way a
+ * screen can say so with the collection's NAME in the sentence rather than as a
+ * general disclaimer.
  */
 export interface BrunoApi {
   /**
@@ -89,6 +184,54 @@ export interface BrunoApi {
     name: string,
     theme: 'light' | 'dark'
   ): Promise<string>;
+
+  /**
+   * Registers a collection, so that the catalog grows a `kind: Bruno` entity
+   * for it on the provider's next refresh.
+   *
+   * Resolving does NOT mean the entity exists — it means the backend has stored
+   * the row that will produce it. The gap is `refreshSeconds` on the returned
+   * value, and the caller is responsible for saying so rather than showing a
+   * catalog link that 404s.
+   *
+   * REJECTS with the backend's own message for the cases the user can act on,
+   * and the duplicate-name one is the important one: the name is permanent, the
+   * form is still on screen, and "HTTP 409" tells the user nothing about which
+   * field to change. See `BrunoClient.createCollection`.
+   */
+  createCollection(input: CreateCollectionInput): Promise<CreatedCollection>;
+
+  /**
+   * Removes a collection that was registered through {@link createCollection}.
+   *
+   * Only the stored row is removed. The collection in source control is
+   * untouched, and so is any `catalog-info.yaml` committed for it. Like the
+   * create, the catalog catches up on the provider's next tick, so the entity
+   * is still listed for up to `bruno.schedule.frequencySeconds` afterwards.
+   *
+   * Rejects with a not-found message when the entity was not created here —
+   * a config- or descriptor-origin collection is edited in its own file, and
+   * the route says which.
+   */
+  deleteCollection(name: string): Promise<DeletedCollection>;
+
+  /**
+   * Every collection registered through {@link createCollection}, in this
+   * instance — including the ones the catalog does not have yet.
+   *
+   * The one read on this client that is NOT answered by the catalog, and it has
+   * to be: a collection exists as a stored row the moment the create returns,
+   * and as an entity only after `BrunoCollectionEntityProvider`'s next tick.
+   * Between those two moments the catalog's honest answer is "no such thing",
+   * which is precisely the state the dashboard has to be able to describe. So
+   * this is the WRITE model being read directly, and the caller's job is to
+   * subtract what the catalog already has.
+   *
+   * Not a substitute for the catalog anywhere else. It knows nothing about
+   * configured or descriptor-defined collections, carries no processed metadata,
+   * and is not filtered by anything the user picked.
+   */
+  listCollections(): Promise<StoredCollectionSummary[]>;
 }
 
 export const brunoApiRef = createApiRef<BrunoApi>({

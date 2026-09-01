@@ -6,6 +6,8 @@ import { catalogServiceRef } from '@backstage/plugin-catalog-node';
 import { createRouter } from './service/router';
 import { readCacheTtlMs, readDefinitionOptions } from './service/brunoConfig';
 import { createManifestProbe } from './service/manifestProbe';
+import { readRefreshSeconds } from './service/schedule';
+import { createUiCollectionStore } from './store/uiCollectionStore';
 
 /**
  * The Bruno backend plugin. Registers under plugin id `bruno`, so its routes
@@ -23,6 +25,10 @@ export const brunoPlugin = createBackendPlugin({
         logger: coreServices.logger,
         config: coreServices.rootConfig,
         httpAuth: coreServices.httpAuth,
+        // Stores the collections added from the Bruno dashboard — the write
+        // model the catalog does not have. `BrunoCollectionEntityProvider`
+        // reads these rows back over HTTP and materialises them as entities.
+        database: coreServices.database,
         // Reads `kind: Bruno` entities for the entity-keyed docs route. Calls
         // are made with the REQUESTING user's credentials, not the plugin's, so
         // the route inherits the catalog's own visibility rules.
@@ -31,7 +37,15 @@ export const brunoPlugin = createBackendPlugin({
         // SERVER's `integrations` credentials.
         reader: coreServices.urlReader
       },
-      async init({ httpRouter, logger, config, httpAuth, catalog, reader }) {
+      async init({
+        httpRouter,
+        logger,
+        config,
+        httpAuth,
+        database,
+        catalog,
+        reader
+      }) {
         // A SECOND probe instance: the catalog module builds its own
         // (module.ts), and the two cannot be shared because they are separate
         // backend features with no wiring between them — and sharing one
@@ -46,13 +60,17 @@ export const brunoPlugin = createBackendPlugin({
           definition: readDefinitionOptions(config, logger)
         });
 
+        const uiCollections = await createUiCollectionStore(database);
+
         httpRouter.use(
           await createRouter({
             logger,
             config,
             catalog,
             httpAuth,
-            probe
+            probe,
+            uiCollections,
+            refreshSeconds: readRefreshSeconds(config)
           })
         );
 

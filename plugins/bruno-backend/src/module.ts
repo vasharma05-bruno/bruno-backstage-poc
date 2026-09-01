@@ -10,14 +10,16 @@ import {
 import { createManifestProbe } from './service/manifestProbe';
 import { readSchedule } from './service/schedule';
 import { BrunoCollectionEntityProvider } from './provider/BrunoCollectionEntityProvider';
+import { createStoredCollectionReader } from './provider/storedCollections';
 import { BrunoKindProcessor } from './processor/BrunoKindProcessor';
 
 /**
  * Catalog module wiring the two Bruno catalog extensions:
  *
  * - {@link BrunoCollectionEntityProvider} — materializes one `kind: Bruno`
- *   entity per `bruno.collections[]` entry, on a scheduled refresh (driven by
- *   `bruno.schedule`, default every 60s).
+ *   entity per `bruno.collections[]` entry AND per collection added from the
+ *   Bruno UI, read service-to-service from `GET /api/bruno/collections`, on a
+ *   scheduled refresh (driven by `bruno.schedule`, default every 60s).
  * - {@link BrunoKindProcessor} — teaches the catalog about `kind: Bruno` and
  *   enriches every such entity, whether it came from that provider or from an
  *   authored `catalog-info.yaml`.
@@ -34,9 +36,22 @@ export const brunoCatalogModule = createBackendModule({
         logger: coreServices.logger,
         config: coreServices.rootConfig,
         reader: coreServices.urlReader,
-        scheduler: coreServices.scheduler
+        scheduler: coreServices.scheduler,
+        // The `bruno` plugin owns the store of UI-created collections and this
+        // module cannot reach it in process, so the provider reads it over HTTP
+        // with a plugin token. These two are what mint and address that call.
+        discovery: coreServices.discovery,
+        auth: coreServices.auth
       },
-      async init({ catalog, logger, config, reader, scheduler }) {
+      async init({
+        catalog,
+        logger,
+        config,
+        reader,
+        scheduler,
+        discovery,
+        auth
+      }) {
         const schedule = readSchedule(config);
 
         // Constructed once and shared, so two `kind: Bruno` entities pointing
@@ -50,12 +65,18 @@ export const brunoCatalogModule = createBackendModule({
           definition: readDefinitionOptions(config, logger)
         });
 
+        const storedCollections = createStoredCollectionReader({
+          discovery,
+          auth
+        });
+
         catalog.addEntityProvider(
           new BrunoCollectionEntityProvider({
             config,
             logger,
             probe,
-            taskRunner: scheduler.createScheduledTaskRunner(schedule)
+            taskRunner: scheduler.createScheduledTaskRunner(schedule),
+            storedCollections
           })
         );
 
