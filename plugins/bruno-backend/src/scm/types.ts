@@ -40,6 +40,31 @@ export interface ScmUserTokenReadArgs {
 /**
  * Per-provider URL grammar and ref resolution. One implementation per SCM
  * provider; selected by `ScmIntegration.type` (see `createScmProviderRegistry`).
+ *
+ * RETAINED DELIBERATELY, and only partly reached today. `manifestProbe` is the
+ * one consumer, and it calls `normalizeUrl` and `assertConfigured` only. These
+ * four have no caller on this branch:
+ *
+ *   composeCollectionUrl    multi-collection discovery — composes the stored
+ *                           `spec.url` for each root found inside one repo
+ *   repoRootFromUrl         the same discovery path, reducing a collection URL
+ *                           back to its repo
+ *   resolveDefaultBranch    names a ref when a pasted URL carries none
+ *   readTreeWithUserToken   reads a private repo with the CALLER's OAuth token,
+ *                           after the host credential has failed
+ *
+ * They are not scaffolding written ahead of use — they had callers, in
+ * `service/collectionService.ts` and `provider/BrunoEntityProvider.ts`, and the
+ * `kind: Bruno` entity rewrite deleted both modules and left these behind. The
+ * still-live implementations are on `feat/multi-scm`, which predates that
+ * rewrite.
+ *
+ * Keeping them is a decision, taken because `readTreeWithUserToken` is the only
+ * route to a private GitLab or Bitbucket repo while neither has a configured
+ * service token — deleting it would drop a capability, not just unused code —
+ * and because discovery is planned work rather than an abandoned idea. So do
+ * not "clean these up" on the strength of a caller count; the count is expected
+ * to be zero until that work is rebased onto the current architecture.
  */
 export interface ScmProvider {
   /** The `ScmIntegration.type` this adapter serves, e.g. `'github'`. */
