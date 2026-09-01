@@ -15,11 +15,11 @@ function escapeHtml(s: string): string {
  * loads the OpenCollection renderer bundle from the CDN and boots it against
  * the collection's OpenCollection YAML.
  *
- * This is served from the backend (`GET /collections/:id/docs`) and embedded by
- * the frontend via an iframe `src` (NOT `srcdoc`). Serving it from a real
- * backend origin — rather than an `about:srcdoc` document — is what makes the
- * bundle's `sessionStorage` access and its `HashRouter`-based routing work:
- * both need a real URL/origin, which `srcdoc` does not provide.
+ * This is served from the backend (`GET /entities/:namespace/:name/docs`) and
+ * embedded by the frontend via an iframe `src` (NOT `srcdoc`). Serving it from
+ * a real backend origin — rather than an `about:srcdoc` document — is what
+ * makes the bundle's `sessionStorage` access and its `HashRouter`-based routing
+ * work: both need a real URL/origin, which `srcdoc` does not provide.
  *
  * The YAML is injected as a JSON string literal with any `</script` sequence
  * neutralized (the HTML tokenizer ends a script element on `</script` followed

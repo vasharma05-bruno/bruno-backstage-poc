@@ -120,7 +120,8 @@ export async function createRouter(
   // POC scope: any authenticated user may ask the backend to read any URL its
   // integrations can reach, which is both an SSRF surface and a way to confirm
   // the existence of private repositories. Documented, not fixed, along with
-  // the rest of the Beta hardening — see docs/execution/BE-P1-plan.md §3.D.
+  // the rest of the Beta hardening — see docs/execution/UI-P6-plan.md
+  // §"Standing constraints".
   router.post('/collections/probe', async (req, res) => {
     await httpAuth.credentials(req, { allow: ['user'] });
 
@@ -198,7 +199,8 @@ export async function createRouter(
   // user may ask the backend to read any URL its integrations can reach (an
   // SSRF surface and a private-repository existence oracle), and any
   // authenticated user may add a collection that everyone else then sees.
-  // Documented, not fixed — see docs/execution/BE-P1-plan.md §3.D.
+  // Documented, not fixed — see docs/execution/UI-P6-plan.md
+  // §"Standing constraints".
   router.post('/collections', async (req, res) => {
     const credentials = await httpAuth.credentials(req, { allow: ['user'] });
     const createdBy = credentials.principal.userEntityRef;
