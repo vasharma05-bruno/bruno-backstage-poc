@@ -9,7 +9,7 @@ import {
   normalizePathStyleUrl,
   originPlusSegments
 } from './normalize';
-import { isCollectionFile } from './treeFilter';
+import { selectCollectionFiles } from './treeFilter';
 import type {
   ParsedRepoUrl,
   ScmFileTree,
@@ -174,8 +174,14 @@ export function createGithubScmProvider(options: {
         );
       }
 
+      // Two passes, not a per-entry predicate: admission is set-aware (a bare
+      // `.yaml` only counts below an `opencollection.yaml`), so the whole
+      // candidate set has to exist before anything can be classified. It also
+      // means the expensive part — one blob call per file — runs only over the
+      // files that survived selection, in the sorted order the parser needs for
+      // a byte-stable definition.
       const prefix = subpath === '' ? '' : `${subpath}/`;
-      const files: ScmFileTree = new Map();
+      const shaByRel = new Map<string, string>();
       for (const entry of tree.tree) {
         if (entry.type !== 'blob' || !entry.path || !entry.sha) {
           continue;
@@ -183,14 +189,15 @@ export function createGithubScmProvider(options: {
         if (prefix !== '' && !entry.path.startsWith(prefix)) {
           continue;
         }
-        const rel = entry.path.slice(prefix.length);
-        if (!isCollectionFile(rel)) {
-          continue;
-        }
+        shaByRel.set(entry.path.slice(prefix.length), entry.sha);
+      }
+
+      const files: ScmFileTree = new Map();
+      for (const rel of selectCollectionFiles(shaByRel.keys())) {
         const { data: blob } = await octokit.git.getBlob({
           owner,
           repo,
-          file_sha: entry.sha
+          file_sha: shaByRel.get(rel)!
         });
         files.set(rel, Buffer.from(blob.content, 'base64').toString('utf8'));
       }

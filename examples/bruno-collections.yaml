@@ -28,9 +28,9 @@ metadata:
     Repository, user and search endpoints of the GitHub REST API, converted from the upstream Bruno
     collection. 13 Bruno requests -> 6 OpenAPI operations across 6 paths.
   annotations:
-    bruno.dev/source-url: https://github.com/bruno-collections/github-rest-api-collection
+    usebruno.com/source-url: https://github.com/bruno-collections/github-rest-api-collection
     backstage.io/source-location: url:https://github.com/bruno-collections/github-rest-api-collection/
-    bruno.dev/collection-format: bru
+    usebruno.com/collection-format: bru
   tags:
     - bruno
     - rest
@@ -175,9 +175,9 @@ metadata:
     SCIM 2.0 user and group lifecycle management (create, patch, deactivate, delete) plus Service
     Provider Config. 15 Bruno requests -> 13 OpenAPI operations across 5 paths.
   annotations:
-    bruno.dev/source-url: https://github.com/bruno-collections/bruno-scim-api-collection/tree/main/scim-collection
+    usebruno.com/source-url: https://github.com/bruno-collections/bruno-scim-api-collection/tree/main/scim-collection
     backstage.io/source-location: url:https://github.com/bruno-collections/bruno-scim-api-collection/tree/main/scim-collection/
-    bruno.dev/collection-format: bru
+    usebruno.com/collection-format: bru
   tags:
     - bruno
     - rest
@@ -829,9 +829,9 @@ metadata:
     Sync. Carries recorded response examples. 6 Bruno requests -> 6 OpenAPI operations across 4
     paths.
   annotations:
-    bruno.dev/source-url: https://github.com/bruno-collections/openapi-sync-ws/tree/main/collections/Orders%20API
+    usebruno.com/source-url: https://github.com/bruno-collections/openapi-sync-ws/tree/main/collections/Orders%20API
     backstage.io/source-location: url:https://github.com/bruno-collections/openapi-sync-ws/tree/main/collections/Orders%20API/
-    bruno.dev/collection-format: opencollection-yml
+    usebruno.com/collection-format: opencollection-yml
   tags:
     - bruno
     - rest
@@ -1190,11 +1190,11 @@ metadata:
     End-to-end demo surface exercising basic, bearer, API-key and OAuth2 auth alongside CRUD,
     redirect and delay endpoints. 29 Bruno requests -> 17 OpenAPI operations across 16 paths.
   annotations:
-    bruno.dev/source-url: >-
+    usebruno.com/source-url: >-
       https://github.com/bruno-collections/bruno-demo-day-ws/tree/main/collections/Bruno%20E2E%20Demo
     backstage.io/source-location: >-
       url:https://github.com/bruno-collections/bruno-demo-day-ws/tree/main/collections/Bruno%20E2E%20Demo/
-    bruno.dev/collection-format: opencollection-yml
+    usebruno.com/collection-format: opencollection-yml
   tags:
     - bruno
     - rest
@@ -1702,9 +1702,9 @@ metadata:
     bearer/OAuth2 auth, assertions and chaining. 20 Bruno requests -> 12 OpenAPI operations across
     11 paths.
   annotations:
-    bruno.dev/source-url: https://github.com/bruno-collections/Webinar-Best-Practices-Feb-2026-BRU
+    usebruno.com/source-url: https://github.com/bruno-collections/Webinar-Best-Practices-Feb-2026-BRU
     backstage.io/source-location: url:https://github.com/bruno-collections/Webinar-Best-Practices-Feb-2026-BRU/
-    bruno.dev/collection-format: bru
+    usebruno.com/collection-format: bru
   tags:
     - bruno
     - rest

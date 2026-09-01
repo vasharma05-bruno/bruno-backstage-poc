@@ -1,24 +1,27 @@
 /**
  * Shared types for the Bruno-for-Backstage backend plugin.
  *
- * `NormalizedCollection` is the exact output shape the frontend consumes
- * (see docs/POC-DECISIONS.md §3). It is our own clean model, parsed directly
+ * `NormalizedCollection` is the intermediate model the parser produces and the
+ * OpenCollection exporter consumes. It is our own clean model, parsed directly
  * from `.bru` files via `@usebruno/lang`. We intentionally do NOT conform to
  * `@opencollection/types` (decision D2/D5) — controlling the shape keeps the
- * native viewer and the self-contained Scenario-B HTML generator decoupled
- * from an external contract.
- *
- * These types are exported from the package entrypoint so the frontend plugin
- * may reuse them if desired.
+ * parser and the exporter decoupled from an external contract.
  *
  * @public
  */
+
+import type { Entity } from '@backstage/catalog-model';
 
 /** A name/value pair with an enabled flag (headers, form fields, env vars). */
 export interface KeyValue {
   name: string;
   value: string;
   enabled: boolean;
+  /** Set on environment variables Bruno marks secret. `brunoToOpenCollection`
+   *  omits the VALUE of such a variable and emits `secret: true` in its place —
+   *  that converter behaviour is the entire redaction contract of Bruno's
+   *  "Generate docs", so the flag has to survive parsing to reach it. */
+  secret?: boolean;
 }
 
 /** A request parameter — either a query or a path parameter. */
@@ -102,7 +105,8 @@ export interface Environment {
   variables: KeyValue[];
 }
 
-/** The normalized collection — the exact shape returned to the frontend. */
+/** The normalized collection — the parser's output, and the only input
+ *  `toOpenCollectionYaml` takes. */
 export interface NormalizedCollection {
   id: string;
   name: string;
@@ -114,7 +118,11 @@ export interface NormalizedCollection {
   readme?: string;
 }
 
-/** Source configuration for a single collection (`bruno.sources[]`). */
+/**
+ * The parser's description of where a collection came from. `name` is only the
+ * FALLBACK display name — a `bruno.json` / `opencollection.yml` inside the tree
+ * overrides it — and `id` names the collection in parse diagnostics.
+ */
 export interface BrunoSourceConfig {
   id: string;
   name: string;
@@ -122,85 +130,51 @@ export interface BrunoSourceConfig {
   target: string;
 }
 
-/** A collection as summarized in `GET /collections`. */
-export interface CollectionSummary {
-  id: string;
-  name: string;
-  requestCount: number;
-  source: 'local' | 'url';
-  sourceUrl?: string;
+/**
+ * An entity of `kind: Bruno` — a Bruno collection in source control.
+ *
+ * `metadata.name` is REQUIRED by the platform and cannot be enriched: the
+ * catalog validates the entity envelope before any processor runs
+ * (DefaultCatalogProcessingOrchestrator :44) and rejects any processor that
+ * changes the entity ref (:166). The manifest's name lands in
+ * `metadata.title`; `version` and `description` are enriched in place.
+ */
+export interface BrunoEntity extends Entity {
+  apiVersion: 'usebruno.com/v1alpha1';
+  kind: 'Bruno';
+  spec: {
+    /** The type of Bruno entity, e.g. `bruno-collection`. */
+    type: string;
+    /** Entity reference to the owner; defaults to a Group when unprefixed. */
+    owner?: string;
+    /** Git URL of the collection folder. Required — it is what gets fetched. */
+    url: string;
+    /** Entity references to API entities this collection is part of.
+     *  Emits RELATION_PART_OF / RELATION_HAS_PART pairs. Default kind: API. */
+    partOf?: string[];
+    /** The generated OpenCollection YAML for the whole collection. Written by
+     *  BrunoKindProcessor; never authored. Absent when generation failed or
+     *  the collection exceeded `bruno.definition.maxBytes`. */
+    definition?: string;
+    /** Executable requests in the collection. Written by BrunoKindProcessor;
+     *  never authored. Facetable, which is what the dashboard's stat tiles
+     *  aggregate over. */
+    requestCount?: number;
+    /** Environment names. Written by BrunoKindProcessor; never authored. A
+     *  string ARRAY on purpose: the catalog indexes one search row per item, so
+     *  a facet query can count UNIQUE environments across all collections — a
+     *  comma-joined string would group as one opaque value. */
+    environments?: string[];
+  };
 }
 
-/** The full payload returned by `GET /collections/:id`. */
-export interface CollectionDetail extends CollectionSummary {
-  collection: NormalizedCollection;
-}
-
-/** A single candidate collection root found by `POST /connections/discover`. */
-export interface DiscoveredCollection {
-  /** Root-relative path of the collection within the input tree (`''` = root). */
-  collectionPath: string;
-  name: string;
-  requestCount: number;
-  collectionId: string;
-  /** Fully-qualified source URL to pass verbatim to `POST /connections`. */
-  sourceUrl: string;
-}
-
-/** The full payload returned by `POST /connections/discover`. */
-export interface DiscoverResult {
-  collections: DiscoveredCollection[];
-}
-
-/** A collection card in the dashboard aggregate (`GET /dashboard`). */
-export interface DashboardCollection {
-  id: string;
-  name: string;
-  requestCount: number;
-  envCount: number;
-  activeEnv?: string;
-  specType?: string;
-  linked: boolean;
-  entityRef?: string;
-  /**
-   * True for a collection imported (§5) but not yet materialized/connected —
-   * a stub card with a Link action.
-   */
-  imported?: boolean;
-  /**
-   * The collection's source repo/tree URL, when it has one (absent for `local`
-   * sources). The dashboard sends it back on sync so the frontend can resolve
-   * credentials for the right SCM provider.
-   */
-  sourceUrl?: string;
-}
-
-/** An imported-but-unlinked collection (GET /collections/imported). */
-export interface ImportedCollection {
-  collectionId: string;
-  name: string;
-  sourceUrl: string;
-  importedBy: string;
-  updatedAt: string;
-}
-
-/** A source that failed to load during the last `refresh`. */
-export interface SourceFailure {
-  id: string;
-  target: string;
-  error: string;
-}
-
-/** Aggregate stat tiles for the dashboard. */
-export interface DashboardStats {
-  collections: number;
-  totalRequests: number;
-  linkedEntities: number;
-}
-
-/** The full payload returned by `GET /dashboard`. */
-export interface Dashboard {
-  stats: DashboardStats;
-  collections: DashboardCollection[];
-  failures: SourceFailure[];
+/** One entry of `bruno.collections[]` in app-config. */
+export interface BrunoCollectionConfig {
+  type: 'url';
+  url: string;
+  partOf: string[];
+  /** Entity reference to the owner; defaults to a Group when unprefixed. */
+  owner?: string;
+  /** Optional entity-name override; see config.d.ts for why it exists. */
+  name?: string;
 }

@@ -3,7 +3,8 @@ import catalogPlugin from '@backstage/plugin-catalog/alpha';
 import brunoPluginPoc from '@usebruno/bruno-plugin-poc';
 import { navModule } from './modules/nav';
 import { authModule } from './modules/auth';
+import { iconsModule } from './modules/icons';
 
 export default createApp({
-  features: [catalogPlugin, navModule, brunoPluginPoc, authModule],
+  features: [catalogPlugin, navModule, brunoPluginPoc, authModule, iconsModule],
 });

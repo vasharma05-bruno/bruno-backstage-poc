@@ -41,7 +41,7 @@ spec:
     };
 ---
 # Unconnected API entity for testing the Bruno runtime-connect flow.
-# No bruno.dev annotation -> the Bruno card shows the "Connect" prompt.
+# No usebruno.com annotation -> the Bruno card shows the "Connect" prompt.
 # Paste the PUBLIC repo URL below into that field:
 #   https://github.com/vasharma05-bruno/public-collection-repo
 apiVersion: backstage.io/v1alpha1
@@ -62,7 +62,7 @@ spec:
     paths: {}
 ---
 # Unconnected API entity for testing the Bruno runtime-connect flow.
-# No bruno.dev annotation -> the Bruno card shows the "Connect" prompt.
+# No usebruno.com annotation -> the Bruno card shows the "Connect" prompt.
 # Paste the PRIVATE repo URL below into that field (triggers the GitHub
 # OAuth popup for the `repo` scope, since you signed in with Google):
 #   https://github.com/vasharma05-bruno/bruno-collection-private

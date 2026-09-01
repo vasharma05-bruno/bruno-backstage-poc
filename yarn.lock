@@ -12325,7 +12325,6 @@ __metadata:
     "@testing-library/react": "npm:^14.0.0"
     "@testing-library/user-event": "npm:^14.0.0"
     "@types/react-dom": "npm:*"
-    "@usebruno/bruno-plugin": "npm:0.1.0"
     "@usebruno/bruno-plugin-poc": "workspace:^"
     cross-env: "npm:^7.0.0"
     react: "npm:^18.0.2"
@@ -12389,30 +12388,19 @@ __metadata:
     "@backstage/frontend-plugin-api": "npm:^0.17.3"
     "@backstage/frontend-test-utils": "npm:^0.6.2"
     "@backstage/integration-react": "npm:^1.2.20"
+    "@backstage/plugin-catalog": "npm:^2.0.7"
+    "@backstage/plugin-catalog-common": "npm:^1.1.10"
+    "@backstage/plugin-catalog-import": "npm:^0.13.15"
     "@backstage/plugin-catalog-react": "npm:^3.2.0"
+    "@backstage/ui": "npm:^0.17.0"
     "@material-ui/core": "npm:^4.12.2"
     "@material-ui/icons": "npm:^4.9.1"
+    "@octokit/rest": "npm:^19.0.3"
     "@types/react": "npm:^18.0.0"
     react: "npm:^18.0.2"
+    react-router-dom: "npm:^6.30.2"
+    yaml: "npm:^2.9.0"
   languageName: unknown
-  linkType: soft
-
-"@usebruno/bruno-plugin@portal:/Users/vasharma05_bruno/Projects/backstage/bruno-backstage-plugin/packages/bruno::locator=root%40workspace%3A.":
-  version: 0.0.0-use.local
-  resolution: "@usebruno/bruno-plugin@portal:/Users/vasharma05_bruno/Projects/backstage/bruno-backstage-plugin/packages/bruno::locator=root%40workspace%3A."
-  dependencies:
-    "@backstage/core-components": "npm:^0.18.12"
-    "@backstage/core-plugin-api": "npm:^1.12.8"
-    "@backstage/frontend-plugin-api": "npm:^0.17.3"
-    "@backstage/plugin-catalog-react": "npm:^3.2.0"
-    "@backstage/theme": "npm:^0.7.3"
-    "@backstage/ui": "npm:^0.17.0"
-    react-use: "npm:^17.2.4"
-    swr: "npm:^2.5.1"
-  peerDependencies:
-    react: ^16.13.1 || ^17.0.0 || ^18.0.0
-    react-dom: ^16.13.1 || ^17.0.0 || ^18.0.0
-  languageName: node
   linkType: soft
 
 "@usebruno/common@npm:0.24.0":
@@ -29710,18 +29698,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"swr@npm:^2.5.1":
-  version: 2.5.1
-  resolution: "swr@npm:2.5.1"
-  dependencies:
-    dequal: "npm:^2.0.3"
-    use-sync-external-store: "npm:^1.6.0"
-  peerDependencies:
-    react: ^16.11.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
-  checksum: 10c0/46a815a8abaf38378c6febc3beacedf4d7e1fafce0656ff6ed23561cfa9e380de3831d708b36d516f70bd3d0decac824108bce96d0826f258c33cf56e1e837b6
-  languageName: node
-  linkType: hard
-
 "symbol-observable@npm:^1.0.4":
   version: 1.2.0
   resolution: "symbol-observable@npm:1.2.0"
@@ -31887,7 +31863,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"yaml@npm:^2.0.0, yaml@npm:^2.2.1, yaml@npm:^2.3.4":
+"yaml@npm:^2.0.0, yaml@npm:^2.2.1, yaml@npm:^2.3.4, yaml@npm:^2.9.0":
   version: 2.9.0
   resolution: "yaml@npm:2.9.0"
   bin:

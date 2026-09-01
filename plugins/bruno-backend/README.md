@@ -87,13 +87,82 @@ emits one entity per source:
   `spec.owner: guests`
 - `metadata.name` = sanitized source id, plus `title` / `description` derived
   from the collection name and request count
-- annotations `bruno.dev/collection-id`, `bruno.dev/collection-path`,
-  `bruno.dev/source-url` (url sources only), and
+- annotations `usebruno.com/collection-id`, `usebruno.com/collection-path`,
+  `usebruno.com/source-url` (url sources only), and
   `backstage.io/managed-by-location` / `managed-by-origin-location` set to a
   `bruno-provider:` location key
 
 The frontend card and Collection Docs tab attach when
 `spec.type === 'bruno-collection'`.
+
+## Adding a collection from the UI
+
+> **This README is stale everywhere except this section.** The opening summary
+> and the `## HTTP API`, `## Configuration` and `## Catalog entities` sections
+> above describe `kind: API` entities, a `bruno.sources` config block and a
+> connection store that no longer exist — the config key is `bruno.collections`
+> (`src/service/brunoConfig.ts`) and the kind is `Bruno`. Rewriting them is a
+> separate task; it is flagged here rather than done.
+
+The catalog has **no write model**. Entities come from a Location (a descriptor
+that must already exist) or from an EntityProvider — there is no
+insert-an-entity API. So "Add Bruno Collection" in the dashboard cannot write to
+the catalog. It writes here instead, and `BrunoCollectionEntityProvider`
+materialises the stored rows into `kind: Bruno` entities on its next scheduled
+tick, exactly as it already does for `bruno.collections[]` entries.
+
+**Table `bruno_ui_collections`** (`src/store/uiCollectionStore.ts`), created on
+first boot, no formal migrations:
+
+| column       | notes                                                        |
+| ------------ | ------------------------------------------------------------ |
+| `name`       | `metadata.name` of the Bruno entity. Primary key.            |
+| `url`        | The normalized collection folder URL.                        |
+| `owner`      | Optional `spec.owner`.                                       |
+| `part_of`    | `spec.partOf`, as a JSON array in a `text` column.           |
+| `created_by` | Entity ref of the user who added it. Recorded, not enforced. |
+| `created_at` | ISO timestamp.                                               |
+
+**Routes**, all under `/api/bruno`:
+
+| Method & path              | Auth        | Notes                                                                |
+| -------------------------- | ----------- | -------------------------------------------------------------------- |
+| `POST /collections`        | `user`      | Body `{ url, name, owner?, partOf? }`. Validates the URL holds a manifest, rejects a name already taken by another UI collection or by an `app-config.yaml` entry — compared case-insensitively, because an entity ref is lower-cased, so `Payments` and `payments` are one entity. `201` with `{ name, namespace, entityRef, url, refreshSeconds }`. |
+| `GET /collections`         | `user` \| `service` | `{ collections, refreshSeconds }`. Called by the provider with a plugin token, and by the dashboard's pending-collections strip to name the collections the catalog does not have yet. `refreshSeconds` travels with the rows because the strip has to tell a row that is still landing from one that never will, and only the backend knows the tick that separates them. A **user** principal gets rows with `created_by` omitted — it is a user entity ref for every collection in the instance — which is what makes the route safe to expose to a browser at all. |
+| `DELETE /collections/:name` | `user`     | `404` when no row exists, which is how an attempt to delete a config- or descriptor-origin collection says so instead of silently succeeding. |
+
+**Latency.** A collection added from the UI appears in the catalog — and a
+deleted one disappears from it — within `bruno.schedule.frequencySeconds`
+(default 60). That is the provider's tick, and it is the number both routes
+return as `refreshSeconds` so the UI can quote the real value.
+
+**Dev-database caveat.** The default dev config (`app-config.yaml`) is
+`better-sqlite3` with `connection: ':memory:'`, so UI-created collections **do
+not survive a backend restart**. The catalog is equally ephemeral, so the two
+stay consistent and nothing ends up inconsistent — but do not restart the
+backend between creating a collection and checking that its entity appeared.
+
+**A failed read of the store is never destructive.** The provider emits a `full`
+mutation, which the catalog applies by set difference: anything the provider
+emitted before and does not emit now is deleted. If the service-to-service read
+of `GET /collections` fails and the process has no successful read cached, the
+provider **skips the refresh entirely** rather than emitting the configured
+collections alone — a config-only emission would delete every UI-created
+collection in the instance. The cost is that configured collections are also not
+refreshed on that tick.
+
+**A per-collection skip, however, does remove that collection's entity**, and
+for a UI-created one that matters more than it looks: the dashboard's Remove
+action is gated on the entity's `usebruno.com/origin`, so a collection with no
+entity is a stored row nothing in the product can reach. The provider therefore
+does not skip a UI collection whose manifest has gone missing — it emits the
+entity without collection metadata, so it stays removable, and logs why. The one
+case left is a name that a `bruno.collections[]` entry claimed first: the
+configured entry wins by design and cannot be overruled from here, so the
+collection stays a stored row with no entity. That row is not stranded — the
+dashboard's pending-collections strip shows it as **stalled** once it is past
+`frequencySeconds * 2 + 30`, names both possible causes, and offers a Remove
+that calls `DELETE /collections/:name` directly.
 
 ## RISK #1 — credential isolation
 

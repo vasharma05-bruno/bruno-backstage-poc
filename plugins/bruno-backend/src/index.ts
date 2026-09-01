@@ -12,28 +12,47 @@ export { brunoPlugin };
 /** Default export is the backend plugin. */
 export { brunoPlugin as default };
 
-/** The catalog module that installs the BrunoEntityProvider. */
+/** The catalog module that installs the Bruno providers and processors. */
 export { brunoCatalogModule } from './module';
 
-export { BrunoEntityProvider } from './provider/BrunoEntityProvider';
-export { createCollectionService } from './service/collectionService';
+export { BrunoCollectionEntityProvider } from './provider/BrunoCollectionEntityProvider';
+export {
+  BrunoKindProcessor,
+  BRUNO_API_VERSION,
+  brunoEntityV1alpha1Schema
+} from './processor/BrunoKindProcessor';
+export {
+  readBrunoCollections,
+  readCacheTtlMs,
+  readDefinitionOptions
+} from './service/brunoConfig';
+export { createManifestProbe } from './service/manifestProbe';
 export { createRouter } from './service/router';
 export { generateOcDocsHtml } from './service/generateOcDocsHtml';
+export { createUiCollectionStore } from './store/uiCollectionStore';
+export { createStoredCollectionReader } from './provider/storedCollections';
+
+export type {
+  CollectionManifest,
+  CollectionSnapshot,
+  ManifestProbe
+} from './service/manifestProbe';
+export type {
+  UiCollectionRow,
+  UiCollectionStore
+} from './store/uiCollectionStore';
+export type {
+  StoredCollection,
+  StoredCollectionReader
+} from './provider/storedCollections';
 
 // Re-export the shared contract types so the frontend may reuse them.
 export type {
   Assertion,
-  BrunoSourceConfig,
-  CollectionDetail,
-  CollectionSummary,
-  Dashboard,
-  DashboardCollection,
-  DashboardStats,
-  DiscoveredCollection,
-  DiscoverResult,
+  BrunoCollectionConfig,
+  BrunoEntity,
   Environment,
   FolderItem,
-  ImportedCollection,
   Item,
   KeyValue,
   NormalizedCollection,
@@ -41,6 +60,5 @@ export type {
   RequestAuth,
   RequestBody,
   RequestItem,
-  RequestScript,
-  SourceFailure
+  RequestScript
 } from './types';

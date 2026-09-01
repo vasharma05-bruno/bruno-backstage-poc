@@ -32,6 +32,80 @@ const useStyles = makeStyles({
   }
 });
 
+/** The two things "Open in Bruno" can do, plus the snackbar they report through. */
+export interface OpenInBrunoActions {
+  /** Opens the collection through Bruno's hosted fetch endpoint, in a new tab. */
+  openDeepLink: () => void;
+  /** Fallback: copies a `git clone` instruction, or shows it if the clipboard is unavailable. */
+  copyCloneInstruction: () => Promise<void>;
+  /** The message to show, or `null`. Render {@link OpenInBrunoSnackbar} with it. */
+  snack: string | null;
+  dismissSnack: () => void;
+}
+
+/**
+ * The behaviour behind "Open in Bruno", without the split button around it.
+ *
+ * Extracted so surfaces that cannot host a split button — the row action menu on
+ * the Bruno Collections card, where "Fetch in Bruno" is one menu item among
+ * several — drive exactly the same deep link and the same clipboard fallback
+ * instead of reimplementing them. {@link OpenInBruno} is now this hook plus its
+ * buttons, so the two can never diverge.
+ */
+export function useOpenInBruno(sourceUrl?: string): OpenInBrunoActions {
+  const [snack, setSnack] = useState<string | null>(null);
+
+  return {
+    openDeepLink: () => {
+      if (!sourceUrl) {
+        return;
+      }
+      // Hand the collection URL to Bruno's hosted fetch endpoint in a new tab so
+      // we don't navigate the user away from Backstage.
+      window.open(
+        buildBrunoDeepLink(sourceUrl),
+        '_blank',
+        'noopener,noreferrer'
+      );
+    },
+    copyCloneInstruction: async () => {
+      if (!sourceUrl) {
+        return;
+      }
+      const text = buildCloneInstruction(sourceUrl);
+      try {
+        await navigator.clipboard.writeText(text);
+        setSnack('Clone instruction copied to clipboard');
+      } catch {
+        // Clipboard may be unavailable (insecure context) — show the command.
+        setSnack(text);
+      }
+    },
+    snack,
+    dismissSnack: () => setSnack(null)
+  };
+}
+
+/**
+ * The snackbar the clipboard fallback reports through. A separate component
+ * because a `Snackbar` cannot be a child of a Material-UI `Menu` — the menu
+ * clones its children into its keyboard-navigable item list — so the menu's host
+ * has to render it as a sibling.
+ */
+export function OpenInBrunoSnackbar(props: {
+  actions: OpenInBrunoActions;
+}): JSX.Element {
+  const { snack, dismissSnack } = props.actions;
+  return (
+    <Snackbar
+      open={Boolean(snack)}
+      autoHideDuration={6000}
+      onClose={dismissSnack}
+      message={snack ?? ''}
+    />
+  );
+}
+
 /**
  * "Open in Bruno" split action — the flagship Bruno action on any surface, so
  * it wears the brand accent while staying a stock Material-UI contained button.
@@ -49,11 +123,11 @@ export function OpenInBruno(props: { sourceUrl?: string }) {
   const classes = useStyles();
   const brandClasses = useBrandStyles();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
-  const [snack, setSnack] = useState<string | null>(null);
+  const actions = useOpenInBruno(sourceUrl);
 
   if (!sourceUrl) {
     return (
-      <Tooltip title="No bruno.dev/source-url annotation on this entity">
+      <Tooltip title="No usebruno.com/source-url annotation on this entity">
         <span>
           <Button
             variant="contained"
@@ -68,26 +142,9 @@ export function OpenInBruno(props: { sourceUrl?: string }) {
     );
   }
 
-  const openDeepLink = () => {
-    // Hand the collection URL to Bruno's hosted fetch endpoint in a new tab so
-    // we don't navigate the user away from Backstage.
-    window.open(
-      buildBrunoDeepLink(sourceUrl),
-      '_blank',
-      'noopener,noreferrer'
-    );
-  };
-
-  const copyCloneInstruction = async () => {
+  const copyCloneInstruction = async (): Promise<void> => {
     setAnchorEl(null);
-    const text = buildCloneInstruction(sourceUrl);
-    try {
-      await navigator.clipboard.writeText(text);
-      setSnack('Clone instruction copied to clipboard');
-    } catch {
-      // Clipboard may be unavailable (insecure context) — show the command.
-      setSnack(text);
-    }
+    await actions.copyCloneInstruction();
   };
 
   return (
@@ -98,7 +155,7 @@ export function OpenInBruno(props: { sourceUrl?: string }) {
             variant="contained"
             className={`${brandClasses.accentButton} ${classes.primary}`}
             startIcon={<LaunchIcon />}
-            onClick={openDeepLink}
+            onClick={actions.openDeepLink}
           >
             Open in Bruno
           </Button>
@@ -123,12 +180,7 @@ export function OpenInBruno(props: { sourceUrl?: string }) {
           Clone &amp; open in Bruno (copy git clone)
         </MenuItem>
       </Menu>
-      <Snackbar
-        open={Boolean(snack)}
-        autoHideDuration={6000}
-        onClose={() => setSnack(null)}
-        message={snack ?? ''}
-      />
+      <OpenInBrunoSnackbar actions={actions} />
     </>
   );
 }

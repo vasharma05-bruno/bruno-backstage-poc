@@ -1,25 +1,72 @@
 import type { DiscoveryApi, FetchApi } from '@backstage/core-plugin-api';
-import type { BrunoApi } from './BrunoApi';
 import type {
-  CollectionDetail,
-  CollectionSummary,
-  ConnectionRecord,
-  ConnectResult,
-  Dashboard,
-  DiscoverResult,
-  ImportedCollection
-} from './types';
+  BrunoApi,
+  CreateCollectionInput,
+  CreatedCollection,
+  DeletedCollection,
+  ProbeResult,
+  StoredCollections
+} from './BrunoApi';
 
 /**
- * Header carrying the caller's SCM OAuth token to the backend. Sent as a
- * header (never in the request body) so the token doesn't sit in JSON payloads
- * that are trivially visible in the browser's network inspector / logs.
+ * The message a Backstage backend puts on the wire for a thrown error.
+ *
+ * `MiddlewareFactory`'s error handler serialises every `InputError`,
+ * `ConflictError` and `NotFoundError` as `{ error: { name, message }, ... }`,
+ * so this shape is the backend's own sentence — the one written for the user
+ * rather than for a log.
  */
-const SCM_TOKEN_HEADER = 'x-bruno-scm-token';
+interface BackendError {
+  error?: { message?: unknown };
+}
+
+/**
+ * Turns a failed response into the most useful `Error` available.
+ *
+ * The backend's message is preferred over the status EVERY time it is there.
+ * A 409 from `POST /collections` carries "a collection named X was already
+ * added, pointing at <url>" — the entire value of that status code is in the
+ * sentence, and collapsing it to `HTTP 409` puts the user back in front of a
+ * form with no idea which field is wrong. This is the same mistake
+ * {@link BrunoClient.probeCollection} was written to avoid, one status class
+ * up.
+ *
+ * The fallback is status/statusText only, never the body: a non-2xx that is not
+ * ours (an auth redirect, a proxy error page) is usually HTML, and rendering
+ * that into a dialog helps nobody.
+ */
+async function errorFromResponse(
+  response: Response,
+  what: string
+): Promise<Error> {
+  const body: unknown = await response.json().catch(() => undefined);
+  const message = (body as BackendError | undefined)?.error?.message;
+  if (typeof message === 'string' && message) {
+    return new Error(message);
+  }
+  return new Error(
+    `${what}: the Bruno backend responded `
+    + `${response.status} ${response.statusText}.`
+  );
+}
 
 /**
  * Default {@link BrunoApi} implementation. Talks to the `bruno` backend plugin
  * over HTTP, resolving the base URL via the discovery API.
+ *
+ * The methods authenticate in two different ways, and the split is forced
+ * rather than chosen:
+ *
+ *  - `getEntityDocsUrl` BUILDS a URL rather than fetching one. It is handed to
+ *    an iframe `src`, which carries no Authorization header, so that request is
+ *    authenticated by the limited-access cookie `useEntityDocsSession` mints for
+ *    itself. See `lib/docsSession.ts`.
+ *  - everything else is an ordinary fetch, so it goes through `fetchApi` —
+ *    the app-wide wrapper that attaches the Backstage identity token. Calling
+ *    `window.fetch` here would reach the route unauthenticated and be rejected
+ *    by the backend's default credentials barrier. The create and delete routes
+ *    are `allow: ['user']`, so the identity token is not merely conventional
+ *    there: it is what supplies the `created_by` the backend records.
  */
 export class BrunoClient implements BrunoApi {
   private readonly discoveryApi: DiscoveryApi;
@@ -34,181 +81,147 @@ export class BrunoClient implements BrunoApi {
     return this.discoveryApi.getBaseUrl('bruno');
   }
 
-  private async getJson<T>(path: string): Promise<T> {
+  /**
+   * `POST /collections/probe`.
+   *
+   * A `400` is PARSED, not thrown. The route answers "I could not read that
+   * URL" with a 400 carrying `{ found: false, reason: 'unreadable', message }`,
+   * and that message is the only useful thing the UI can show for a missing
+   * `integrations` entry or a revoked token — turning it into a generic
+   * `HTTP 400` would throw away the entire diagnostic.
+   *
+   * Any other non-2xx status is NOT ours: an auth redirect, a proxy error page,
+   * a 404 from a backend that predates this route. Those get a plain error, and
+   * the response body is deliberately not shown — an HTML error page rendered
+   * into a form field helps nobody.
+   */
+  async probeCollection(url: string): Promise<ProbeResult> {
     const base = await this.baseUrl();
-    const res = await this.fetchApi.fetch(`${base}${path}`);
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(
-        `Bruno backend request to ${path} failed (${res.status}): ${text}`
-      );
-    }
-    return (await res.json()) as T;
-  }
-
-  async getCollections(): Promise<CollectionSummary[]> {
-    return this.getJson<CollectionSummary[]>('/collections');
-  }
-
-  async getDashboard(): Promise<Dashboard> {
-    return this.getJson<Dashboard>('/dashboard');
-  }
-
-  async getCollection(id: string): Promise<CollectionDetail> {
-    return this.getJson<CollectionDetail>(
-      `/collections/${encodeURIComponent(id)}`
-    );
-  }
-
-  async getDocsUrl(id: string, theme: 'light' | 'dark'): Promise<string> {
-    const base = await this.baseUrl();
-    return `${base}/collections/${encodeURIComponent(id)}/docs?theme=${theme}`;
-  }
-
-  async getOpenCollectionYaml(id: string): Promise<string> {
-    const base = await this.baseUrl();
-    const path = `/collections/${encodeURIComponent(id)}/opencollection.yml`;
-    const res = await this.fetchApi.fetch(`${base}${path}`);
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(
-        `Bruno backend request to ${path} failed (${res.status}): ${text}`
-      );
-    }
-    return res.text();
-  }
-
-  async connect(
-    entityRef: string,
-    url: string,
-    token?: string
-  ): Promise<ConnectResult> {
-    const base = await this.baseUrl();
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json'
-    };
-    if (token) {
-      headers[SCM_TOKEN_HEADER] = token;
-    }
-    const res = await this.fetchApi.fetch(`${base}/connections`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ entityRef, url })
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(
-        `Bruno backend request to /connections failed (${res.status}): ${text}`
-      );
-    }
-    return (await res.json()) as ConnectResult;
-  }
-
-  async discover(url: string, token?: string): Promise<DiscoverResult> {
-    const base = await this.baseUrl();
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json'
-    };
-    if (token) {
-      headers[SCM_TOKEN_HEADER] = token;
-    }
-    const res = await this.fetchApi.fetch(`${base}/connections/discover`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ url })
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(
-        `Bruno backend request to /connections/discover failed (${res.status}): ${text}`
-      );
-    }
-    return (await res.json()) as DiscoverResult;
-  }
-
-  async sync(collectionId: string, token?: string): Promise<ConnectResult> {
-    const base = await this.baseUrl();
-    const path = `/collections/${encodeURIComponent(collectionId)}/sync`;
-    const headers: Record<string, string> = {};
-    if (token) {
-      headers[SCM_TOKEN_HEADER] = token;
-    }
-    const res = await this.fetchApi.fetch(`${base}${path}`, {
-      method: 'POST',
-      headers
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(
-        `Bruno backend request to ${path} failed (${res.status}): ${text}`
-      );
-    }
-    return (await res.json()) as ConnectResult;
-  }
-
-  async getConnection(entityRef: string): Promise<ConnectionRecord | undefined> {
-    const base = await this.baseUrl();
-    const path = `/connections/${encodeURIComponent(entityRef)}`;
-    const res = await this.fetchApi.fetch(`${base}${path}`);
-    if (res.status === 404) {
-      return undefined;
-    }
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(
-        `Bruno backend request to ${path} failed (${res.status}): ${text}`
-      );
-    }
-    return (await res.json()) as ConnectionRecord;
-  }
-
-  async importCollections(
-    collections: Array<{ sourceUrl: string; name: string }>
-  ): Promise<{ imported: number }> {
-    const base = await this.baseUrl();
-    const res = await this.fetchApi.fetch(`${base}/collections/import`, {
+    const response = await this.fetchApi.fetch(`${base}/collections/probe`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ collections })
+      body: JSON.stringify({ url })
     });
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
+
+    if (!response.ok && response.status !== 400) {
       throw new Error(
-        `Bruno backend request to /collections/import failed (${res.status}): ${text}`
+        `Could not probe ${url}: the Bruno backend responded `
+        + `${response.status} ${response.statusText}.`
       );
     }
-    return (await res.json()) as { imported: number };
+
+    // Shape-checked rather than cast blind: a 400 produced by something OTHER
+    // than this route (a gateway, a body-size limit) parses as JSON often
+    // enough to reach here, and a `ProbeResult` with no `found` would fall
+    // through every branch in the dialog as a silent success.
+    const body: unknown = await response.json().catch(() => undefined);
+    if (
+      typeof body !== 'object'
+      || body === null
+      || typeof (body as { found?: unknown }).found !== 'boolean'
+    ) {
+      throw new Error(
+        `Could not probe ${url}: the Bruno backend returned an unexpected `
+        + `response (HTTP ${response.status}).`
+      );
+    }
+    return body as ProbeResult;
   }
 
-  async getImportedCollections(): Promise<ImportedCollection[]> {
-    return this.getJson<ImportedCollection[]>('/collections/imported');
-  }
-
-  async disconnect(entityRef: string): Promise<void> {
+  /**
+   * `POST /collections`.
+   *
+   * Unlike `probeCollection`, there is no success-shaped 4xx here: every non-2xx
+   * is a failure the user has to see, so they all go through
+   * {@link errorFromResponse} and none are parsed as a result.
+   *
+   * The 201 body is trusted as far as its shape, deliberately: it is produced by
+   * the route immediately above this one in the same repository, and a defensive
+   * re-validation here would only convert a backend bug into a second, vaguer
+   * error message. What is NOT trusted is that the URL came back unchanged —
+   * the backend normalizes it, and the caller shows what was stored.
+   */
+  async createCollection(
+    input: CreateCollectionInput
+  ): Promise<CreatedCollection> {
     const base = await this.baseUrl();
-    const path = `/connections/${encodeURIComponent(entityRef)}`;
-    const res = await this.fetchApi.fetch(`${base}${path}`, {
-      method: 'DELETE'
+    const response = await this.fetchApi.fetch(`${base}/collections`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input)
     });
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(
-        `Bruno backend request to ${path} failed (${res.status}): ${text}`
+
+    if (!response.ok) {
+      throw await errorFromResponse(
+        response,
+        `Could not add ${input.name}`
       );
     }
+    return (await response.json()) as CreatedCollection;
   }
 
-  async deleteImportedCollection(collectionId: string): Promise<void> {
+  /**
+   * `DELETE /collections/:name`.
+   *
+   * The name is percent-encoded even though the catalog's own grammar admits
+   * nothing that needs encoding: the value reaching here comes off an entity in
+   * the catalog, not off this app's form, and a path segment built by
+   * concatenation is not the place to rely on a validator somewhere else having
+   * run.
+   *
+   * The route's `refreshSeconds` is passed back rather than dropped: the
+   * confirmation the user reads has to say how long the deleted row keeps
+   * appearing in the dashboard, and this response is the only place a frontend
+   * with no config of its own can learn the real interval.
+   */
+  async deleteCollection(name: string): Promise<DeletedCollection> {
     const base = await this.baseUrl();
-    const path = `/collections/imported/${encodeURIComponent(collectionId)}`;
-    const res = await this.fetchApi.fetch(`${base}${path}`, {
-      method: 'DELETE'
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(
-        `Bruno backend request to ${path} failed (${res.status}): ${text}`
+    const response = await this.fetchApi.fetch(
+      `${base}/collections/${encodeURIComponent(name)}`,
+      { method: 'DELETE' }
+    );
+
+    if (!response.ok) {
+      throw await errorFromResponse(response, `Could not remove ${name}`);
+    }
+    return (await response.json()) as DeletedCollection;
+  }
+
+  /**
+   * `GET /collections`.
+   *
+   * The route admits both principal types and answers a USER with `createdBy`
+   * stripped from every row, which is what this method's return type says. The
+   * envelope is not re-validated element by element: it is produced by the route
+   * in this repository from a table with one shape, and a defensive filter here
+   * would turn a backend bug into a strip that silently shows less rather than a
+   * visible error.
+   *
+   * `refreshSeconds` rides along with the rows for the reason spelled out on
+   * {@link StoredCollections}: the caller has to distinguish a row that is still
+   * landing from one that never will, and only the backend knows the tick that
+   * separates them.
+   */
+  async listCollections(): Promise<StoredCollections> {
+    const base = await this.baseUrl();
+    const response = await this.fetchApi.fetch(`${base}/collections`);
+
+    if (!response.ok) {
+      throw await errorFromResponse(
+        response,
+        'Could not list the collections added from Backstage'
       );
     }
+    return (await response.json()) as StoredCollections;
+  }
+
+  async getEntityDocsUrl(
+    namespace: string,
+    name: string,
+    theme: 'light' | 'dark'
+  ): Promise<string> {
+    const base = await this.baseUrl();
+    const path = `/entities/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/docs`;
+    return `${base}${path}?theme=${theme}`;
   }
 }

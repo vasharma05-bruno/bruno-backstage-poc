@@ -43,3 +43,34 @@ function gitlabProjectSegments(segments: string[]): string[] {
   const dash = segments.indexOf('-');
   return dash === -1 ? segments : segments.slice(0, dash);
 }
+
+/**
+ * Longest a source URL is rendered in a table cell before its middle is elided.
+ */
+const MAX_CELL_URL_CHARS = 48;
+
+/**
+ * Shortens a collection URL for a table cell: the host and the last two path
+ * segments carry the meaning, and a full `/tree/<ref>/<deep>/<path>` would widen
+ * the column past everything else in the table.
+ *
+ * Elides the MIDDLE rather than the tail, which is what CSS `text-overflow`
+ * would do: the tail is the collection folder — the one segment that
+ * distinguishes two collections in the same repo — so truncating it makes rows
+ * indistinguishable exactly where the column has to disambiguate.
+ *
+ * Total: an unparseable string falls back to a plain tail cut rather than
+ * throwing.
+ */
+export function elideCollectionUrl(url: string): string {
+  if (url.length <= MAX_CELL_URL_CHARS) {
+    return url;
+  }
+  try {
+    const parsed = new URL(url);
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    return `${parsed.host}/…/${segments.slice(-2).join('/')}`;
+  } catch {
+    return `${url.slice(0, MAX_CELL_URL_CHARS - 1)}…`;
+  }
+}

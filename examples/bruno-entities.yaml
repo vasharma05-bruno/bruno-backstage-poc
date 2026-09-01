@@ -1,0 +1,75 @@
+# Sample `kind: Bruno` entities — one per real collection in
+# github.com/bruno-collections.
+#
+# These are the declarative (`catalog-info.yaml`-style) entry point. The other
+# one is `bruno.collections[]` in app-config.yaml; both converge on the same
+# BrunoKindProcessor, so anything true here is true there too.
+#
+# `examples/bruno-entity.yaml` stays as the single, heavily-commented minimal
+# example. It already covers github-rest-api-collection, so that collection is
+# deliberately not repeated here — two entities pointing at one URL would work
+# (they share the probe's cache) but would double the dashboard's counts.
+#
+# The set deliberately spans BOTH collection formats, because they take
+# different parse paths through collectionParser.ts:
+#   - `.bru`             -> scim-provisioning, api-testing-practices
+#   - `opencollection.yml` -> orders, bruno-e2e-demo
+# and both a repo-root collection and collections nested in a subfolder.
+#
+# Only `metadata.name` and `spec.{type,url}` are required. `title`,
+# `description` and `version` are left out ON PURPOSE: the processor fills them
+# in from each collection's own manifest, so these entities are also the live
+# proof that enrichment works. `spec.definition`, `spec.requestCount` and
+# `spec.environments` are likewise generated — never authored.
+---
+apiVersion: usebruno.com/v1alpha1
+kind: Bruno
+metadata:
+  name: scim-provisioning-collection
+spec:
+  type: bruno-collection
+  owner: guests
+  # A `.bru` collection in a subfolder of its repo.
+  url: https://github.com/bruno-collections/bruno-scim-api-collection/tree/main/scim-collection
+  partOf:
+    - api:default/scim-provisioning-api
+---
+apiVersion: usebruno.com/v1alpha1
+kind: Bruno
+metadata:
+  name: orders-collection
+spec:
+  type: bruno-collection
+  owner: guests
+  # OpenCollection format, and a URL-encoded path segment — worth keeping in the
+  # sample set because the space in "Orders API" exercises URL normalization.
+  url: https://github.com/bruno-collections/openapi-sync-ws/tree/main/collections/Orders%20API
+  partOf:
+    - api:default/orders-api
+---
+apiVersion: usebruno.com/v1alpha1
+kind: Bruno
+metadata:
+  name: bruno-e2e-demo-collection
+spec:
+  type: bruno-collection
+  owner: guests
+  # The largest of the sample collections (29 requests) and the one with
+  # environments, so it is the useful one for eyeballing the Environments card
+  # and the generated definition's size.
+  url: https://github.com/bruno-collections/bruno-demo-day-ws/tree/main/collections/Bruno%20E2E%20Demo
+  partOf:
+    - api:default/bruno-e2e-demo-api
+---
+apiVersion: usebruno.com/v1alpha1
+kind: Bruno
+metadata:
+  name: api-testing-practices-collection
+spec:
+  type: bruno-collection
+  owner: guests
+  # A `.bru` collection at the REPOSITORY ROOT — the case where the collection
+  # folder and the repo are the same thing.
+  url: https://github.com/bruno-collections/Webinar-Best-Practices-Feb-2026-BRU
+  partOf:
+    - api:default/api-testing-practices

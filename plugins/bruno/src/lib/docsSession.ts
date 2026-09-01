@@ -54,39 +54,51 @@ export interface DocsSession {
   error?: string;
 }
 
+/** The docs light/dark palette, following the active Backstage theme. */
+function useThemeMode(): 'light' | 'dark' {
+  const theme = useTheme();
+  return theme.palette.type === 'dark' ? 'dark' : 'light';
+}
+
 /**
- * Authenticates and resolves the embeddable OpenCollection docs URL for a
- * collection.
+ * Runs the cookie side of a docs session, independent of WHICH docs are being
+ * embedded.
  *
- * The backend docs endpoint (`GET /collections/:id/docs`) is reached by an
- * iframe `src`, which carries no `Authorization` header — so the session is
- * carried by the limited-access cookie minted here, and the URL is only handed
- * out once that cookie exists. The cookie is re-minted shortly before it
- * expires so a tab left open overnight keeps rendering; a failed refresh is
- * surfaced via `errorApi` but is not fatal, since the current cookie stays
- * valid until it lapses and a reload re-mints.
+ * The docs route (`/entities/:ns/:name/docs`) is reached by an iframe `src`,
+ * which carries no `Authorization` header — so the session is carried by the
+ * limited-access cookie minted here, and the URL may not be handed to a frame
+ * before that cookie exists. The cookie is re-minted shortly before it expires
+ * so a tab left open overnight keeps rendering; a failed refresh is surfaced via
+ * `errorApi` but is not fatal, since the current cookie stays valid until it
+ * lapses and a reload re-mints.
  *
- * The docs bundle's light/dark palette follows the active Backstage theme, so
- * the returned `src` changes when the user flips theme.
+ * `sessionKey` identifies what is being framed. It is undefined while the caller
+ * has nothing to render yet (no entity ref), which keeps a cookie from being
+ * minted for a frame that is never shown; changing it re-mints, so a frame
+ * switched to a different collection gets a fresh attempt rather than
+ * inheriting a failure from the last one.
+ *
+ * Kept as a separate hook from {@link useEntityDocsSession} — the cookie is a
+ * per-backend session, not a per-document one, so the split is what lets a
+ * second embed be added later without duplicating the refresh scheduling.
  */
-export function useDocsSession(collectionId: string | undefined): DocsSession {
-  const brunoApi = useApi(brunoApiRef);
+function useDocsCookie(sessionKey: string | undefined): {
+  ready: boolean;
+  error?: string;
+} {
   const discoveryApi = useApi(discoveryApiRef);
   const fetchApi = useApi(fetchApiRef);
   const errorApi = useApi(errorApiRef);
-  const theme = useTheme();
-  const themeMode: 'light' | 'dark'
-    = theme.palette.type === 'dark' ? 'dark' : 'light';
 
-  const [src, setSrc] = useState<string | undefined>();
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
   useEffect(() => {
     let cancelled = false;
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-    setSrc(undefined);
+    setReady(false);
     setError(undefined);
-    if (!collectionId) {
+    if (!sessionKey) {
       return undefined;
     }
 
@@ -111,15 +123,12 @@ export function useDocsSession(collectionId: string | undefined): DocsSession {
     };
 
     mintDocsCookie(discoveryApi, fetchApi)
-      .then(async (expiresAt) => {
+      .then((expiresAt) => {
         if (cancelled) {
           return;
         }
         scheduleRefresh(expiresAt);
-        const url = await brunoApi.getDocsUrl(collectionId, themeMode);
-        if (!cancelled) {
-          setSrc(url);
-        }
+        setReady(true);
       })
       .catch((e) => {
         if (!cancelled) {
@@ -133,7 +142,62 @@ export function useDocsSession(collectionId: string | undefined): DocsSession {
         clearTimeout(refreshTimer);
       }
     };
-  }, [brunoApi, discoveryApi, fetchApi, errorApi, collectionId, themeMode]);
+  }, [discoveryApi, fetchApi, errorApi, sessionKey]);
 
-  return { src, error };
+  return { ready, error };
+}
+
+/**
+ * Authenticates and resolves the embeddable OpenCollection docs URL for a
+ * `kind: Bruno` entity.
+ *
+ * The backend renders the document from the entity's own `spec.definition`, so
+ * nothing but the entity ref travels over the wire. Serving it from the backend
+ * — rather than assembling the same HTML in the browser and framing it as a
+ * `blob:` URL — is what gives the document its own origin: a `blob:` document
+ * inherits the APP's Content-Security-Policy, under which the OpenCollection
+ * renderer's CDN is not allowed, so the bundle is blocked anywhere the app is
+ * served by `plugin-app-backend` (i.e. everywhere but the CSP-less dev server).
+ *
+ * `src` stays undefined until the session cookie exists, and changes when the
+ * user flips theme.
+ */
+export function useEntityDocsSession(
+  namespace: string | undefined,
+  name: string | undefined
+): DocsSession {
+  const brunoApi = useApi(brunoApiRef);
+  const themeMode = useThemeMode();
+  const { ready, error } = useDocsCookie(
+    namespace && name ? `${namespace}/${name}` : undefined
+  );
+
+  const [src, setSrc] = useState<string | undefined>();
+  const [urlError, setUrlError] = useState<string | undefined>();
+
+  useEffect(() => {
+    let cancelled = false;
+    setSrc(undefined);
+    setUrlError(undefined);
+    if (!ready || !namespace || !name) {
+      return undefined;
+    }
+    brunoApi
+      .getEntityDocsUrl(namespace, name, themeMode)
+      .then((url) => {
+        if (!cancelled) {
+          setSrc(url);
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setUrlError(e instanceof Error ? e.message : String(e));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [brunoApi, namespace, name, themeMode, ready]);
+
+  return { src, error: error ?? urlError };
 }

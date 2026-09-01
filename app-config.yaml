@@ -139,15 +139,50 @@ proxy:
       allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD']
       allowedHeaders: ['Authorization', 'Content-Type', 'Accept']
 
-# Bruno for Backstage — collection sources scanned by BrunoEntityProvider and
-# served by the backend plugin at /api/bruno/*. See docs/POC-DECISIONS.md.
-    # RISK #1 / Q4 — the private-repo path. Fetched server-side via Backstage's
-    # UrlReader using integrations.github creds; the token never reaches the
-    # browser. Uncomment and set GITHUB_TOKEN to demo a (public or private) repo:
-    # - id: bruno-tests-remote
-    #   name: Bruno Tests (GitHub)
-    #   type: url
-    #   target: https://github.com/usebruno/bruno/tree/main/packages/bruno-tests/collection/echo
+# Bruno for Backstage — collections ingested into the catalog as `kind: Bruno`
+# entities, and the docs the backend plugin serves for them at /api/bruno/*.
+#
+# NOTE: every key below must stay under this `bruno:` root key. Without it the
+# `schedule` block re-parses as `proxy.schedule` (silently — YAML is happy) and
+# the provider falls back to its defaults with zero collections.
+bruno:
+  # PRD §"Creating Bruno entities, other than catalog-info.yaml".
+  # Each entry becomes a `kind: Bruno` entity emitted by
+  # BrunoCollectionEntityProvider. `metadata.name` is derived from the last
+  # path segment of `url`; title/version/description come from the
+  # collection's bruno.json or opencollection.yml/.yaml.
+  collections:
+    - type: url
+      url: https://github.com/vasharma05-bruno/public-bruno-collection/tree/main/collection
+      # `name` override: the default is the URL's last path segment, which here
+      # is the generic "collection" (the folder inside the repo). Pinning it
+      # keeps the entity ref readable and stable if the folder is ever renamed.
+      name: public-bruno-collection
+      owner: guests
+      # partOf: add API entity refs here to create the collection -> API
+      # relation that the Bruno Card on an API page reads, e.g.
+      #   partOf:
+      #     - api:default/some-api
+  # PRD §"Post ingestion" / §"Entity Sync". The generated OpenCollection YAML
+  # is stored inline on each Bruno entity's `spec.definition`, mirroring how a
+  # kind: API entity stores its OpenAPI document.
+  #
+  # The document is produced by the same pipeline as Bruno's own "Generate docs"
+  # (brunoToOpenCollection), so a collection documented from Backstage matches
+  # the one documented from Bruno. That pipeline withholds the values of
+  # environment variables flagged `secret` and exports everything else verbatim
+  # — including auth values, headers, bodies and scripts. A credential
+  # hardcoded in a .bru file therefore reaches the catalog, where any catalog
+  # reader can see it; keep secrets in secret environment variables (or as
+  # {{placeholders}}) and they stay out of the docs.
+  definition:
+    maxBytes: 1048576
+  # Also the upper bound on how long a Sync takes to show new content.
+  cacheTtlSeconds: 60
+  # Also the latency of the Bruno dashboard's add and remove: a collection added
+  # from the UI is stored by the bruno backend plugin and only becomes a catalog
+  # entity on the next provider tick, and a removed one disappears on the tick
+  # after that. Both dialogs quote this number back to the user.
   schedule:
     frequencySeconds: 60
     timeoutSeconds: 30
@@ -246,7 +281,7 @@ catalog:
     entityFilename: catalog-info.yaml
     pullRequestBranchName: backstage-integration
   rules:
-    - allow: [Component, System, API, Resource, Location]
+    - allow: [Component, System, API, Resource, Location, Bruno]
   locations:
     # Local example data, file locations are relative to the backend process, typically `packages/backend`
     - type: file
@@ -258,6 +293,15 @@ catalog:
     #   node scripts/bruno-catalog/generate.mjs
     - type: file
       target: ../../examples/bruno-collections.yaml
+
+    - type: file
+      target: ../../examples/bruno-entity.yaml
+
+    # Sample kind: Bruno entities, one per real collection in
+    # github.com/bruno-collections. Spans both collection formats (.bru and
+    # opencollection.yml) and both repo-root and subfolder layouts.
+    - type: file
+      target: ../../examples/bruno-entities.yaml
 
     # Local example template
     - type: file

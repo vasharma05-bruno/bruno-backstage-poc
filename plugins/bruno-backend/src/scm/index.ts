@@ -11,7 +11,17 @@ import type { ScmProvider } from './types';
 // is imported directly by its sibling modules.
 export type { ScmProvider } from './types';
 export { normalizePathStyleUrl } from './normalize';
-export { readTreeViaUrlReader } from './readTree';
+export { readTreeViaUrlReader, readTreeWithEtag } from './readTree';
+export type { ScmTreeRead } from './readTree';
+export {
+  isCollectionFile,
+  isOpenCollectionManifest,
+  isBrunoJsonManifest,
+  isOpenCollectionBodyFile,
+  isFolderManifest,
+  stripOpenCollectionExtension,
+  selectCollectionFiles
+} from './treeFilter';
 
 export interface ScmProviderRegistry {
   byUrl(url: string): ScmProvider;

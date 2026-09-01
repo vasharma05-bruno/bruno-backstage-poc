@@ -10,8 +10,8 @@
 // config. MUST stay the first import.
 import './loadEnv';
 import { createBackend } from '@backstage/backend-defaults';
-// Bruno for Backstage — catalog module that emits kind: API entities for
-// discovered Bruno collections (BrunoEntityProvider).
+// Bruno for Backstage — catalog module that teaches the catalog about
+// kind: Bruno entities and emits one per `bruno.collections[]` entry.
 import { brunoCatalogModule } from '@usebruno/bruno-backend-plugin-poc';
 
 const backend = createBackend();

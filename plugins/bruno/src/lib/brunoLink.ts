@@ -24,7 +24,7 @@ export const BRUNO_FETCH_BASE_URL = 'https://fetch.usebruno.com/';
  * We send only the repo root (`https://<host>/<owner>/<repo>`), not the deeper
  * `/tree/<ref>/<subpath>` collection path.
  *
- * @param sourceUrl - The `bruno.dev/source-url` annotation (a git repo / tree
+ * @param sourceUrl - The `usebruno.com/source-url` annotation (a git repo / tree
  *   URL pointing at the collection).
  */
 export function buildBrunoDeepLink(sourceUrl: string): string {

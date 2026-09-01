@@ -99,9 +99,9 @@ Choices worth knowing:
 
 ## Annotations on the emitted entities
 
-`bruno.dev/source-url`, `bruno.dev/collection-format` and
-`backstage.io/source-location` only. `bruno.dev/collection-id` and
-`bruno.dev/collection-path` are deliberately **absent**: those belong to
+`usebruno.com/source-url`, `usebruno.com/collection-format` and
+`backstage.io/source-location` only. `usebruno.com/collection-id` and
+`usebruno.com/collection-path` are deliberately **absent**: those belong to
 `BrunoEntityProvider` (config-materialized collections) and
 `BrunoLinkProcessor` (runtime connections). Setting `collection-path` here would
 make the processor skip the entity — see the early return in

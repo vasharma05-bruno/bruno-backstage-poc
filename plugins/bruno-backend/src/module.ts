@@ -3,16 +3,26 @@ import {
   createBackendModule
 } from '@backstage/backend-plugin-api';
 import { catalogProcessingExtensionPoint } from '@backstage/plugin-catalog-node';
-import { createCollectionService } from './service/collectionService';
+import {
+  readCacheTtlMs,
+  readDefinitionOptions
+} from './service/brunoConfig';
+import { createManifestProbe } from './service/manifestProbe';
 import { readSchedule } from './service/schedule';
-import { BrunoEntityProvider } from './provider/BrunoEntityProvider';
-import { BrunoLinkProcessor } from './processor/BrunoLinkProcessor';
+import { BrunoCollectionEntityProvider } from './provider/BrunoCollectionEntityProvider';
+import { createStoredCollectionReader } from './provider/storedCollections';
+import { BrunoKindProcessor } from './processor/BrunoKindProcessor';
 
 /**
- * Catalog module that installs the {@link BrunoEntityProvider}. It reads the
- * same `bruno.sources` config as the backend plugin and materializes one
- * `kind: API` entity per source on a scheduled refresh (driven by
- * `bruno.schedule`, default every 60s).
+ * Catalog module wiring the two Bruno catalog extensions:
+ *
+ * - {@link BrunoCollectionEntityProvider} — materializes one `kind: Bruno`
+ *   entity per `bruno.collections[]` entry AND per collection added from the
+ *   Bruno UI, read service-to-service from `GET /api/bruno/collections`, on a
+ *   scheduled refresh (driven by `bruno.schedule`, default every 60s).
+ * - {@link BrunoKindProcessor} — teaches the catalog about `kind: Bruno` and
+ *   enriches every such entity, whether it came from that provider or from an
+ *   authored `catalog-info.yaml`.
  *
  * @public
  */
@@ -27,30 +37,53 @@ export const brunoCatalogModule = createBackendModule({
         config: coreServices.rootConfig,
         reader: coreServices.urlReader,
         scheduler: coreServices.scheduler,
+        // The `bruno` plugin owns the store of UI-created collections and this
+        // module cannot reach it in process, so the provider reads it over HTTP
+        // with a plugin token. These two are what mint and address that call.
         discovery: coreServices.discovery,
         auth: coreServices.auth
       },
-      async init({ catalog, logger, config, reader, scheduler, discovery, auth }) {
+      async init({
+        catalog,
+        logger,
+        config,
+        reader,
+        scheduler,
+        discovery,
+        auth
+      }) {
         const schedule = readSchedule(config);
 
-        const collectionService = await createCollectionService({
-          logger,
+        // Constructed once and shared, so two `kind: Bruno` entities pointing
+        // at the same repo cost one tree read rather than one each per
+        // reprocess cycle.
+        const probe = createManifestProbe({
           config,
-          reader
+          reader,
+          logger,
+          ttlMs: readCacheTtlMs(config),
+          definition: readDefinitionOptions(config, logger)
         });
 
-        const taskRunner = scheduler.createScheduledTaskRunner(schedule);
+        const storedCollections = createStoredCollectionReader({
+          discovery,
+          auth
+        });
 
         catalog.addEntityProvider(
-          new BrunoEntityProvider({
+          new BrunoCollectionEntityProvider({
             config,
             logger,
-            collectionService,
-            taskRunner
+            probe,
+            taskRunner: scheduler.createScheduledTaskRunner(schedule),
+            storedCollections
           })
         );
 
-        catalog.addProcessor(new BrunoLinkProcessor({ discovery, auth, logger }));
+        // Claims `kind: Bruno`. Without a processor validating the kind, the
+        // catalog rejects such entities as unrecognized no matter what
+        // `catalog.rules` allows.
+        catalog.addProcessor(new BrunoKindProcessor({ logger, probe }));
       }
     });
   }

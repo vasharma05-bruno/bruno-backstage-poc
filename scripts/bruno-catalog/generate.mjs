@@ -166,15 +166,15 @@ function apiEntity(source, spec, stats, format) {
           stats.operations === 1 ? '' : 's'
         } across ${stats.paths} path${stats.paths === 1 ? '' : 's'}.`,
       annotations: {
-        // Informational only. `bruno.dev/collection-id` and
-        // `bruno.dev/collection-path` are deliberately absent: those are owned
+        // Informational only. `usebruno.com/collection-id` and
+        // `usebruno.com/collection-path` are deliberately absent: those are owned
         // by BrunoEntityProvider (config-materialized collections) and
         // BrunoLinkProcessor (runtime connections), and setting
         // `collection-path` here makes the processor skip the entity, breaking
         // the Bruno card's Connect flow.
-        'bruno.dev/source-url': url,
+        'usebruno.com/source-url': url,
         'backstage.io/source-location': `url:${url}/`,
-        'bruno.dev/collection-format': format === 'yml'
+        'usebruno.com/collection-format': format === 'yml'
           ? 'opencollection-yml'
           : 'bru'
       },
