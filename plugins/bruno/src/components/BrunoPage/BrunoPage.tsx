@@ -219,7 +219,7 @@ function BrunoStatTiles(): JSX.Element {
  * processed yet, or was ingested by an older backend, has no delete button
  * rather than a button that fails. Re-deriving the origin from
  * `backstage.io/managed-by-location` here would be a second, worse answer to a
- * question `lib/brunoEntity.ts` already answers for `changeRoute` too.
+ * question `lib/brunoEntity.ts` already answers.
  *
  * `hidden` rather than `disabled`: a disabled icon on every config-origin row
  * is a permanent piece of furniture that means nothing to the operator who put

@@ -24,7 +24,7 @@ export interface ScmTreeRead {
  * host.
  *
  * `options.token` is honoured by the GitHub and GitLab readers and IGNORED by
- * every other one (verified; docs/MULTI-SCM-PLAN.md §1.4), so only providers
+ * every other one (verified against the installed readers), so only providers
  * whose adapter opts in via `readTreeWithUserToken` should pass it. Passing it
  * to a reader that ignores it would read anonymously and look like success.
  *

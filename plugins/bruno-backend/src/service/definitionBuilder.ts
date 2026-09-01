@@ -6,7 +6,7 @@
  * and the "degrade, never throw" contract are all here, and nothing here knows
  * about caching, etags or entities. Dependency direction is one-way — it imports
  * the parser and the exporter, and nothing under `provider/` or `processor/`,
- * nor `collectionService` or `manifestProbe`, so there is no cycle.
+ * nor `manifestProbe` itself, so there is no cycle.
  */
 import type { LoggerService } from '@backstage/backend-plugin-api';
 import type { BrunoSourceConfig } from '../types';

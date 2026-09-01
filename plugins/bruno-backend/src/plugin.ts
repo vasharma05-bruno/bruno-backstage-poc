@@ -85,8 +85,7 @@ export const brunoPlugin = createBackendPlugin({
         // matching is prefix-based (path-to-regexp `end:false`) and additive,
         // so this covers `/entities/<ns>/<name>/docs*` and nothing else — there
         // is no sibling route under `/entities`, and any future one would NOT
-        // be reached by this policy unless it sits under that same path. See
-        // docs/execution/DOCS-AUTH-P1-plan.md.
+        // be reached by this policy unless it sits under that same path.
         httpRouter.addAuthPolicy({
           path: '/entities/:namespace/:name/docs',
           allow: 'user-cookie'

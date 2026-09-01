@@ -3,9 +3,9 @@
  *
  * The published package (^0.38.0) ships plain JavaScript (`src/index.js`) with
  * no bundled `.d.ts`. It exposes the v2 parsers with a `V2` suffix; the three
- * this plugin uses are declared below. Their return shapes are documented in
- * docs/POC-DECISIONS.md §3 and normalized defensively in collectionService.ts,
- * so `any` here is intentional.
+ * this plugin uses are declared below. Their return shapes are described by
+ * the `Raw*` types in `service/collectionParser.ts`, its only consumer, which
+ * narrows them defensively — so `any` here is intentional.
  */
 declare module '@usebruno/lang' {
   /** Parse a request `.bru` file (v2 grammar) into a JSON object. */

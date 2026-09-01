@@ -26,7 +26,7 @@ export function readRefreshSeconds(config: Config): number {
  * Reads `bruno.schedule` from config into a task schedule definition.
  *
  * Supports the POC contract's config shape (`frequencySeconds` /
- * `timeoutSeconds`, see docs/POC-DECISIONS.md §3) and falls back to sensible
+ * `timeoutSeconds`, declared in `config.d.ts`) and falls back to sensible
  * defaults (every 60s, 30s timeout).
  */
 export function readSchedule(config: Config): SchedulerServiceTaskScheduleDefinition {

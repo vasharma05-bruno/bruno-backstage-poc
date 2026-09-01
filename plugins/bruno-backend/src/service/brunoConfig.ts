@@ -12,9 +12,9 @@ const DEFAULT_MAX_BYTES = 1048576;
  * Reads the `bruno.collections` block from Backstage config. Returns [] if
  * absent.
  *
- * Deliberately its own module rather than a second export of
- * `collectionService`: the `kind: Bruno` spine must not acquire a dependency on
- * the annotation-model collection loader, which later phases delete wholesale.
+ * Its own module so the `kind: Bruno` spine depends on config reading alone.
+ * It was split off the annotation-model collection loader — since deleted — to
+ * keep the spine off a module that was already slated to go.
  *
  * Reading is tolerant per entry. A malformed entry is skipped and logged, never
  * thrown: this runs inside a scheduled provider task, and letting one bad entry

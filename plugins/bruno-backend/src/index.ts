@@ -46,7 +46,14 @@ export type {
   StoredCollectionReader
 } from './provider/storedCollections';
 
-// Re-export the shared contract types so the frontend may reuse them.
+// The parse/normalize contract types, exported as part of this package's public
+// API for a host app that wires the provider or processor itself.
+//
+// NOT reachable from the frontend plugin, which deliberately does not depend on
+// this package — which is why `plugins/bruno/src/lib/brunoEntity.ts` hand-mirrors
+// `BrunoEntity['spec']` and `generateCatalogInfo.ts` re-declares
+// `BRUNO_API_VERSION`, both with a comment saying to keep them in step. An
+// earlier note here claimed the frontend reuses these; it cannot.
 export type {
   Assertion,
   BrunoCollectionConfig,

@@ -80,9 +80,8 @@ export interface ScmProvider {
    * (`github.com`, `gitlab.com`, `bitbucket.org`) each get a default integration
    * entry when the host configures none, so public repos on them need no config
    * block at all. This therefore fires only for SELF-HOSTED instances
-   * (`gitlab.company.com`, Bitbucket Server, GHE). That is narrower than
-   * docs/MULTI-SCM-PLAN.md B10 predicted — B10 claimed only github.com
-   * self-defaults, which is not true of this version.
+   * (`gitlab.company.com`, Bitbucket Server, GHE) — worth restating because
+   * all three public hosts self-default, not just github.com.
    */
   assertConfigured(url: string): void;
 
@@ -104,8 +103,7 @@ export interface ScmProvider {
    * it is unimplemented here. Bitbucket Cloud's `UrlReader` ignores
    * `options.token` and its integration config silently drops a bare token, so
    * there is nowhere to put a user token; such providers reach private repos
-   * only through a host-configured service credential
-   * (docs/MULTI-SCM-PLAN.md §1.4, B4).
+   * only through a host-configured service credential.
    */
   readTreeWithUserToken?(args: ScmUserTokenReadArgs): Promise<ScmFileTree>;
 }
