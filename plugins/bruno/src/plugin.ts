@@ -4,7 +4,6 @@ import {
   brunoCard,
   brunoPage,
   brunoAddCollectionAction,
-  brunoDocsPage,
   brunoEntityHeader,
   brunoDocumentationCard,
   brunoRelatedApisCard,
@@ -29,11 +28,7 @@ import {
  *                          -> the `Add Bruno Collection` header action and its
  *                             two modals. Plugin-scoped, so it renders on every
  *                             page of this plugin that HAS a header — which is
- *                             /bruno only, since the docs page sets noHeader
- *  - brunoDocsPage         -> chrome-less full-screen docs page at
- *                             /bruno/docs/:namespace/:name (no title/icon, kept
- *                             out of the sidebar); the Bruno entity's API-docs
- *                             tab opens it in a new tab
+ *                             /bruno, this plugin's only page
  *
  * On `kind: API` entities:
  *  - brunoCard             -> card listing the Bruno collections related to the
@@ -55,7 +50,6 @@ export const brunoPlugin = createFrontendPlugin({
     brunoCard,
     brunoPage,
     brunoAddCollectionAction,
-    brunoDocsPage,
     brunoEntityHeader,
     brunoDocumentationCard,
     brunoRelatedApisCard,

@@ -1,8 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { makeStyles } from '@material-ui/core/styles';
-import Button from '@material-ui/core/Button';
 import Typography from '@material-ui/core/Typography';
-import LaunchIcon from '@material-ui/icons/Launch';
 import { ContentHeader, Progress } from '@backstage/core-components';
 import { useEntity } from '@backstage/plugin-catalog-react';
 import {
@@ -11,7 +9,6 @@ import {
   definitionOmittedReason
 } from '../../lib/brunoEntity';
 import { useEntityDocsSession } from '../../lib/docsSession';
-import { useBrandStyles } from '../../theme/brandStyles';
 
 /**
  * Gap left below the iframe so its bottom edge stops short of the viewport floor
@@ -64,7 +61,6 @@ const useStyles = makeStyles({
  */
 export function BrunoApiDocsContent(): JSX.Element {
   const classes = useStyles();
-  const brandClasses = useBrandStyles();
   const { entity } = useEntity();
 
   const title = entity.metadata.title ?? entity.metadata.name;
@@ -97,14 +93,6 @@ export function BrunoApiDocsContent(): JSX.Element {
     window.addEventListener('resize', recompute);
     return () => window.removeEventListener('resize', recompute);
   }, [src]);
-
-  const openInNewTab = () => {
-    window.open(
-      `/bruno/docs/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}?view=full`,
-      '_blank',
-      'noopener,noreferrer'
-    );
-  };
 
   let body: JSX.Element;
   if (definitionYaml) {
@@ -166,16 +154,7 @@ export function BrunoApiDocsContent(): JSX.Element {
 
   return (
     <>
-      <ContentHeader title={title}>
-        <Button
-          size="small"
-          className={brandClasses.accentText}
-          startIcon={<LaunchIcon />}
-          onClick={openInNewTab}
-        >
-          Open in new tab
-        </Button>
-      </ContentHeader>
+      <ContentHeader title={title} />
       {body}
     </>
   );

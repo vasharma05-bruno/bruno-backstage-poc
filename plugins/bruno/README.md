@@ -27,7 +27,6 @@ from `app-config.yaml`.
 | `api:bruno/bruno` | `ApiBlueprint` | app APIs — registers `brunoApiRef` (`BrunoClient`) |
 | `page:bruno/bruno` | `PageBlueprint` | route `/bruno` — the Bruno Collections dashboard |
 | `plugin-header-action:bruno/add-collection` | `PluginHeaderActionBlueprint` | the page header — **Add Bruno Collection** |
-| `page:bruno/docs-page` | `PageBlueprint` | route `/bruno/docs/:namespace/:name` — chrome-less docs page |
 | `entity-card:bruno/collection` | `EntityCardBlueprint` | **API** entity pages — the Bruno Collections card |
 | `entity-header-layout:bruno/header` | `EntityHeaderLayoutBlueprint` | `kind: Bruno` — replaces the entity header |
 | `entity-card:bruno/documentation` | `EntityCardBlueprint` | `kind: Bruno` Overview — the collection's docs |
@@ -51,9 +50,8 @@ render their own empty state.
 
 The sidebar entry for `/bruno` is not declared anywhere: `PageBlueprint` carrying
 `routeRef` + `title` + `icon` is auto-discovered by the app's custom sidebar
-(`nav.rest({ sortBy: 'title' })`). `page:bruno/docs-page` deliberately sets
-neither, plus `noHeader: true`, which is also what keeps the plugin-scoped header
-action off it.
+(`nav.rest({ sortBy: 'title' })`). `/bruno` is this plugin's only page, which is
+also what keeps the plugin-scoped header action to that one page.
 
 ## The entity model — [`src/lib/brunoEntity.ts`](src/lib/brunoEntity.ts)
 
@@ -322,9 +320,10 @@ never costs a request and the reason it has none — over
 `bruno.definition.maxBytes`, generation failed, or not processed yet — is
 explained from data already in React context.
 
-[`src/components/BrunoDocsPage/`](src/components/BrunoDocsPage/) is the same
-document at `/bruno/docs/:namespace/:name`, keyed by entity ref, with a
-`?view=full` chrome-less layout that overlays the app sidebar.
+This tab is the only place the document is rendered. A standalone
+`/bruno/docs/:namespace/:name` page used to show the same thing full-screen,
+reached from an *Open in new tab* action on this tab; both are gone, and the row
+action on the collections card now links to this tab instead.
 
 ## Open in Bruno — [`src/components/OpenInBruno/`](src/components/OpenInBruno/)
 
@@ -382,6 +381,14 @@ Two host-app settings this plugin's flows depend on:
   entities.
 - `catalog.import.entityFilename` is read by `CatalogImportClient` when modal 2
   opens a pull request.
+
+And one the app in this repo sets on the plugin's behalf. TechDocs' two entity
+surfaces — the `TechDocs` tab (`entity-content:techdocs`) and the `View TechDocs`
+icon link in the About card (`entity-icon-link:techdocs/read-docs`) — ship with no
+filter, so they are offered on every entity page including `kind: Bruno`, which
+carries no `backstage.io/techdocs-ref`. `app.extensions` in `app-config.yaml`
+overrides each one's `filter` with `{ $not: { kind: bruno } }`, which suppresses
+both on Bruno entities and leaves them untouched everywhere else.
 
 ## Related documentation
 

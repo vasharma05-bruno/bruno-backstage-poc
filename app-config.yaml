@@ -10,6 +10,26 @@ app:
     - page:catalog:
         config:
           path: /
+    # Both TechDocs entry points ship with NO filter, so they are offered on
+    # every entity page — including `kind: Bruno`, where they are dead weight: a
+    # collection's documentation is the OpenCollection document on
+    # `spec.definition`, rendered by the plugin's own `Bruno API Docs` tab, and a
+    # Bruno entity carries no `backstage.io/techdocs-ref` for TechDocs to read.
+    # Overriding each extension's `filter` from here — rather than disabling the
+    # extensions — keeps both everywhere else.
+    #
+    # The tab on the entity page:
+    - entity-content:techdocs:
+        config:
+          filter:
+            $not:
+              kind: bruno
+    # And the `View TechDocs` icon link in the About card:
+    - entity-icon-link:techdocs/read-docs:
+        config:
+          filter:
+            $not:
+              kind: bruno
 
 organization:
   name: My Company

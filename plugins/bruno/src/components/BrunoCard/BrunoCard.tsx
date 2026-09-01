@@ -12,15 +12,14 @@ import MoreVertIcon from '@material-ui/icons/MoreVert';
 import { makeStyles } from '@material-ui/core/styles';
 import { Link, Progress, Table, WarningPanel } from '@backstage/core-components';
 import type { TableColumn } from '@backstage/core-components';
-import { useRouteRef } from '@backstage/frontend-plugin-api';
 import { RELATION_HAS_PART, stringifyEntityRef } from '@backstage/catalog-model';
 import type { Entity } from '@backstage/catalog-model';
 import {
   EntityRefLink,
   useEntity,
+  useEntityRefLink,
   useRelatedEntities
 } from '@backstage/plugin-catalog-react';
-import { brunoDocsPageRouteRef } from '../../extensions';
 import { sourceUrl, version } from '../../lib/brunoEntity';
 import { BrunoInfoCard } from '../BrunoInfoCard';
 import { UnlinkDialog } from '../BrunoEntity';
@@ -80,7 +79,7 @@ function CollectionActions(props: {
   const { collection, onUnlink } = props;
   const classes = useStyles();
   const navigate = useNavigate();
-  const docsRoute = useRouteRef(brunoDocsPageRouteRef);
+  const entityLink = useEntityRefLink();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
 
   const url = sourceUrl(collection);
@@ -123,19 +122,12 @@ function CollectionActions(props: {
           Clone &amp; open in Bruno (copy git clone)
         </MenuItem>
         <MenuItem
-          // `useRouteRef` returns undefined when the docs page is not mounted in
-          // this app; a dead menu item is worse than a disabled one.
-          disabled={!docsRoute}
+          // The collection's own entity page, `Bruno API Docs` tab — the only
+          // place the OpenCollection document is rendered now that the
+          // standalone `/bruno/docs/...` page is gone.
           onClick={() => {
             close();
-            if (docsRoute) {
-              navigate(
-                docsRoute({
-                  namespace: collection.metadata.namespace ?? 'default',
-                  name: collection.metadata.name
-                })
-              );
-            }
+            navigate(`${entityLink(collection)}/api-docs`);
           }}
         >
           View Collection Docs

@@ -88,47 +88,14 @@ export const brunoPage = PageBlueprint.make({
  *
  * Header actions are PLUGIN-scoped, not page-scoped — `PageBlueprint` asks the
  * header-actions API for every action belonging to the page's plugin. This
- * plugin owns two pages, and the other one (`brunoDocsPage`) sets
- * `noHeader: true` and so renders no header at all, which is what makes the
- * button appear on `/bruno` alone without any filtering of our own.
+ * plugin owns exactly one page, so the button appears on `/bruno` alone without
+ * any filtering of our own — but a second page added here would inherit it.
  */
 export const brunoAddCollectionAction = PluginHeaderActionBlueprint.make({
   name: 'add-collection',
   params: {
     loader: () =>
       import('./components/AddCollection').then((m) => <m.AddCollectionAction />)
-  }
-});
-
-/**
- * Route ref for the standalone full-screen docs page. Declares the
- * `namespace`/`name` path parameters so `useRouteRefParams` can read them. No
- * `title`/`icon` (so it stays out of the sidebar) and `noHeader` so the page
- * renders chrome-less.
- *
- * Keyed by entity ref rather than by a backend collection id: collection-id
- * keying was the annotation model's notion of identity, and the collection is
- * now an entity whose generated OpenCollection document travels on it.
- */
-export const brunoDocsPageRouteRef = createRouteRef({
-  params: ['namespace', 'name']
-});
-
-/**
- * Standalone, chrome-less full-viewport API-docs page at
- * `/bruno/docs/:namespace/:name`, opened in a new tab from the Bruno entity's
- * "Bruno API Docs" tab. Deliberately has no `title`/`icon` (kept out of the
- * auto-discovered sidebar) and `noHeader: true` so only the full-screen docs
- * iframe shows.
- */
-export const brunoDocsPage = PageBlueprint.make({
-  name: 'docs-page',
-  params: {
-    path: '/bruno/docs/:namespace/:name',
-    routeRef: brunoDocsPageRouteRef,
-    noHeader: true,
-    loader: () =>
-      import('./components/BrunoDocsPage').then((m) => <m.BrunoDocsPage />)
   }
 });
 
