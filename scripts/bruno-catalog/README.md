@@ -15,6 +15,17 @@ yarn bruno:catalog:validate   # validate entities + OpenAPI definitions
 The file is registered in `app-config.yaml` under `catalog.locations`, so the
 entities appear in the catalog on backend start.
 
+> **These `kind: API` entities are not the same thing as the plugin's
+> `kind: Bruno` entities, and neither supersedes the other.** This generator
+> produces static API entities carrying an **OpenAPI** document, checked into
+> `examples/` as fixture data. The `bruno` plugins produce **`kind: Bruno`**
+> entities (`apiVersion: usebruno.com/v1alpha1`) at runtime, from live source
+> control, carrying an **OpenCollection** document on `spec.definition` — see
+> [`plugins/bruno-backend/README.md`](../../plugins/bruno-backend/README.md).
+> The two coexist on purpose: the API entities here are exactly the kind of
+> entity a Bruno collection gets linked to via `spec.partOf`, which is what the
+> Bruno Collections card on an API page renders.
+
 ## The important caveat: there is no `brunoToOpenApi`
 
 `@usebruno/converters@0.22.0` (the latest published version) converts **into**
@@ -50,10 +61,10 @@ openCollectionToOpenApi()              OpenAPI 3.0.3
 ApiEntity { spec.definition: <yaml> }
 ```
 
-`readBrunoCollection` deliberately mirrors
-`plugins/bruno-backend/src/service/collectionService.ts` — same parsers, same
-format detection, same ordering — so a collection that renders in the Bruno card
-and one that converts here agree on structure.
+`readBrunoCollection` deliberately mirrors the backend plugin's own parser,
+`plugins/bruno-backend/src/service/collectionParser.ts` — same parsers, same
+format detection, same ordering — so a collection the plugin ingests and one
+that converts here agree on structure.
 
 ### Why `attachBrunoSignals` exists
 
@@ -100,15 +111,18 @@ Choices worth knowing:
 ## Annotations on the emitted entities
 
 `usebruno.com/source-url`, `usebruno.com/collection-format` and
-`backstage.io/source-location` only. `usebruno.com/collection-id` and
-`usebruno.com/collection-path` are deliberately **absent**: those belong to
-`BrunoEntityProvider` (config-materialized collections) and
-`BrunoLinkProcessor` (runtime connections). Setting `collection-path` here would
-make the processor skip the entity — see the early return in
-`plugins/bruno-backend/src/processor/BrunoLinkProcessor.ts` — breaking the Bruno
-card's Connect flow. Because the Bruno cards attach to *any* API entity
-(`isApiEntity` in `plugins/bruno/src/extensions.tsx`), these entities get both
-the rendered OpenAPI definition **and** a working Connect prompt.
+`backstage.io/source-location` only.
+
+Nothing here claims a `kind: Bruno` identity, and that is what keeps these
+fixtures out of the plugin's way. The backend plugin's own annotations
+(`usebruno.com/origin`, `usebruno.com/definition-omitted`,
+`usebruno.com/definition-bytes`) are written by `BrunoKindProcessor` onto
+`kind: Bruno` entities and are never authored here. The frontend's Bruno
+Collections card attaches to *any* API entity
+(`plugins/bruno/src/extensions.tsx`) and resolves its rows through the catalog
+`hasPart` relation, so these entities get both the rendered OpenAPI definition
+**and** a working card — empty until a Bruno collection names one of them in its
+`spec.partOf`.
 
 ## Adding or changing a source
 

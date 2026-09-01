@@ -1,50 +1,342 @@
 # @usebruno/bruno-plugin-poc
 
 Bruno for Backstage — **frontend** plugin (POC). Built on the **new Backstage
-frontend system** (Backstage v1.53.0) using blueprints from
+frontend system** (Backstage v1.53) using blueprints from
 `@backstage/frontend-plugin-api` and `@backstage/plugin-catalog-react/alpha`.
 
-Pairs with the `bruno` **backend** plugin. See
-[`docs/POC-DECISIONS.md`](../../docs/POC-DECISIONS.md) §3 for the shared API
-contract and the `NormalizedCollection` type.
+Pairs with the `bruno` **backend** plugin
+([`plugins/bruno-backend`](../bruno-backend/README.md)), which materializes and
+enriches the entities this plugin renders.
+
+A Bruno collection is a **first-class catalog entity** — `kind: Bruno`,
+`apiVersion: usebruno.com/v1alpha1`. That is the single fact the whole plugin is
+organised around: the catalog is the read model, so listing, filtering, counting
+and relation-walking all go through `@backstage/plugin-catalog-react`, and the
+plugin's own client (`src/api/`) is left with only the four questions an entity
+cannot answer.
 
 ## What it provides
 
-| Extension | Blueprint | Attaches to |
-|---|---|---|
-| `bruno/api:bruno` | `ApiBlueprint` | app APIs — registers `brunoApiRef` (`BrunoClient`) |
-| `bruno/entity-card:collection` | `EntityCardBlueprint` (catalog-react/alpha) | entity page, filter `kind:api && spec.type == 'bruno-collection'` |
-| `bruno/entity-content:docs` | `EntityContentBlueprint` (catalog-react/alpha) | entity page tab **"API Docs"** at `/bruno-docs`, same filter |
+Every extension is declared in [`src/extensions.tsx`](src/extensions.tsx) and
+registered in [`src/plugin.ts`](src/plugin.ts). Extension ids follow the new
+frontend system's `<kind>:<pluginId>/<name>` form, which is what an app overrides
+from `app-config.yaml`.
 
-### `brunoApi` (`src/api/`)
-`brunoApiRef` + `BrunoClient` implementing `getCollections()`,
-`getCollection(id)`, `getDocsUrl(id)`. Deps: `discoveryApiRef` + `fetchApiRef`.
-Base URL resolved via `discoveryApi.getBaseUrl('bruno')`.
+| Extension id | Blueprint | Attaches to |
+| --- | --- | --- |
+| `api:bruno/bruno` | `ApiBlueprint` | app APIs — registers `brunoApiRef` (`BrunoClient`) |
+| `page:bruno/bruno` | `PageBlueprint` | route `/bruno` — the Bruno Collections dashboard |
+| `plugin-header-action:bruno/add-collection` | `PluginHeaderActionBlueprint` | the page header — **Add Bruno Collection** |
+| `page:bruno/docs-page` | `PageBlueprint` | route `/bruno/docs/:namespace/:name` — chrome-less docs page |
+| `entity-card:bruno/collection` | `EntityCardBlueprint` | **API** entity pages — the Bruno Collections card |
+| `entity-header-layout:bruno/header` | `EntityHeaderLayoutBlueprint` | `kind: Bruno` — replaces the entity header |
+| `entity-card:bruno/documentation` | `EntityCardBlueprint` | `kind: Bruno` Overview — the collection's docs |
+| `entity-card:bruno/related-apis` | `EntityCardBlueprint` | `kind: Bruno` Overview — APIs it is `partOf` |
+| `entity-card:bruno/environments` | `EntityCardBlueprint` | `kind: Bruno` Overview — `spec.environments` |
+| `entity-content:bruno/api-docs` | `EntityContentBlueprint` | `kind: Bruno` — the **Bruno API Docs** tab |
 
-### `BrunoCard` (`src/components/BrunoCard/`)
-Entity card. Reads `usebruno.com/collection-id` and `usebruno.com/source-url`
-annotations, fetches the collection detail for name + request count, links to
-the source, and renders **Open in Bruno**.
+Two different filter forms are used on purpose. The `kind: Bruno` extensions all
+share the `FilterPredicate` **object** form `{ kind: 'bruno' }`, because
+`EntityHeaderLayoutBlueprint` accepts no string form at all and only the object
+form is overridable from `app-config.yaml` — keeping it uniform keeps the five
+overridable as a set. `entity-card:bruno/collection` uses the predicate-function
+form (`entity.kind === 'api'`) instead, to avoid coupling to the exact
+`FilterPredicate` shape across versions.
 
-### Open in Bruno (`src/components/OpenInBruno/`)
-Split button. Primary action fires the intended `bruno://open?url=...` deep
-link (format centralized in `src/lib/brunoLink.ts`). Because today's Bruno
-desktop only handles `bruno://app/oauth2/callback` (no open/clone verb — a
-documented Beta gap, POC-DECISIONS D3/Q3), the dropdown offers
-**"Clone & open in Bruno"** which copies a `git clone <repo>` + open
-instruction. A tooltip notes the Beta dependency.
+Nothing is gated on a `usebruno.com/*` annotation. Catalog processing stamps
+annotations and relations a cycle (minutes) after an entity is registered, so an
+annotation-gated card renders empty exactly when a user has just wired something
+up and gone looking for it. Surfaces resolve their content at render time and
+render their own empty state.
 
-### Collection Docs viewer (`src/components/CollectionDocs/`)
-Native React viewer (built from scratch — **not** `@opencollection/docs`, per
-D2). Two panes: left = folder/request tree with color-coded method badges;
-right = request detail with tabs Headers / Params / Body / Auth / Docs / Tests
-/ Try it out.
+The sidebar entry for `/bruno` is not declared anywhere: `PageBlueprint` carrying
+`routeRef` + `title` + `icon` is auto-discovered by the app's custom sidebar
+(`nav.rest({ sortBy: 'title' })`). `page:bruno/docs-page` deliberately sets
+neither, plus `noHeader: true`, which is also what keeps the plugin-scoped header
+action off it.
 
-**Try it out** resolves `{{var}}` templates from the collection's first
-environment (`src/lib/template.ts`), then routes the request through the
-Backstage **proxy** for CORS safety (`src/lib/proxy.ts`,
-`resolveViaProxy(url)`). Unknown hosts fall back to a direct fetch and any
-CORS/network error is surfaced in the UI.
+## The entity model — [`src/lib/brunoEntity.ts`](src/lib/brunoEntity.ts)
+
+Read-only, pure accessors over a `kind: Bruno` entity. No React, no API, so the
+cards, the header and the dashboard all share one reading of the entity. Mirrors
+`BrunoEntity['spec']` in `plugins/bruno-backend/src/types.ts` — keep the two in
+step.
+
+| Accessor | Reads | Written by |
+| --- | --- | --- |
+| `sourceUrl` | `spec.url` — the collection folder in source control | authored / provider |
+| `partOfRefs` | `spec.partOf` — API entity refs, deduped | authored / provider |
+| `version` | `metadata.version` | manifest, via the processor |
+| `requestCount` | `spec.requestCount` | `BrunoKindProcessor` |
+| `environments` / `hasEnvironments` | `spec.environments` | `BrunoKindProcessor` |
+| `definition` | `spec.definition` — the generated OpenCollection YAML | `BrunoKindProcessor` |
+| `definitionOmittedReason` / `definitionOmittedBytes` | `usebruno.com/definition-omitted`, `usebruno.com/definition-bytes` | `BrunoKindProcessor` |
+| `collectionOrigin` | `usebruno.com/origin` | provider / processor / the generated descriptor |
+| `descriptorLocation` | `backstage.io/managed-by-location` | the catalog |
+
+Every accessor is **total** — an unprocessed entity returns `undefined`/`[]`
+rather than throwing — because the fields the processor writes appear a cycle
+after the entity itself. `hasEnvironments` exists so a card can tell "this
+collection defines no environments" (empty array) from "it has not been read yet"
+(absent key); the two need different copy.
+
+`descriptorLocation` reads `managed-by-location`, **not**
+`backstage.io/source-location`: the processor stamps `source-location` to the
+collection FOLDER, so `getEntitySourceLocation` points at the `.bru` files rather
+than at the YAML that declares the entity. Editing `spec.partOf` means editing
+the descriptor, so the descriptor is what has to be named.
+
+### `usebruno.com/origin`, and what it decides
+
+The one thing the UI cannot work out for itself: how the collection got into the
+catalog, and therefore **what has to be edited to change it**.
+
+| Origin | Where it came from | How it is changed |
+| --- | --- | --- |
+| `descriptor` | a hand-authored `catalog-info.yaml` in source control | edit that file — by pull request when the host is GitHub |
+| `ui` | added from this dashboard; the descriptor it generated carries the annotation | same as `descriptor`, and the Remove action is offered |
+| `config` | a `bruno.collections[]` entry | edit `app-config.yaml` and restart |
+| `file` | a `catalog.locations` entry of `type: file` | edit the file on the Backstage host's disk |
+| `unknown` | not stamped yet, or ingested by an older backend | — |
+
+Pull requests are opened against **GitHub only** — `lib/unlinkPr.ts` speaks the
+GitHub contents/pulls API and nothing else — and the host app's configured
+`scmIntegrationsApi` decides which URLs are GitHub, including self-hosted ones.
+That is why capability is resolved from the integrations registry rather than
+from this plugin's own `scmProviderFromUrl`, which guesses from the hostname and
+is only meant for validating pasted input.
+
+Nothing about a collection is editable *in* Backstage in the sense of a form that
+saves. The catalog is derived from source control, relations are recomputed on
+every stitch, and no catalog endpoint mutates a `spec`. What varies is only
+whether the change can be made *from* Backstage, by opening a pull request
+against the file that owns it.
+
+`collectionOrigin` falls back to the shape of `managed-by-location` when the
+annotation is absent — a descriptor is a YAML file, the provider stamps a folder
+— which is the rule the UI used before the annotation existed. That fallback
+cannot tell `ui` from `descriptor`; they are the same file, which is exactly the
+ambiguity the annotation was added to remove. Hence the Remove action is gated on
+the stamped value only, and an unstamped entity gets no button rather than a
+button that fails.
+
+## `brunoApi` — [`src/api/`](src/api/)
+
+`brunoApiRef` + `BrunoClient`. Deps: `discoveryApiRef` + `fetchApiRef`; the base
+URL is `discoveryApi.getBaseUrl('bruno')`.
+
+| Method | Route | Why it is not the catalog |
+| --- | --- | --- |
+| `probeCollection(url)` | `POST /collections/probe` | asks about a repository that is **not in the catalog yet** — and needs the backend's `integrations.*` credentials, which a browser does not have |
+| `createCollection(input)` | `POST /collections` | the catalog has no write model; the backend stores the row a provider later materializes |
+| `deleteCollection(name)` | `DELETE /collections/:name` | the same, in reverse |
+| `listCollections()` | `GET /collections` | the collections that have been registered but are **not entities yet** — a question the catalog answers "none" to by construction |
+| `getEntityDocsUrl(ns, name, theme)` | builds `/entities/:ns/:name/docs?theme=` | a **rendered** document, which needs an origin whose CSP admits the OpenCollection renderer bundle |
+
+`probeCollection` returns a three-way union, not a nullable. A repository that
+read fine but holds no manifest (`no-manifest`) is the user's mistake — wrong
+URL, or the collection lives in a subfolder — while one that could not be read at
+all (`unreadable`) is the instance's problem: no `integrations` entry for the
+host, a revoked token, a private repo. The first needs "point me at the
+collection folder"; the second needs the backend's own diagnostic shown verbatim,
+because only an operator can act on it. Both are ordinary results; the client
+parses the `400` that carries `unreadable` rather than throwing it away as
+`HTTP 400`.
+
+`createCollection` and `deleteCollection` are **eventually consistent** and every
+caller has to say so on screen. Resolving means the backend stored the row, not
+that the entity exists — the gap is `refreshSeconds` on the response, which is
+`bruno.schedule.frequencySeconds` read back from the instance rather than a
+hardcoded 60. Errors are surfaced as the backend's own sentence: a 409 from
+`POST /collections` says *which* name is taken and by what, and collapsing that
+to a status code leaves the user in front of a form with no idea which field is
+wrong.
+
+`getEntityDocsUrl` is the one method that builds a URL rather than fetching one,
+because the result is handed to an iframe `src`, which carries no Authorization
+header. [`src/lib/docsSession.ts`](src/lib/docsSession.ts) mints the Backstage
+limited-access **cookie** for that request (`/.backstage/auth/v1/cookie` on the
+`bruno` plugin, with `credentials: 'include'`) and re-mints it shortly before it
+expires, so a long-lived tab never lets the frame's session lapse. The URL is
+withheld from the frame until the cookie exists. Everything else goes through
+`fetchApi`, which attaches the identity token — and on the create route that
+token is not merely conventional: it is what supplies the `created_by` the
+backend records.
+
+## The dashboard — [`src/components/BrunoPage/`](src/components/BrunoPage/)
+
+`/bruno`, a direct mirror of Backstage's own `DefaultApiExplorerPage`:
+`EntityListProvider` owns fetching and filter state, `CatalogFilterLayout` splits
+the pickers from the content, `CatalogTable` renders the rows. Nothing fetches,
+filters or paginates by hand — the point of modelling a collection as an entity
+is that it gets URL-synced filters, owned/starred, tag facets, search, sorting
+and CSV export for free. The kind picker is `hidden` with
+`initialFilter="bruno"`, exactly as the API explorer pins itself to `api`. There
+is no lifecycle picker: `kind: Bruno` has no `spec.lifecycle`, so it would render
+an empty facet list on every load.
+
+Columns are the stock `CatalogTable.columns` factories wherever one fits; only
+`metadata.version`, `spec.url` and `spec.partOf` need bespoke cells. Related APIs
+are read from **`spec.partOf`, not the relation** — relations are stitched a
+cycle after registration, so a relation-backed column reads as "the link did not
+take" for minutes on a fresh collection.
+
+**Stat tiles** (`StatTiles.tsx`) — Collections, Requests, Environments — are
+derived in-page from the entities `useEntityList` has already loaded, post-filter,
+so filtering to one owner moves the numbers with the table. Deliberately not
+`catalogApi.getEntityFacets`: a second round trip would drift out of step with the
+filters applied here. While the first fetch is in flight the tiles show an em dash,
+because three confident zeroes read as "you have no collections".
+
+**Pending collections** (`PendingCollections.tsx`) is a strip above the table
+reporting on collections the table *cannot* show — stored by
+`POST /collections` but not yet materialized. It subtracts the catalog from
+`listCollections()` every 5 s (and on the
+`bruno:collection-created` window event from
+[`src/lib/collectionEvents.ts`](src/lib/collectionEvents.ts), a nudge that is
+never a source of truth), calls `useEntityList().refresh` when a row lands, and
+renders nothing at all when there is nothing outstanding. A row is **waiting**
+until `landingTimeoutSeconds(refreshSeconds)` — `refreshSeconds * 2 + 30`, shared
+with modal 2 via [`src/lib/landingWindow.ts`](src/lib/landingWindow.ts) so the
+two screens never tell one user two stories — and **stalled** after it. Stalled
+is the case the provider cannot fix: most often a name a `bruno.collections[]`
+entry claimed first, where the configured entry wins by design. The strip names
+both possible causes and offers a Remove that calls `DELETE /collections/:name`
+directly, so such a row is never stranded.
+
+**Remove** is a per-row action gated on `collectionOrigin(entity) === 'ui'` and
+nothing else, and it is `hidden` rather than `disabled` — a permanently disabled
+icon on every config-origin row is furniture whose reason has nowhere to live in
+a table cell. `DeleteCollectionDialog` is straight about the two things a delete
+button does not normally mean here: nothing in source control is touched (the
+collection folder stays, and so does any `catalog-info.yaml` committed for it),
+and the row does not vanish — the provider prunes the entity on its next tick, so
+the collection is still listed for up to `bruno.schedule.frequencySeconds`
+afterwards. The confirm copy says "about a minute"; the `DELETE` response carries
+the real interval, which the confirmation then quotes exactly.
+
+## Adding a collection — [`src/components/AddCollection/`](src/components/AddCollection/)
+
+A two-modal flow behind the **Add Bruno Collection** header action. It is a
+hand-off, not a wizard: modal 1 closes as modal 2 opens, so the generated
+descriptor outlives the form that produced it.
+
+**Modal 1 — the form** (`AddCollectionDialog.tsx`). The URL field debounces 600 ms
+and then asks the backend to probe it; a probe is a `readTree` of a whole
+repository on a cache miss, and a pasted URL arrives in one event anyway. A found
+manifest fills in a suggested `metadata.name` (sanitized — `My Collection (v2)`
+becomes `my-collection-v2`; the original survives as `metadata.title`, which is
+what cards display). Owner and "part of" are `CatalogAutocomplete` pickers over a
+four-field projection of the catalog, because an unprojected `getEntities` over
+every API and Group would pull their specs, relations and OpenAPI definitions
+across the wire to render a dropdown of names. The name is validated here rather
+than left to the catalog because the catalog freezes an entity's ref before any
+processor runs — it is the one field that has to be right at authoring time.
+
+**Submitting modal 1 registers the collection.** It calls
+`createCollection`, so there is a round trip that can fail, and the one that
+fails most often is a name someone else has already used. Modal 1 therefore stays
+open and disabled while the create is in flight and comes back with the backend's
+error attached to the field that produced it, with everything else still filled
+in.
+
+**Modal 2 — the descriptor** (`GeneratedYamlDialog.tsx`) is entirely optional.
+The collection already exists as a stored row by the time it opens, so **Close is
+a complete, successful ending**; the headline is a landing notice that polls the
+catalog every 3 s until the entity appears (or until the shared landing window
+expires), and the YAML below it is framed as an extra for users who also want the
+descriptor committed. Two exits: **Download**, which always works because the user
+puts the file where it belongs, and **Create pull request**, a convenience with
+hard limits stated on screen *before* the button rather than discovered as a
+failure after it. The YAML itself is built by
+[`generateCatalogInfo.ts`](src/components/AddCollection/generateCatalogInfo.ts),
+kept pure and separate so that one byte-identical string reaches all three
+destinations — the preview, the download and the pull request's `fileContent`.
+It stamps `usebruno.com/origin: ui`, which is what survives every reprocess cycle
+and keeps the Remove action available.
+
+The flow is also reachable as a deep link: an API entity page navigates to
+`/bruno?add=1&partOf=<api ref>`, and `AddCollectionAction` reads those parameters
+back and **consumes** them (stripping them from the URL with `replace`) so a
+reload or a back-navigation does not silently reopen the dialog.
+
+## On API entity pages — [`src/components/BrunoCard/`](src/components/BrunoCard/)
+
+**Bruno Collections** lists the collections that document this API, read from the
+catalog `hasPart` relation to `kind: Bruno` — the mirror `BrunoKindProcessor`
+emits for each collection's `spec.partOf`. Per row: *Fetch in Bruno*, *View
+Collection Docs*, *Unlink*. **Link collection** attaches an existing collection
+from this side.
+
+Link and unlink are both **pull requests**, not writes, and
+[`src/lib/unlinkPr.ts`](src/lib/unlinkPr.ts) is the single implementation of both
+directions. Catalog relations are derived output — recomputed and rewritten on
+every stitch, with no relation-mutation endpoint anywhere in
+`plugin-catalog-backend` — so a relation written at runtime would be reverted
+within one processing cycle. `spec.partOf` in the collection's
+`catalog-info.yaml` is the only place the link actually exists. The token comes
+from `scmAuthApi.getCredentials({ additionalScope: { repoWrite: true } })`, so the
+pull request is authored by the **actual user**: correct attribution, correct
+audit trail, no server-side write credential. The file is edited through `yaml`'s
+`parseDocument` rather than `js-yaml` because a round-trip through the latter
+strips every comment, and a PR that silently deletes a team's comments will not
+get merged. `catalogImportApi.submitPullRequest` is not used: it writes to the
+repository root rather than the descriptor's real path, it can only create a file
+and never update one, and it uses a fixed branch name so a second unlink collides
+with the first.
+
+Open pull requests are shown as session-scoped chips. Persisting them would mean
+a side store of link state outside source control, which is the thing the
+relation model exists to avoid.
+
+## On `kind: Bruno` entity pages — [`src/components/BrunoEntity/`](src/components/BrunoEntity/)
+
+**Header** (`BrunoEntityHeader.tsx`) replaces the stock entity header wholesale,
+so the title area can carry Version, Source and the collection's own actions —
+none of which the stock header has a slot for. The cost is real and worth
+knowing: a custom header layout is handed only `{ tabs, activeTabId }`, so the
+star and the overflow menu have to be rebuilt from public parts, and a
+third-party `EntityContextMenuItemBlueprint` item will not appear on Bruno pages.
+Everything else is deliberate parity with `EntityHeaderBui`.
+
+**Documentation** (`CollectionDocsCard.tsx`) renders the collection's own README,
+parsed out of `spec.definition`'s `root.docs`, falling back to
+`metadata.description`. No fetch, nothing to fail; it renders nothing at all when
+both are empty.
+
+**Related APIs** (`RelatedApisCard.tsx`) reads the `partOf` **relation** — so a
+ref that names a non-existent entity is simply absent rather than rendered as a
+dead row — with the per-row Unlink.
+
+**Environments** (`EnvironmentsCard.tsx`) reads `spec.environments`, with three
+distinct states: key missing (not read yet), empty list (no environments
+defined), or names to show.
+
+**Bruno API Docs tab** (`BrunoApiDocsContent.tsx`) frames the backend's
+`/entities/:ns/:name/docs`. The document is *not* assembled in the browser: a
+`blob:` document would inherit the app's Content-Security-Policy, which does not
+allow the OpenCollection renderer's CDN, whereas the backend document has its own
+origin and its own CSP. The empty states branch on the **entity's**
+`spec.definition` rather than on the response, so a collection with no document
+never costs a request and the reason it has none — over
+`bruno.definition.maxBytes`, generation failed, or not processed yet — is
+explained from data already in React context.
+
+[`src/components/BrunoDocsPage/`](src/components/BrunoDocsPage/) is the same
+document at `/bruno/docs/:namespace/:name`, keyed by entity ref, with a
+`?view=full` chrome-less layout that overlays the app sidebar.
+
+## Open in Bruno — [`src/components/OpenInBruno/`](src/components/OpenInBruno/)
+
+A split button whose behaviour is extracted into `useOpenInBruno` so surfaces
+that cannot host one (the row action menu on the collections card) drive exactly
+the same deep link and the same fallback. The primary action opens Bruno's hosted
+fetch endpoint — `https://fetch.usebruno.com/?url=<repo root>` — in a new tab;
+the format lives in one place,
+[`src/lib/brunoLink.ts`](src/lib/brunoLink.ts). Only the repo root is sent, not
+the deeper `/tree/<ref>/<subpath>` collection path. The dropdown offers **Clone &
+open in Bruno**, which copies a `git clone` instruction (and shows it if the
+clipboard is unavailable).
 
 ## Enabling it in the app
 
@@ -54,30 +346,46 @@ Add the default export to `features`:
 ```ts
 import { createApp } from '@backstage/frontend-defaults';
 import catalogPlugin from '@backstage/plugin-catalog/alpha';
-import brunoPlugin from '@usebruno/bruno-plugin-poc';
-import { navModule } from './modules/nav';
+import brunoPluginPoc from '@usebruno/bruno-plugin-poc';
 
 export default createApp({
-  features: [catalogPlugin, navModule, brunoPlugin],
+  features: [catalogPlugin, brunoPluginPoc /* … */],
 });
 ```
 
+The package also exports `BrunoIcon`, so the app can register it as the
+`kind:bruno` catalog icon (`packages/app/src/modules/icons`) without reaching
+into the plugin's source tree.
+
+### App APIs it uses, and how it degrades without them
+
+`discoveryApi` and `fetchApi` are required. `scmIntegrationsApi`, `scmAuthApi`
+and `catalogImportApi` are resolved through `useApiHolder`, never `useApi`,
+because a host app is not obliged to register them and `useApi` throws at
+**render** time for a missing one — which would take down a whole card instead of
+disabling one action. `catalogImportApi` in particular is unregistered in this
+app (`@backstage/plugin-catalog-import` is not installed as a feature), so
+`GeneratedYamlDialog` constructs a `CatalogImportClient` itself from APIs the app
+does register.
+
 ## Required app-config
 
-### Backend discovery
-The client resolves the backend via `discoveryApi.getBaseUrl('bruno')`; no
-extra frontend config needed as long as the `bruno` backend plugin is running.
+No frontend-specific config is needed: the client resolves the backend through
+`discoveryApi.getBaseUrl('bruno')`. What matters is on the backend side —
+`bruno.collections`, `bruno.schedule`, `bruno.definition` and the
+`integrations.*` credentials the probe reads with. See
+[`plugins/bruno-backend/README.md`](../bruno-backend/README.md).
 
-### Proxy endpoints (for "Try it out")
-Add under `proxy.endpoints` in `app-config.yaml` (and mirror hosts in
-`PROXY_HOST_MAP` in `src/lib/proxy.ts`):
+Two host-app settings this plugin's flows depend on:
 
-```yaml
-proxy:
-  endpoints:
-    '/bruno-echo':
-      target: 'https://echo.usebruno.com'
-      changeOrigin: true
-      allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD']
-      allowedHeaders: ['Authorization', 'Content-Type', 'Accept']
-```
+- `catalog.rules` must allow the `Bruno` kind for the locations that carry Bruno
+  entities.
+- `catalog.import.entityFilename` is read by `CatalogImportClient` when modal 2
+  opens a pull request.
+
+## Related documentation
+
+- [`docs/Bruno Backstage Plugin PRD - Entity.md`](../../docs/Bruno%20Backstage%20Plugin%20PRD%20-%20Entity.md)
+  — the product requirements this plugin implements.
+- [`docs/execution/`](../../docs/execution/) — the phase plans (`BE-P1`, `BE-P2`,
+  `BE-UI`, `UI-P6`) referenced from the source comments.
