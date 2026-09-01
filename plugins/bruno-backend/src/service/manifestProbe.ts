@@ -43,6 +43,7 @@ import {
   readTreeWithEtag
 } from '../scm';
 import { buildDefinition, type DefinitionOptions } from './definitionBuilder';
+import { posixDirname } from '../posixPath';
 
 /**
  * Deliberately short. With ETag revalidation the marginal cost of a stale entry
@@ -301,7 +302,8 @@ export function createManifestProbe(options: {
 
 /**
  * Picks the manifest for a tree. `opencollection.yml/.yaml` wins over
- * `bruno.json`, matching `detectFormat` in `collectionService`; among manifests
+ * `bruno.json`, matching `detectFormat` in `collectionParser.ts`; among
+ * manifests
  * of the same kind the shortest path wins, so the shallowest is chosen. Within
  * one directory that also settles the two spellings: `.yml` is a character
  * shorter than `.yaml`, so `.yml` wins — which is what Bruno writes today. The
@@ -451,9 +453,4 @@ function description(value: unknown): string | undefined {
     .map((l) => l.trim())
     .find((l) => l !== '');
   return line ? line.slice(0, MAX_DESCRIPTION_LENGTH) : undefined;
-}
-
-function posixDirname(p: string): string {
-  const idx = p.lastIndexOf('/');
-  return idx === -1 ? '' : p.slice(0, idx);
 }

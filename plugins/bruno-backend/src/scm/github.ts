@@ -4,8 +4,7 @@ import type {
 } from '@backstage/integration';
 import { Octokit } from '@octokit/rest';
 import {
-  assertSingleSegmentRef,
-  joinPosix,
+  composePathStyleCollectionUrl,
   normalizePathStyleUrl,
   originPlusSegments
 } from './normalize';
@@ -59,23 +58,17 @@ export function createGithubScmProvider(options: {
 
     parseRepoUrl,
 
-    /**
-     * Composes the fully-qualified GitHub URL for a discovered collection root.
-     * Joins the input URL's subpath with the root's prefix within that subtree,
-     * and yields `https://<host>/<owner>/<repo>/tree/<ref>/<fullSubpath>`. When
-     * both the input subpath and the root are empty, reduces to the plain repo
-     * URL.
-     */
+    /** `https://<host>/<owner>/<repo>/tree/<ref>/<subpath>` for a discovered
+     *  root, or the bare repo URL when the joined subpath is empty. */
     composeCollectionUrl(normalizedRepoUrl, rootPrefixWithinInput, ref) {
-      const u = new URL(normalizedRepoUrl);
-      const { owner, repo, subpath: inputSubpath }
-        = parseRepoUrl(normalizedRepoUrl);
-      const fullSubpath = joinPosix(inputSubpath, rootPrefixWithinInput);
-      if (fullSubpath === '') {
-        return `${u.protocol}//${u.host}/${owner}/${repo}`;
-      }
-      assertSingleSegmentRef(ref, 'GitHub');
-      return `${u.protocol}//${u.host}/${owner}/${repo}/tree/${ref}/${fullSubpath}`;
+      return composePathStyleCollectionUrl({
+        normalizedRepoUrl,
+        rootPrefixWithinInput,
+        ref,
+        parseRepoUrl,
+        view: 'tree',
+        provider: 'GitHub'
+      });
     },
 
     /** Total: never throws. */

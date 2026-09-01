@@ -8,19 +8,17 @@ import { createGitlabScmProvider } from './gitlab';
 import type { ScmProvider } from './types';
 
 // Only what consumers outside `scm/` actually use. Everything else in the seam
-// is imported directly by its sibling modules.
-export type { ScmProvider } from './types';
-export { normalizePathStyleUrl } from './normalize';
-export { readTreeViaUrlReader, readTreeWithEtag } from './readTree';
-export type { ScmTreeRead } from './readTree';
+// — the per-provider adapters, `normalize`, `readTreeViaUrlReader`,
+// `selectCollectionFiles`, the `ScmProvider`/`ScmTreeRead` shapes — is imported
+// directly by its sibling modules, so re-exporting it here would only widen the
+// surface without giving anyone a shorter path to it.
+export { readTreeWithEtag } from './readTree';
 export {
-  isCollectionFile,
   isOpenCollectionManifest,
   isBrunoJsonManifest,
   isOpenCollectionBodyFile,
   isFolderManifest,
-  stripOpenCollectionExtension,
-  selectCollectionFiles
+  stripOpenCollectionExtension
 } from './treeFilter';
 
 export interface ScmProviderRegistry {
@@ -101,7 +99,7 @@ export function createScmProviderRegistry(options: {
       // rather than throwing from a lookup that `repoRootFromUrl` callers
       // require to be total. Providers we do not implement (Azure, Gitea,
       // Gerrit, Harness) land here and fail at read time with the reader's own
-      // error — see docs/MULTI-SCM-PLAN.md B10 and the P6 diagnostics phase.
+      // error.
       return github;
     }
   };

@@ -1,7 +1,7 @@
 import { stringify } from 'yaml';
-import { parseEntityRef, stringifyEntityRef } from '@backstage/catalog-model';
 import type { Entity } from '@backstage/catalog-model';
 import { BRUNO_ORIGIN_ANNOTATION } from '../../lib/brunoEntity';
+import { tryNormaliseApiRef } from '../../lib/apiRef';
 
 /**
  * Builds the `catalog-info.yaml` the add-collection flow hands to the user.
@@ -97,22 +97,6 @@ export function validateEntityName(name: string): string | undefined {
 }
 
 /**
- * Normalises an API reference the way the catalog does when it reads
- * `spec.partOf`, so what lands in the file is what the relation will be keyed
- * on. Unparseable refs are dropped rather than written out — a descriptor
- * naming a ref the catalog cannot parse fails validation for the whole entity.
- */
-function normaliseApiRef(ref: string): string | undefined {
-  try {
-    return stringifyEntityRef(
-      parseEntityRef(ref, { defaultKind: 'API', defaultNamespace: 'default' })
-    );
-  } catch {
-    return undefined;
-  }
-}
-
-/**
  * The `kind: Bruno` entity for a collection the user just described.
  *
  * Note what is deliberately NOT written, even though the probe gives us all
@@ -128,7 +112,7 @@ function normaliseApiRef(ref: string): string | undefined {
  */
 export function buildBrunoEntity(input: BrunoEntityInput): Entity {
   const partOf = input.partOf
-    .map(normaliseApiRef)
+    .map(tryNormaliseApiRef)
     .filter((ref): ref is string => ref !== undefined);
 
   return {

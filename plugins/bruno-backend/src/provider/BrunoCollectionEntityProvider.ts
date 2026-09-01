@@ -13,7 +13,7 @@ import {
 } from '../processor/BrunoKindProcessor';
 import type { BrunoOrigin } from '../processor/BrunoKindProcessor';
 import { readBrunoCollections } from '../service/brunoConfig';
-import { sanitizeName } from '../service/collectionService';
+import { sanitizeName } from '../service/entityName';
 import type { CollectionManifest, ManifestProbe } from '../service/manifestProbe';
 import type { BrunoEntity } from '../types';
 import type {

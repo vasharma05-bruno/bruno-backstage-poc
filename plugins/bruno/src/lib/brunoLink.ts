@@ -16,7 +16,7 @@ import { repoRootFromCollectionUrl } from './scmUrl';
  * Base URL of Bruno's hosted "fetch collection from URL" endpoint.
  * Centralized so the exact format is a one-line change.
  */
-export const BRUNO_FETCH_BASE_URL = 'https://fetch.usebruno.com/';
+const BRUNO_FETCH_BASE_URL = 'https://fetch.usebruno.com/';
 
 /**
  * Build the `https://fetch.usebruno.com/?url=<repoUrl>` open link.
@@ -40,7 +40,7 @@ export function buildBrunoDeepLink(sourceUrl: string): string {
  * `<repo-root>.git` clone form — so this needs no provider branch. Returns the
  * input unchanged when the URL cannot be reduced to a repo root.
  */
-export function toCloneUrl(sourceUrl: string): string {
+function toCloneUrl(sourceUrl: string): string {
   const root = repoRootFromCollectionUrl(sourceUrl);
   // It returns its input unchanged when it cannot find a `<namespace>/<repo>`
   // pair — an unparseable URL, or a host with too few path segments — and

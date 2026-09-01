@@ -5,11 +5,11 @@ import {
   type ScmIntegrationRegistry
 } from '@backstage/integration';
 import {
-  assertSingleSegmentRef,
-  joinPosix,
+  composePathStyleCollectionUrl,
   normalizePathStyleUrl,
   safeHost
 } from './normalize';
+import { joinPosix } from '../posixPath';
 import { readTreeViaUrlReader } from './readTree';
 import type {
   ParsedRepoUrl,
@@ -84,22 +84,17 @@ export function createGitlabScmProvider(options: {
 
     parseRepoUrl,
 
-    /**
-     * Rebuilds `https://<host>/<projectPath>/-/tree/<ref>/<fullSubpath>` for a
-     * discovered root, or the bare project URL when both the input subpath and
-     * the root prefix are empty.
-     */
+    /** `https://<host>/<projectPath>/-/tree/<ref>/<subpath>` for a discovered
+     *  root, or the bare project URL when the joined subpath is empty. */
     composeCollectionUrl(normalizedRepoUrl, rootPrefixWithinInput, ref) {
-      const u = new URL(normalizedRepoUrl);
-      const { owner, repo, subpath: inputSubpath }
-        = parseRepoUrl(normalizedRepoUrl);
-      const projectPath = joinPosix(owner, repo);
-      const fullSubpath = joinPosix(inputSubpath, rootPrefixWithinInput);
-      if (fullSubpath === '') {
-        return `${u.protocol}//${u.host}/${projectPath}`;
-      }
-      assertSingleSegmentRef(ref, 'GitLab');
-      return `${u.protocol}//${u.host}/${projectPath}/-/tree/${ref}/${fullSubpath}`;
+      return composePathStyleCollectionUrl({
+        normalizedRepoUrl,
+        rootPrefixWithinInput,
+        ref,
+        parseRepoUrl,
+        view: '-/tree',
+        provider: 'GitLab'
+      });
     },
 
     /**

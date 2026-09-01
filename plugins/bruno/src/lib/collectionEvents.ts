@@ -23,7 +23,7 @@
  */
 
 /** Fired after `POST /collections` has stored a row. No payload, by design. */
-export const BRUNO_COLLECTION_CREATED_EVENT = 'bruno:collection-created';
+const BRUNO_COLLECTION_CREATED_EVENT = 'bruno:collection-created';
 
 /**
  * Announces that a collection was just registered.

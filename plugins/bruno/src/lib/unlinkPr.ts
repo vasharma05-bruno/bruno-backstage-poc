@@ -1,7 +1,7 @@
 import { Octokit } from '@octokit/rest';
 import type { Document } from 'yaml';
 import { parseDocument, parseAllDocuments, isMap, isSeq } from 'yaml';
-import { parseEntityRef, stringifyEntityRef } from '@backstage/catalog-model';
+import { normaliseApiRef } from './apiRef';
 
 /**
  * Composes and submits the pull requests that add an API reference to, or remove
@@ -40,7 +40,8 @@ import { parseEntityRef, stringifyEntityRef } from '@backstage/catalog-model';
  * comments will not get merged.
  */
 
-/** Which way a planned `spec.partOf` edit goes. */
+/** Which way a planned `spec.partOf` edit goes. Part of the exported
+ *  {@link PartOfPlan} shape, so it stays public with it. */
 export type PartOfDirection = 'link' | 'unlink';
 
 /** Everything a dialog needs to show a preview and then submit. */
@@ -77,7 +78,7 @@ export interface PartOfPlan {
 export type UnlinkPlan = PartOfPlan;
 
 /** Why a `spec.partOf` edit could not be composed. */
-export type PartOfEditReason
+type PartOfEditReason
   = | 'not-present'
     | 'already-present'
     | 'multi-document'
@@ -85,9 +86,11 @@ export type PartOfEditReason
 
 /**
  * A typed failure of the YAML edit itself, as opposed to a network or
- * permission failure. The dialog keys its blocked states off `reason`.
+ * permission failure. Both dialogs surface `message` verbatim; `reason` is the
+ * machine-readable discriminant a caller would key a distinct blocked state
+ * off, and every `message` below is written to stand on its own without it.
  */
-export class PartOfEditError extends Error {
+class PartOfEditError extends Error {
   readonly reason: PartOfEditReason;
 
   constructor(reason: PartOfEditReason, message: string) {
@@ -95,18 +98,6 @@ export class PartOfEditError extends Error {
     this.name = 'PartOfEditError';
     this.reason = reason;
   }
-}
-
-/**
- * Normalises an entity reference the way the catalog does when it reads
- * `spec.partOf`: unprefixed values default to `api:default/...`. Comparing
- * normalised forms is what makes `github-rest-api`, `api:github-rest-api` and
- * `api:default/github-rest-api` all match the same relation.
- */
-function normaliseApiRef(ref: string): string {
-  return stringifyEntityRef(
-    parseEntityRef(ref, { defaultKind: 'API', defaultNamespace: 'default' })
-  );
 }
 
 /**
@@ -176,7 +167,7 @@ function findRefIndex(
  * already listed: the relation exists in source control and is merely waiting
  * for a processing cycle, so an empty pull request would help nobody.
  */
-export function addPartOf(yamlText: string, apiRef: string): string {
+function addPartOf(yamlText: string, apiRef: string): string {
   const doc = parseDescriptor(yamlText);
   const target = normaliseApiRef(apiRef);
 
@@ -225,7 +216,7 @@ export function addPartOf(yamlText: string, apiRef: string): string {
  * when the reference is not there: that means the link was already removed
  * upstream, and opening an empty pull request would be worse than saying so.
  */
-export function removePartOf(yamlText: string, apiRef: string): string {
+function removePartOf(yamlText: string, apiRef: string): string {
   const doc = parseDescriptor(yamlText);
 
   const target = normaliseApiRef(apiRef);
@@ -357,7 +348,7 @@ const DIRECTIONS: Record<
  * detected before a branch exists (not present, not parseable, no permission to
  * read) happens while nothing has been created yet.
  */
-export async function planPartOfEdit(opts: {
+async function planPartOfEdit(opts: {
   direction: PartOfDirection;
   descriptorUrl: string;
   apiRef: string;
@@ -422,7 +413,7 @@ export async function planPartOfEdit(opts: {
  * update rather than a create — the distinction `catalogImportApi` gets wrong
  * and the reason this module exists.
  */
-export async function submitPartOfEdit(
+async function submitPartOfEdit(
   plan: PartOfPlan,
   token: string
 ): Promise<{ link: string }> {

@@ -26,7 +26,7 @@ export const useBrandStyles = makeStyles((theme) => {
         left: 0,
         right: 0,
         height: 3,
-        background: brand.rule,
+        backgroundColor: brand.accent,
         // Above the header wash so the rule stays crisp.
         zIndex: 1
       }
@@ -36,11 +36,6 @@ export const useBrandStyles = makeStyles((theme) => {
     mark: {
       fontSize: 22,
       flex: '0 0 auto'
-    },
-
-    /** Accent-coloured text — figures, emphasised labels. */
-    accentText: {
-      color: brand.accentText
     },
 
     /** A headline figure (stat tiles, the entity card's request count). */
@@ -78,25 +73,6 @@ export const useBrandStyles = makeStyles((theme) => {
       '&&:hover': {
         borderColor: brand.accent,
         backgroundColor: brand.wash
-      }
-    },
-
-    /** Brand-tinted chip, for Bruno-owned metadata. */
-    accentChip: {
-      backgroundColor: brand.washStrong,
-      color: brand.accentText,
-      border: `1px solid ${brand.border}`
-    },
-
-    /** Brand-indicated tab bar. */
-    accentTabs: {
-      'borderBottom': `1px solid ${theme.palette.divider}`,
-      '& .MuiTabs-indicator': {
-        backgroundColor: brand.accent,
-        height: 3
-      },
-      '& .MuiTab-textColorPrimary.Mui-selected': {
-        color: brand.accentText
       }
     }
   };

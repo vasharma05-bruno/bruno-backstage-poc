@@ -45,25 +45,33 @@ function gitlabProjectSegments(segments: string[]): string[] {
 }
 
 /**
- * Longest a source URL is rendered in a table cell before its middle is elided.
+ * Default longest a collection URL is rendered before its middle is elided.
  */
-const MAX_CELL_URL_CHARS = 48;
+const DEFAULT_MAX_URL_CHARS = 48;
 
 /**
- * Shortens a collection URL for a table cell: the host and the last two path
- * segments carry the meaning, and a full `/tree/<ref>/<deep>/<path>` would widen
- * the column past everything else in the table.
+ * Shortens a collection URL for a narrow surface — a table cell, a card row, a
+ * header metadata line: the host and the last two path segments carry the
+ * meaning, and a full `/tree/<ref>/<deep>/<path>` would widen the column past
+ * everything else beside it.
  *
  * Elides the MIDDLE rather than the tail, which is what CSS `text-overflow`
  * would do: the tail is the collection folder — the one segment that
  * distinguishes two collections in the same repo — so truncating it makes rows
- * indistinguishable exactly where the column has to disambiguate.
+ * indistinguishable exactly where the surface has to disambiguate.
+ *
+ * `maxChars` is the only thing that varied between the three hand-rolled copies
+ * this replaces, so it is the only knob: a caller with a tighter column passes
+ * its own budget rather than reimplementing the elision.
  *
  * Total: an unparseable string falls back to a plain tail cut rather than
  * throwing.
  */
-export function elideCollectionUrl(url: string): string {
-  if (url.length <= MAX_CELL_URL_CHARS) {
+export function elideCollectionUrl(
+  url: string,
+  maxChars: number = DEFAULT_MAX_URL_CHARS
+): string {
+  if (url.length <= maxChars) {
     return url;
   }
   try {
@@ -71,6 +79,6 @@ export function elideCollectionUrl(url: string): string {
     const segments = parsed.pathname.split('/').filter(Boolean);
     return `${parsed.host}/…/${segments.slice(-2).join('/')}`;
   } catch {
-    return `${url.slice(0, MAX_CELL_URL_CHARS - 1)}…`;
+    return `${url.slice(0, maxChars - 1)}…`;
   }
 }

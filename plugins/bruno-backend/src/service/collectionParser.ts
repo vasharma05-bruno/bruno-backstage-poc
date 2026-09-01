@@ -3,20 +3,18 @@
  * out. Two self-contained paths — the classic `.bru`/`bruno.json` one and the
  * OpenCollection `.yml`/`.yaml` one — behind a single {@link parseCollection}.
  *
- * Extracted verbatim from `collectionService.ts` because it is the part that
- * SURVIVES: the annotation-model service, router and stores around it are
- * deleted by a later phase, while both the `/api/bruno/*` docs routes and the
- * `kind: Bruno` entity spine need a parser. Keeping it inside
- * `collectionService.ts` would have hung the entity spine off a module already
- * slated for deletion; duplicating it would have guaranteed drift between the
- * docs route and the entity's stored definition.
+ * The one parser in the plugin. It was split out of the annotation-model
+ * collection service — since deleted — because it is the part that SURVIVES:
+ * both the `/api/bruno/*` docs routes and the `kind: Bruno` entity spine need a
+ * parse, and a second copy for either would have drifted from the definition
+ * stored on the entity.
  *
- * Dependency direction is one-way — `collectionService.ts` imports from here,
- * never the reverse — so there is no cycle and nothing here imports the SCM
- * readers, the probe, or anything under `provider/` or `processor/`.
+ * Dependency direction is one-way: this module is imported by
+ * `definitionBuilder.ts` and reads only `../types`, `../scm`'s path predicates
+ * and `../posixPath`. Nothing here imports the SCM readers, the probe, or
+ * anything under `provider/` or `processor/`, so there is no cycle.
  */
 import type { LoggerService } from '@backstage/backend-plugin-api';
-import path from 'path';
 // @usebruno/lang@0.38.0 exports the v2 parsers with a `V2` suffix; alias them
 // to the names the rest of this module uses. `collectionBruToJson` is unsuffixed.
 import {
@@ -44,12 +42,12 @@ import type {
   RequestBody
 } from '../types';
 import {
-  isBrunoJsonManifest,
   isFolderManifest,
   isOpenCollectionBodyFile,
   isOpenCollectionManifest,
   stripOpenCollectionExtension
 } from '../scm';
+import { joinPosix, posixBaseName, posixDirname } from '../posixPath';
 
 /**
  * A parsed .bru request as produced by `@usebruno/lang`'s `bruToJson`.
@@ -188,7 +186,7 @@ export function parseCollection(
   };
 }
 
-export function findBrunoJson(tree: FileTree): string | undefined {
+function findBrunoJson(tree: FileTree): string | undefined {
   let best: string | undefined;
   for (const key of tree.files.keys()) {
     if (key === 'bruno.json' || key.endsWith('/bruno.json')) {
@@ -210,7 +208,7 @@ function detectFormat(tree: FileTree): 'bru' | 'yml' {
   return findOpenCollectionYml(tree) ? 'yml' : 'bru';
 }
 
-export function findOpenCollectionYml(tree: FileTree): string | undefined {
+function findOpenCollectionYml(tree: FileTree): string | undefined {
   let best: string | undefined;
   for (const key of tree.files.keys()) {
     if (isOpenCollectionManifest(key)) {
@@ -230,44 +228,6 @@ export function findOpenCollectionYml(tree: FileTree): string | undefined {
     }
   }
   return best;
-}
-
-/**
- * Collects EVERY collection root in the tree (not just the shortest, unlike
- * `findBrunoJson`/`findOpenCollectionYml`). A root is the directory of a
- * `bruno.json` or `opencollection.yml/.yaml` manifest. When both formats sit in the
- * same directory, `yml` wins on tie (matching `detectFormat`). Sorted by
- * `rootPrefix` for stable output.
- */
-export function findAllCollectionRoots(tree: FileTree): string[] {
-  // The directory of every Bruno manifest. `parseCollection` re-detects the
-  // format (yml wins) on each sliced sub-tree, so only the root path matters.
-  const roots = new Set<string>();
-  for (const key of tree.files.keys()) {
-    if (isBrunoJsonManifest(key) || isOpenCollectionManifest(key)) {
-      roots.add(posixDirname(key));
-    }
-  }
-  return Array.from(roots).sort((a, b) => a.localeCompare(b));
-}
-
-/**
- * Slices a sub-tree at `rootPrefix`, re-keying files to be root-relative so the
- * existing `parseCollection` sees a single manifest at its own root. When
- * `rootPrefix` is `''` the tree is returned unchanged.
- */
-export function sliceTreeAtRoot(tree: FileTree, rootPrefix: string): FileTree {
-  if (rootPrefix === '') {
-    return tree;
-  }
-  const prefix = `${rootPrefix}/`;
-  const files = new Map<string, string>();
-  for (const [key, value] of tree.files) {
-    if (key.startsWith(prefix)) {
-      files.set(key.slice(prefix.length), value);
-    }
-  }
-  return { files };
 }
 
 /** Finds the collection-root README (case-insensitive) at `rootPrefix`. */
@@ -323,7 +283,7 @@ function parseEnvironments(
 
     try {
       const parsed = bruToEnvJson(contents) as RawEnv;
-      const name = baseName(key).replace(/\.bru$/, '');
+      const name = posixBaseName(key).replace(/\.bru$/, '');
       const variables: KeyValue[] = (parsed.variables ?? []).map((v) => ({
         name: v.name,
         value: v.value ?? '',
@@ -483,7 +443,7 @@ function parseRequestFile(
   const type: 'http' | 'graphql'
     = metaType === 'graphql' ? 'graphql' : 'http';
 
-  const name = raw.meta?.name ?? baseName(key).replace(/\.bru$/, '');
+  const name = raw.meta?.name ?? posixBaseName(key).replace(/\.bru$/, '');
   const seq
     = typeof raw.meta?.seq === 'number' ? raw.meta.seq : undefined;
 
@@ -726,7 +686,8 @@ function parseEnvironmentsYml(
           secret?: boolean;
         }>;
       };
-      const name = parsed.name || stripOpenCollectionExtension(baseName(key));
+      const name
+        = parsed.name || stripOpenCollectionExtension(posixBaseName(key));
       const variables: KeyValue[] = (parsed.variables ?? []).map((v) => ({
         name: v.name,
         value: v.value ?? '',
@@ -925,7 +886,7 @@ function adaptFilestoreItem(
     return undefined;
   }
 
-  const name = item.name || stripOpenCollectionExtension(baseName(key));
+  const name = item.name || stripOpenCollectionExtension(posixBaseName(key));
   const seq = typeof item.seq === 'number' ? item.seq : undefined;
   const req = item.request ?? {};
 
@@ -1063,24 +1024,4 @@ function strOrUndefined(v: unknown): string | undefined {
     return v;
   }
   return undefined;
-}
-
-/** Exported only because `collectionService`'s local-filesystem walker keys its
- *  tree with it, and every tree key here is POSIX by contract. */
-export function toPosix(p: string): string {
-  return p.split(path.sep).join('/');
-}
-
-function posixDirname(p: string): string {
-  const idx = p.lastIndexOf('/');
-  return idx === -1 ? '' : p.slice(0, idx);
-}
-
-function baseName(p: string): string {
-  const idx = p.lastIndexOf('/');
-  return idx === -1 ? p : p.slice(idx + 1);
-}
-
-function joinPosix(...parts: string[]): string {
-  return parts.filter((p) => p !== '').join('/');
 }

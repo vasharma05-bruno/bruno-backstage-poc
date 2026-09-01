@@ -24,9 +24,11 @@ import { sourceUrl, version } from '../../lib/brunoEntity';
 import { BrunoInfoCard } from '../BrunoInfoCard';
 import { UnlinkDialog } from '../BrunoEntity';
 import { OpenInBrunoSnackbar, useOpenInBruno } from '../OpenInBruno';
+import { elideCollectionUrl } from '../../lib/scmUrl';
 import { LinkCollectionDialog } from './LinkCollectionDialog';
 
-/** Longest a source URL is shown in a table cell before the middle is elided. */
+/** Longest a source URL is shown in a table cell before the middle is elided.
+ *  Tighter than the shared default: this cell is in a card, not a page. */
 const MAX_SOURCE_URL_CHARS = 44;
 
 const useStyles = makeStyles((theme) => ({
@@ -46,24 +48,6 @@ const useStyles = makeStyles((theme) => ({
     marginLeft: theme.spacing(1)
   }
 }));
-
-/**
- * Shortens a URL for a table cell: the host and the last two path segments carry
- * the meaning, and a full `/tree/<ref>/<deep>/<path>` would widen the column past
- * everything else in the card.
- */
-function shortenUrl(url: string): string {
-  if (url.length <= MAX_SOURCE_URL_CHARS) {
-    return url;
-  }
-  try {
-    const parsed = new URL(url);
-    const segments = parsed.pathname.split('/').filter(Boolean);
-    return `${parsed.host}/…/${segments.slice(-2).join('/')}`;
-  } catch {
-    return `${url.slice(0, MAX_SOURCE_URL_CHARS - 1)}…`;
-  }
-}
 
 /**
  * The per-row action menu: Fetch in Bruno, View Collection Docs, Unlink.
@@ -232,7 +216,7 @@ export function BrunoCard(): JSX.Element {
         return url
           ? (
               <Link to={url} title={url}>
-                {shortenUrl(url)}
+                {elideCollectionUrl(url, MAX_SOURCE_URL_CHARS)}
               </Link>
             )
           : '—';

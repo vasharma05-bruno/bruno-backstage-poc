@@ -3,8 +3,7 @@ import {
   type ScmIntegrationRegistry
 } from '@backstage/integration';
 import {
-  assertSingleSegmentRef,
-  joinPosix,
+  composePathStyleCollectionUrl,
   normalizePathStyleUrl,
   originPlusSegments,
   safeHost
@@ -24,7 +23,7 @@ import type { ParsedRepoUrl, ScmProvider } from './types';
  * This is Bitbucket *Cloud* only. Bitbucket Server / Data Center puts the ref in
  * the query string (`/projects/<KEY>/repos/<slug>/browse/<path>?at=refs/heads/<ref>`),
  * which `normalizePathStyleUrl` would destroy, so it needs its own adapter and
- * its own normalization (docs/MULTI-SCM-PLAN.md B1).
+ * its own normalization.
  */
 function parseRepoUrl(url: string): ParsedRepoUrl {
   const segments = new URL(url).pathname.split('/').filter((s) => s !== '');
@@ -60,21 +59,17 @@ export function createBitbucketCloudScmProvider(options: {
 
     parseRepoUrl,
 
-    /**
-     * Rebuilds `https://<host>/<workspace>/<repo>/src/<ref>/<fullSubpath>` for a
-     * discovered root, or the bare repo URL when both the input subpath and the
-     * root prefix are empty.
-     */
+    /** `https://<host>/<workspace>/<repo>/src/<ref>/<subpath>` for a discovered
+     *  root, or the bare repo URL when the joined subpath is empty. */
     composeCollectionUrl(normalizedRepoUrl, rootPrefixWithinInput, ref) {
-      const u = new URL(normalizedRepoUrl);
-      const { owner, repo, subpath: inputSubpath }
-        = parseRepoUrl(normalizedRepoUrl);
-      const fullSubpath = joinPosix(inputSubpath, rootPrefixWithinInput);
-      if (fullSubpath === '') {
-        return `${u.protocol}//${u.host}/${owner}/${repo}`;
-      }
-      assertSingleSegmentRef(ref, 'Bitbucket Cloud');
-      return `${u.protocol}//${u.host}/${owner}/${repo}/src/${ref}/${fullSubpath}`;
+      return composePathStyleCollectionUrl({
+        normalizedRepoUrl,
+        rootPrefixWithinInput,
+        ref,
+        parseRepoUrl,
+        view: 'src',
+        provider: 'Bitbucket Cloud'
+      });
     },
 
     /** Total: never throws. */
@@ -128,7 +123,7 @@ export function createBitbucketCloudScmProvider(options: {
      * host-configured credential" error instead. Private Bitbucket Cloud repos
      * are reachable through `integrations.bitbucketCloud` (`username` + `token`,
      * or `clientId` + `clientSecret`). Verified against @backstage/integration
-     * and @backstage/backend-defaults; see docs/MULTI-SCM-PLAN.md §1.4 and B4.
+     * and @backstage/backend-defaults.
      */
   };
 }

@@ -1,8 +1,16 @@
 /** CDN that hosts the OpenCollection docs renderer bundle (POC: staging). */
 const CDN = 'https://staging.cdn.usebruno.com/api-docs';
 
-/** HTML-escape a value for safe interpolation into markup / attributes. */
-function escapeHtml(s: string): string {
+/**
+ * HTML-escape a value for safe interpolation into markup or an attribute.
+ *
+ * Shared with `router.ts`, which builds the framable docs error page: both
+ * interpolate a caller-influenced string into a document served as `text/html`,
+ * so they must agree on what gets escaped. `"` is included because attribute
+ * interpolation is one of the two call sites, and escaping it in a text node
+ * costs nothing.
+ */
+export function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

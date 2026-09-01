@@ -37,9 +37,7 @@ import {
 } from '@backstage/plugin-catalog-common/alpha';
 import { buildBrunoDeepLink } from '../../lib/brunoLink';
 import { brunoSpec, sourceUrl, version } from '../../lib/brunoEntity';
-
-/** Longest a source URL is shown before the middle is elided. */
-const MAX_SOURCE_URL_CHARS = 48;
+import { elideCollectionUrl } from '../../lib/scmUrl';
 
 const useStyles = makeStyles((theme) => ({
   // The BUI header lays `customActions` out in a row; these are MUI v4
@@ -53,25 +51,6 @@ const useStyles = makeStyles((theme) => ({
     color: theme.palette.error.main
   }
 }));
-
-/**
- * Shortens a URL for a header metadata row: the origin and the last two path
- * segments carry all the meaning, and a full `/tree/<ref>/<deep>/<path>` would
- * push the rest of the header off the line.
- */
-function shortenUrl(url: string): string {
-  if (url.length <= MAX_SOURCE_URL_CHARS) {
-    return url;
-  }
-  try {
-    const parsed = new URL(url);
-    const segments = parsed.pathname.split('/').filter(Boolean);
-    const tail = segments.slice(-2).join('/');
-    return `${parsed.host}/…/${tail}`;
-  } catch {
-    return `${url.slice(0, MAX_SOURCE_URL_CHARS - 1)}…`;
-  }
-}
 
 /**
  * The entity-page header for `kind: Bruno`.
@@ -154,7 +133,7 @@ export function BrunoEntityHeader(props: EntityHeaderLayoutProps): JSX.Element {
     value: url
       ? (
           <Link to={url} target="_blank" rel="noopener noreferrer" title={url}>
-            {shortenUrl(url)}
+            {elideCollectionUrl(url)}
           </Link>
         )
       : '—'

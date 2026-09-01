@@ -59,11 +59,6 @@ export function scmProviderFromUrl(url: string): ScmProviderInfo | undefined {
   return bySubstring ? PROVIDERS[bySubstring] : undefined;
 }
 
-/** The provider's display name, or a neutral fallback for an unknown host. */
-export function scmProviderLabel(url: string | undefined): string {
-  return (url ? scmProviderFromUrl(url)?.label : undefined) ?? 'your SCM account';
-}
-
 /**
  * Validates a pasted repository URL. Returns an error string, or `undefined`
  * when the URL is usable.

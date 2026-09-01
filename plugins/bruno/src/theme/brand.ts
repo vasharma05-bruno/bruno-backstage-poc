@@ -1,4 +1,3 @@
-import { useTheme } from '@material-ui/core/styles';
 import type { Theme } from '@material-ui/core/styles';
 
 /**
@@ -46,8 +45,6 @@ const hsla = (c: Hsl, alpha: number, lightness: number = c.l): string =>
  * the two brand values live in exactly one place.
  */
 export interface BrunoBrand {
-  /** True when the app is in dark mode. */
-  dark: boolean;
   /** The brand accent, unmodified. Fills, borders, rules, indicators. */
   accent: string;
   /** Hover/active variant of `accent`. */
@@ -58,12 +55,8 @@ export interface BrunoBrand {
   onAccent: string;
   /** Faint accent wash — card header / hero surfaces. */
   wash: string;
-  /** Stronger accent wash — chips, hover surfaces. */
-  washStrong: string;
   /** Hairline accent border. */
   border: string;
-  /** The accent rule drawn across the top of every Bruno card. */
-  rule: string;
 }
 
 /**
@@ -75,7 +68,6 @@ export function brunoBrand(theme: Theme): BrunoBrand {
   const base = dark ? ACCENT.dark : ACCENT.light;
 
   return {
-    dark,
     accent: hsl(base),
     accentHover: hsl(
       base,
@@ -87,13 +79,6 @@ export function brunoBrand(theme: Theme): BrunoBrand {
     // reach 3.1:1 / 2.0:1.
     onAccent: 'rgba(0, 0, 0, 0.87)',
     wash: hsla(base, dark ? 0.1 : 0.08),
-    washStrong: hsla(base, dark ? 0.2 : 0.14),
-    border: hsla(base, dark ? 0.4 : 0.35),
-    rule: `linear-gradient(90deg, ${hsl(base)} 0%, ${hsla(base, 0.25)} 100%)`
+    border: hsla(base, dark ? 0.4 : 0.35)
   };
-}
-
-/** Brand tokens for the active theme mode. */
-export function useBrunoBrand(): BrunoBrand {
-  return brunoBrand(useTheme());
 }

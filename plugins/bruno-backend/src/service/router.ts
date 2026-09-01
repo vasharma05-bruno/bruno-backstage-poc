@@ -17,7 +17,7 @@ import {
 import { collectionNameFromUrl } from '../provider/BrunoCollectionEntityProvider';
 import { readBrunoCollections } from './brunoConfig';
 import type { UiCollectionStore } from '../store/uiCollectionStore';
-import { generateOcDocsHtml } from './generateOcDocsHtml';
+import { escapeHtml, generateOcDocsHtml } from './generateOcDocsHtml';
 
 /**
  * `metadata.name`'s grammar, from `@backstage/catalog-model`'s entity envelope
@@ -480,13 +480,6 @@ export async function createRouter(
   router.use(middleware.error());
 
   return router;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
 }
 
 /**

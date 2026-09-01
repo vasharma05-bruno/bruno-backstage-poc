@@ -20,7 +20,8 @@ import type { Entity } from '@backstage/catalog-model';
  * two in step.
  */
 
-/** The `spec` of a `kind: Bruno` entity. */
+/** The `spec` of a `kind: Bruno` entity. Named in `brunoSpec`'s signature,
+ *  so it stays exported even though only the accessors below read it. */
 export interface BrunoEntitySpec {
   /** The type of Bruno entity, e.g. `bruno-collection`. */
   type: string;
@@ -39,30 +40,14 @@ export interface BrunoEntitySpec {
 }
 
 /**
- * The catalog facet keys for the two derived numbers the dashboard aggregates.
- *
- * Named here rather than spelled inline at the call site because the coupling to
- * the backend's field names is otherwise silent: rename `spec.requestCount` on
- * the processor and the tile shows `—` with no error anywhere (BE-UI R4). One
- * place to change, one place to grep.
- */
-export const BRUNO_REQUEST_COUNT_FIELD = 'spec.requestCount';
-export const BRUNO_ENVIRONMENTS_FIELD = 'spec.environments';
-
-/**
  * Stamped by `BrunoKindProcessor` when the generated OpenCollection document was
  * too large to store on the entity (`bruno.definition.maxBytes`). Its presence
  * is the difference between "this collection has no docs yet" and "the docs
  * exist but were left off the entity", and the two need different UI copy.
  */
-export const BRUNO_DEFINITION_OMITTED_ANNOTATION = 'usebruno.com/definition-omitted';
+const BRUNO_DEFINITION_OMITTED_ANNOTATION = 'usebruno.com/definition-omitted';
 /** How big the omitted definition would have been, in bytes (a string). */
-export const BRUNO_DEFINITION_BYTES_ANNOTATION = 'usebruno.com/definition-bytes';
-
-/** Whether this entity is a Bruno collection. Kind comparison is case-insensitive. */
-export function isBrunoEntity(entity: Entity): boolean {
-  return entity.kind.toLocaleLowerCase('en-US') === 'bruno';
-}
+const BRUNO_DEFINITION_BYTES_ANNOTATION = 'usebruno.com/definition-bytes';
 
 /**
  * The entity's Bruno `spec`, never throwing.
@@ -161,7 +146,7 @@ const ORIGINS: readonly string[] = ['descriptor', 'config', 'ui', 'file'];
 
 /**
  * Where this collection came from, and therefore what has to be edited to
- * change it. {@link changeRoute} turns this into an actual instruction.
+ * change it. {@link descriptorLocation} turns this into the file to edit.
  *
  * Reads `usebruno.com/origin`, and falls back to the shape of
  * `backstage.io/managed-by-location` when it is missing — a descriptor is a

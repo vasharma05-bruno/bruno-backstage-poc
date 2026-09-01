@@ -1,7 +1,7 @@
 /** Both accepted spellings of the OpenCollection manifest. `.yml` is what
  *  Bruno writes today; `.yaml` is what the PRD specifies. Precedence between
- *  them is resolved in `findOpenCollectionYml`, not here. */
-export const OPEN_COLLECTION_MANIFEST_NAMES = [
+ *  them is resolved in `service/collectionParser.ts`, not here. */
+const OPEN_COLLECTION_MANIFEST_NAMES = [
   'opencollection.yml',
   'opencollection.yaml'
 ] as const;
@@ -32,18 +32,17 @@ export function isBrunoJsonManifest(relPath: string): boolean {
  * request/environment files, the `bruno.json` manifest, OpenCollection YAML
  * (`opencollection.yml` or `opencollection.yaml`), and the collection README.
  *
- * Shared by every REMOTE read path (the UrlReader and the per-provider
- * user-token readers) so no provider can drift into fetching a different file
- * set than another. The local-filesystem walker in `collectionService` matches
- * on directory entries rather than relative paths and keeps its own equivalent
- * check.
+ * Reached only through {@link selectCollectionFiles}, which every remote read
+ * path goes through — the UrlReader one and the per-provider user-token ones
+ * alike — so no provider can drift into fetching a different file set than
+ * another.
  *
  * The `.yaml` spelling is admitted by name rather than by extension: a blanket
  * `.yaml` clause would pull `catalog-info.yaml` and `.github/**` into the tree,
  * shifting `commonRootPrefix` — the fallback collection root when no manifest
  * is found — and silently mis-rooting manifest-less collections.
  */
-export function isCollectionFile(relPath: string): boolean {
+function isCollectionFile(relPath: string): boolean {
   return (
     relPath.endsWith('.bru')
     || relPath.endsWith('bruno.json')
