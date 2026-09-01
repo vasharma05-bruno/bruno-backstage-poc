@@ -138,33 +138,6 @@ proxy:
   #   '/test':
   #     target: 'https://example.com'
   #     changeOrigin: true
-  #
-  ### Bruno for Backstage — DEAD CONFIG. These three endpoints were the CORS
-  ### pass-through for a "Try it out" button in an in-browser Collection Docs
-  ### viewer. That viewer is gone: docs are now rendered by the backend and
-  ### framed from their own origin (GET
-  ### /api/bruno/entities/:namespace/:name/docs — see
-  ### plugins/bruno-backend/src/service/generateOcDocsHtml.ts), and that page
-  ### issues no requests of its own. Nothing under plugins/ or packages/
-  ### references these endpoints, and the PROXY_HOST_MAP this comment used to
-  ### name went with the viewer. Kept only so removing them is a decision
-  ### somebody makes on purpose; they can be deleted.
-  endpoints:
-    '/bruno-echo':
-      target: 'https://echo.usebruno.com'
-      changeOrigin: true
-      allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD']
-      allowedHeaders: ['Authorization', 'Content-Type', 'Accept']
-    '/bruno-testbench':
-      target: 'https://testbench-sanity.usebruno.com'
-      changeOrigin: true
-      allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD']
-      allowedHeaders: ['Authorization', 'Content-Type', 'Accept']
-    '/bruno-example':
-      target: 'https://www.example.com'
-      changeOrigin: true
-      allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD']
-      allowedHeaders: ['Authorization', 'Content-Type', 'Accept']
 
 # Bruno for Backstage — collections ingested into the catalog as `kind: Bruno`
 # entities, and the docs the backend plugin serves for them at /api/bruno/*.
