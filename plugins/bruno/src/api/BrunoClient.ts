@@ -5,7 +5,7 @@ import type {
   CreatedCollection,
   DeletedCollection,
   ProbeResult,
-  StoredCollectionSummary
+  StoredCollections
 } from './BrunoApi';
 
 /**
@@ -192,12 +192,17 @@ export class BrunoClient implements BrunoApi {
    *
    * The route admits both principal types and answers a USER with `createdBy`
    * stripped from every row, which is what this method's return type says. The
-   * array is not re-validated element by element: it is produced by the route in
-   * this repository from a table with one shape, and the only caller renders
-   * `name` — a defensive filter here would turn a backend bug into a strip that
-   * silently shows less rather than a visible error.
+   * envelope is not re-validated element by element: it is produced by the route
+   * in this repository from a table with one shape, and a defensive filter here
+   * would turn a backend bug into a strip that silently shows less rather than a
+   * visible error.
+   *
+   * `refreshSeconds` rides along with the rows for the reason spelled out on
+   * {@link StoredCollections}: the caller has to distinguish a row that is still
+   * landing from one that never will, and only the backend knows the tick that
+   * separates them.
    */
-  async listCollections(): Promise<StoredCollectionSummary[]> {
+  async listCollections(): Promise<StoredCollections> {
     const base = await this.baseUrl();
     const response = await this.fetchApi.fetch(`${base}/collections`);
 
@@ -207,7 +212,7 @@ export class BrunoClient implements BrunoApi {
         'Could not list the collections added from Backstage'
       );
     }
-    return (await response.json()) as StoredCollectionSummary[];
+    return (await response.json()) as StoredCollections;
   }
 
   async getEntityDocsUrl(

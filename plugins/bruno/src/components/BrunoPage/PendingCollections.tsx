@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import Box from '@material-ui/core/Box';
+import Button from '@material-ui/core/Button';
 import CircularProgress from '@material-ui/core/CircularProgress';
 import Typography from '@material-ui/core/Typography';
 import { makeStyles } from '@material-ui/core/styles';
-import { useApiHolder } from '@backstage/core-plugin-api';
+import ErrorOutlineIcon from '@material-ui/icons/ErrorOutline';
+import { alertApiRef, useApiHolder } from '@backstage/core-plugin-api';
 import { catalogApiRef, useEntityList } from '@backstage/plugin-catalog-react';
 import { brunoApiRef } from '../../api';
 import type { StoredCollectionSummary } from '../../api';
 import { onCollectionCreated } from '../../lib/collectionEvents';
+import { landingTimeoutSeconds } from '../../lib/landingWindow';
 import { brunoBrand } from '../../theme/brand';
 
 const useStyles = makeStyles((theme) => {
@@ -16,12 +19,24 @@ const useStyles = makeStyles((theme) => {
   return {
     strip: {
       display: 'flex',
-      alignItems: 'center',
-      gap: theme.spacing(1.5),
+      flexDirection: 'column',
+      gap: theme.spacing(1),
       padding: theme.spacing(1, 2),
       borderRadius: theme.shape.borderRadius,
       border: `1px solid ${brand.border}`,
       backgroundColor: brand.wash
+    },
+    row: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: theme.spacing(1.5)
+    },
+    message: {
+      flex: 1
+    },
+    stalledIcon: {
+      color: theme.palette.warning.main,
+      fontSize: 18
     }
   };
 });
@@ -35,6 +50,11 @@ const useStyles = makeStyles((theme) => {
  * things on, and the wait it describes is `bruno.schedule.frequencySeconds`
  * long either way. Five seconds keeps the two catalog reads per tick well
  * below anything the dashboard notices.
+ *
+ * It doubles as this component's clock. The waiting/stalled split below is a
+ * function of the current time, and re-rendering it is exactly what each poll
+ * already does, so a row crosses from one state to the other within five
+ * seconds of doing so without a second timer existing to say when.
  */
 const PENDING_POLL_MS = 5000;
 
@@ -53,41 +73,101 @@ function entityRefFor(row: StoredCollectionSummary): string {
   return `bruno:${NAMESPACE}/${row.name.toLocaleLowerCase('en-US')}`;
 }
 
-/** `a` / `a and b` / `a, b and c` / `a, b and 4 more`. */
-function describeNames(names: string[]): string {
-  if (names.length === 1) {
-    return names[0];
+/**
+ * Which side of the provider's landing window a stored row is on.
+ *
+ * `waiting` is ordinary latency: the row exists, the entity does not yet, and
+ * the next tick produces it. `stalled` is the case the provider cannot fix and
+ * the strip previously mis-described — the entity is not coming, because
+ * `BrunoCollectionEntityProvider` skipped this collection and will skip it
+ * again on every tick until something changes.
+ */
+type RowState = 'waiting' | 'stalled';
+
+/**
+ * Classifies a row by how long it has been stored.
+ *
+ * The clock is `createdAt` off the row, NOT a timer started when this component
+ * first saw it. A client-side timer restarts on every reload and every remount
+ * — navigating away from the dashboard and back would reset a stalled row to
+ * "arriving shortly", which is the exact false statement this split exists to
+ * remove — whereas `createdAt` is when the collection was actually registered
+ * and says the same thing to every tab, forever.
+ *
+ * `refreshSeconds` is undefined only before the first successful read, which is
+ * also before any row can be on screen; an unclassifiable row counts as waiting
+ * so that the strip never accuses one of being stuck on a guess. A `createdAt`
+ * that will not parse is treated the same way, for the same reason.
+ */
+function rowState(
+  row: StoredCollectionSummary,
+  refreshSeconds: number | undefined
+): RowState {
+  if (refreshSeconds === undefined) {
+    return 'waiting';
   }
-  if (names.length <= 3) {
-    return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  const added = Date.parse(row.createdAt);
+  if (Number.isNaN(added)) {
+    return 'waiting';
   }
-  return `${names.slice(0, 2).join(', ')} and ${names.length - 2} more`;
+  const grace = landingTimeoutSeconds(refreshSeconds) * 1000;
+  return Date.now() - added > grace ? 'stalled' : 'waiting';
 }
 
 /**
- * The sentence the strip shows.
+ * The sentence a row that is still landing shows.
  *
- * No figure for the wait, deliberately. The real interval is
- * `bruno.schedule.frequencySeconds`, which only the backend knows and only
- * reports on a create or a delete response — neither of which the dashboard
- * has. "60 seconds" would be a guess that is wrong on any instance that tuned
- * the schedule, and a wrong number on screen is worse than none: a user told
- * "a minute" on a ten-minute schedule concludes the create failed. What the
- * user can act on is the NAME and the fact that waiting is the right thing to
- * do, and both of those are exact.
+ * No figure for the wait, deliberately — and this is not for want of one, since
+ * `refreshSeconds` is now on the response. The strip cannot know WHERE in the
+ * current tick the collection was added, so any number it quoted would be an
+ * upper bound dressed up as an estimate. What the user can act on is the NAME
+ * and the fact that waiting is the right thing to do, and both of those are
+ * exact. The row that has waited too long gets a different sentence instead of
+ * a number.
  */
-function pendingMessage(names: string[]): string {
-  const one = names.length === 1;
+function waitingMessage(name: string): string {
   return (
-    `${describeNames(names)} ${one ? 'has' : 'have'} been added and `
-    + `${one ? 'is' : 'are'} not in the catalog yet. `
-    + `${one ? 'It appears' : 'They appear'} in this list shortly, on the next `
-    + 'catalog refresh.'
+    `${name} has been added and is not in the catalog yet. It appears in this `
+    + 'list shortly, on the next catalog refresh.'
   );
 }
 
 /**
- * Names the collections that have been added but are not entities yet.
+ * The sentence a row that is past the landing window shows.
+ *
+ * THE DEFECT THIS FIXES. Every stored row used to be described as arriving "on
+ * the next catalog refresh", which for these rows is permanently false: the
+ * provider skipped the collection and will skip it on every future tick too.
+ * Left saying that, the strip is an instruction to keep waiting for something
+ * that is not coming.
+ *
+ * Both causes are named because they are the only two, and the user can act on
+ * either — fix the repository, or pick a different name — while the backend log
+ * is what says which. The message is deliberately not an error: the row is
+ * stored, nothing is broken, and the Remove control beside it is a complete
+ * resolution on its own.
+ */
+function stalledMessage(name: string): string {
+  return (
+    `${name} was added but has not appeared in the catalog, and will not `
+    + 'appear on its own. Either its manifest is no longer readable where it '
+    + 'lives in source control, or a collection configured in app-config.yaml '
+    + 'has taken the same name. The backend log says which, under '
+    + 'BrunoCollectionEntityProvider. Fix that and add it again, or remove it '
+    + 'here.'
+  );
+}
+
+/** The confirmation posted after a pending row has been removed. */
+function removedMessage(name: string): string {
+  return (
+    `${name} removed. It had not reached the catalog, so nothing else changes.`
+  );
+}
+
+/**
+ * Names the collections that have been added but are not entities yet, and says
+ * which of them are still on their way and which are stuck.
  *
  * THE GAP THIS EXISTS FOR. `POST /collections` stores a row immediately;
  * `BrunoCollectionEntityProvider` turns that row into a catalog entity on its
@@ -96,6 +176,17 @@ function pendingMessage(names: string[]): string {
  * registered either way — and until now it landed the user on a dashboard whose
  * list was unchanged and which said nothing at all. An unchanged list is
  * indistinguishable from a create that failed.
+ *
+ * TWO STATES, not one, and the second is the whole reason this component grew
+ * a control. A row whose name a `bruno.collections[]` entry has taken is
+ * skipped by the provider on every tick — the operator's file wins, by design —
+ * so it is stored forever and never becomes an entity. Describing that as
+ * "appears in this list shortly" is a sentence that never comes true, and the
+ * user has no other route to the row: the dashboard's Remove action is on the
+ * table, gated on the ENTITY's `usebruno.com/origin`, and there is no entity.
+ * So every row here — waiting or stalled — carries its own Remove, which for a
+ * stalled row is the only way to clear it and for a waiting one is an immediate
+ * undo of a URL typed wrong.
  *
  * Renders NOTHING in the normal case, and that is a hard requirement rather
  * than a nicety: on a dashboard with no outstanding create this component must
@@ -111,20 +202,34 @@ function pendingMessage(names: string[]): string {
  * The store's rows are unfiltered, so the catalog must be asked an unfiltered
  * question too.
  *
- * Both APIs are read from the holder rather than with `useApi`: a host app need
- * not register either, and a missing one has to cost this strip and nothing
- * else. A failed read is treated the same way — the strip renders nothing. It
- * is an aid, and there is no version of it that is worth an error on a
- * dashboard that is otherwise working.
+ * All three APIs are read from the holder rather than with `useApi`: a host app
+ * need not register any of them, and a missing one has to cost this strip and
+ * nothing else. A failed read is treated the same way — the strip renders
+ * nothing. It is an aid, and there is no version of it that is worth an error
+ * on a dashboard that is otherwise working.
  */
 export function PendingCollections(): JSX.Element | null {
   const classes = useStyles();
   const apis = useApiHolder();
   const brunoApi = apis.get(brunoApiRef);
   const catalogApi = apis.get(catalogApiRef);
+  const alertApi = apis.get(alertApiRef);
   const { backendEntities, refresh } = useEntityList();
 
   const [pending, setPending] = useState<StoredCollectionSummary[]>([]);
+
+  /**
+   * The provider's tick, as the backend reports it, and the only thing that
+   * turns `createdAt` into a verdict. Undefined until the first successful
+   * read — which is also before there is anything to classify.
+   */
+  const [refreshSeconds, setRefreshSeconds] = useState<number | undefined>();
+
+  /** The row a Remove click is currently waiting on, and any message a Remove
+   *  came back with. Keyed by name so a failure stays attached to the row it
+   *  belongs to rather than to the strip as a whole. */
+  const [removing, setRemoving] = useState<string | undefined>();
+  const [removeErrors, setRemoveErrors] = useState<Record<string, string>>({});
 
   /**
    * Bumped whenever the Add action reports a create, to wake the effect below.
@@ -155,6 +260,18 @@ export function PendingCollections(): JSX.Element | null {
   const watching = useRef<Set<string>>(new Set());
 
   /**
+   * Names this strip has deleted and the backend has not caught up on yet.
+   *
+   * A poll issued BEFORE a Remove resolved still answers with the row in it,
+   * and letting that answer through would redraw the row the user just removed
+   * — which reads as the delete having failed, the same mistake the delete
+   * dialog avoids by not refreshing the table. A name is dropped from here as
+   * soon as the store stops reporting it, so this cannot mask a row that comes
+   * back for a real reason.
+   */
+  const removedLocally = useRef<Set<string>>(new Set());
+
+  /**
    * Polls until nothing is pending, then stops.
    *
    * The interval is cleared the moment the answer is "nothing", so an idle
@@ -165,6 +282,13 @@ export function PendingCollections(): JSX.Element | null {
    * covers a collection added while the strip is idle; without it that create
    * would wait for an unrelated refetch — the one case this component exists
    * for.
+   *
+   * A STALLED row keeps the interval alive, which is deliberate even though
+   * nothing about it is going to change on its own: the poll is also what
+   * re-renders the strip, so it is what moves a row from waiting to stalled in
+   * the first place, and it is what notices the row disappearing when the cause
+   * is fixed elsewhere. The cost is one request every five seconds while a
+   * stuck row is on screen and the Remove beside it is unclicked.
    *
    * Failure is not the same as "nothing pending". A read that throws hides the
    * strip (there is nothing trustworthy to say) but keeps the interval alive
@@ -194,10 +318,23 @@ export function PendingCollections(): JSX.Element | null {
     const poll = (): void => {
       void (async () => {
         try {
-          const stored = await brunoApi.listCollections();
+          const listed = await brunoApi.listCollections();
           if (cancelled) {
             return;
           }
+          setRefreshSeconds(listed.refreshSeconds);
+
+          // Pruned against the server's answer first, so a name only stays
+          // suppressed for as long as the store still reports it.
+          removedLocally.current = new Set(
+            [...removedLocally.current].filter((name) =>
+              listed.collections.some((row) => row.name === name)
+            )
+          );
+          const stored = listed.collections.filter(
+            (row) => !removedLocally.current.has(row.name)
+          );
+
           if (stored.length === 0) {
             watching.current = new Set();
             settle([]);
@@ -263,16 +400,88 @@ export function PendingCollections(): JSX.Element | null {
     };
   }, [backendEntities, brunoApi, catalogApi, refresh, nudges]);
 
+  /**
+   * Removes a pending row.
+   *
+   * The row leaves the strip on success and the confirmation goes to the alert
+   * bar, as it does for the table's own delete — but the sentence is a
+   * different one, and has to be. That dialog warns that the entity keeps
+   * appearing until the provider's next tick; here there IS no entity, which is
+   * the entire reason the row was in this strip, so quoting a wait would invent
+   * one.
+   *
+   * A failure leaves the row exactly where it is and shows the backend's
+   * message against it. The message is the diagnosis — a 404 means the row went
+   * while this was in flight — and there is nothing to gain from replacing it
+   * with a status code.
+   */
+  const remove = async (name: string): Promise<void> => {
+    if (!brunoApi) {
+      return;
+    }
+    setRemoving(name);
+    setRemoveErrors((errors) => {
+      const { [name]: _cleared, ...rest } = errors;
+      return rest;
+    });
+    try {
+      await brunoApi.deleteCollection(name);
+      removedLocally.current.add(name);
+      setPending((rows) => rows.filter((row) => row.name !== name));
+      watching.current.delete(name);
+      alertApi?.post({
+        message: removedMessage(name),
+        severity: 'success',
+        display: 'transient'
+      });
+    } catch (e) {
+      setRemoveErrors((errors) => ({
+        ...errors,
+        [name]: e instanceof Error ? e.message : String(e)
+      }));
+    } finally {
+      setRemoving(undefined);
+    }
+  };
+
   if (pending.length === 0) {
     return null;
   }
 
   return (
     <Box mb={2} className={classes.strip}>
-      <CircularProgress size={16} />
-      <Typography variant="body2">
-        {pendingMessage(pending.map((row) => row.name))}
-      </Typography>
+      {pending.map((row) => {
+        const stalled = rowState(row, refreshSeconds) === 'stalled';
+        const error = removeErrors[row.name];
+        const busy = removing === row.name;
+
+        return (
+          <div key={row.name} className={classes.row}>
+            {stalled ? (
+              <ErrorOutlineIcon className={classes.stalledIcon} />
+            ) : (
+              <CircularProgress size={16} />
+            )}
+            <div className={classes.message}>
+              <Typography variant="body2">
+                {stalled ? stalledMessage(row.name) : waitingMessage(row.name)}
+              </Typography>
+              {error && (
+                <Typography variant="body2" color="error">
+                  {error}
+                </Typography>
+              )}
+            </div>
+            <Button
+              size="small"
+              disabled={busy}
+              onClick={() => void remove(row.name)}
+            >
+              {busy ? 'Removing…' : 'Remove'}
+            </Button>
+          </div>
+        );
+      })}
     </Box>
   );
 }

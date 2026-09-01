@@ -29,6 +29,7 @@ import { scmAuthApiRef, scmIntegrationsApiRef } from '@backstage/integration-rea
 import { EntityRefLink, catalogApiRef } from '@backstage/plugin-catalog-react';
 import { CatalogImportClient, catalogImportApiRef } from '@backstage/plugin-catalog-import';
 import type { CatalogImportApi } from '@backstage/plugin-catalog-import';
+import { landingTimeoutSeconds } from '../../lib/landingWindow';
 import { repoRootFromCollectionUrl } from '../../lib/scmUrl';
 import { useBrandStyles } from '../../theme/brandStyles';
 
@@ -87,17 +88,6 @@ type Landing
  * a whole flow and makes the success feel immediate when it comes.
  */
 const LANDING_POLL_MS = 3000;
-
-/**
- * How long past the schedule to keep asking, in seconds.
- *
- * Two full provider cycles plus a margin for the catalog's own stitching. Past
- * that the answer is not "it failed" — the row is stored and a later tick will
- * pick it up — so the give-up state says that rather than reporting an error.
- */
-function landingTimeoutSeconds(refreshSeconds: number): number {
-  return refreshSeconds * 2 + 30;
-}
 
 /** The two SCM types `catalogImportApi.submitPullRequest` can actually write to. */
 const PR_CAPABLE_TYPES = ['github', 'azure'];

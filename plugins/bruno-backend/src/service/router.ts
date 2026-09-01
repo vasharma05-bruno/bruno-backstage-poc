@@ -58,8 +58,9 @@ export interface RouterOptions {
  *   GET    /entities/:namespace/:name/docs  -> text/html (docs for a kind:Bruno entity)
  *   POST   /collections/probe               -> { found, ... } (does this URL hold a collection?)
  *   POST   /collections                     -> 201 (add a collection; auth: user)
- *   GET    /collections                     -> UiCollectionRow[] (auth: user | service;
- *                                              a user's rows omit `createdBy`)
+ *   GET    /collections                     -> { collections, refreshSeconds }
+ *                                              (auth: user | service; a user's
+ *                                              rows omit `createdBy`)
  *   DELETE /collections/:name               -> { deleted: true } (auth: user)
  *
  * The first three are read-only and were the whole of this plugin: everything
@@ -354,16 +355,30 @@ export async function createRouter(
   // callers get whole rows: the provider is the store's own reader, and
   // `created_by` is stored for the ownership check the DELETE route's IDOR note
   // describes.
+  //
+  // The rows are wrapped in an OBJECT alongside `refreshSeconds` rather than
+  // returned as a bare array, matching what the create and delete responses
+  // already carry. The dashboard's strip has to decide when a row has been
+  // pending for LONGER than it ever should be — a collection whose name a
+  // `bruno.collections[]` entry took is never going to land, and telling that
+  // user to keep waiting is a lie the strip cannot detect any other way — and
+  // the only honest threshold is a multiple of the provider's real tick. A
+  // browser has no config read of its own, so the figure has to travel with the
+  // list; a hardcoded 60 would be wrong on every instance that tuned the
+  // schedule.
   router.get('/collections', async (req, res) => {
     const credentials = await httpAuth.credentials(req, {
       allow: ['user', 'service']
     });
     const rows = await uiCollections.listAll();
     if (credentials.principal.type === 'user') {
-      res.json(rows.map(({ createdBy: _createdBy, ...row }) => row));
+      res.json({
+        collections: rows.map(({ createdBy: _createdBy, ...row }) => row),
+        refreshSeconds
+      });
       return;
     }
-    res.json(rows);
+    res.json({ collections: rows, refreshSeconds });
   });
 
   // Removes a UI-created collection. The entity disappears from the catalog on

@@ -128,7 +128,7 @@ first boot, no formal migrations:
 | Method & path              | Auth        | Notes                                                                |
 | -------------------------- | ----------- | -------------------------------------------------------------------- |
 | `POST /collections`        | `user`      | Body `{ url, name, owner?, partOf? }`. Validates the URL holds a manifest, rejects a name already taken by another UI collection or by an `app-config.yaml` entry — compared case-insensitively, because an entity ref is lower-cased, so `Payments` and `payments` are one entity. `201` with `{ name, namespace, entityRef, url, refreshSeconds }`. |
-| `GET /collections`         | `user` \| `service` | Every stored row. Called by the provider with a plugin token, and by the dashboard's pending-collections strip to name the collections the catalog does not have yet. A **user** principal gets rows with `created_by` omitted — it is a user entity ref for every collection in the instance — which is what makes the route safe to expose to a browser at all. |
+| `GET /collections`         | `user` \| `service` | `{ collections, refreshSeconds }`. Called by the provider with a plugin token, and by the dashboard's pending-collections strip to name the collections the catalog does not have yet. `refreshSeconds` travels with the rows because the strip has to tell a row that is still landing from one that never will, and only the backend knows the tick that separates them. A **user** principal gets rows with `created_by` omitted — it is a user entity ref for every collection in the instance — which is what makes the route safe to expose to a browser at all. |
 | `DELETE /collections/:name` | `user`     | `404` when no row exists, which is how an attempt to delete a config- or descriptor-origin collection says so instead of silently succeeding. |
 
 **Latency.** A collection added from the UI appears in the catalog — and a
@@ -142,14 +142,27 @@ not survive a backend restart**. The catalog is equally ephemeral, so the two
 stay consistent and nothing ends up inconsistent — but do not restart the
 backend between creating a collection and checking that its entity appeared.
 
-**Degraded reads are never destructive.** The provider emits a `full` mutation,
-which the catalog applies by set difference: anything the provider emitted
-before and does not emit now is deleted. If the service-to-service read of
-`GET /collections` fails and the process has no successful read cached, the
+**A failed read of the store is never destructive.** The provider emits a `full`
+mutation, which the catalog applies by set difference: anything the provider
+emitted before and does not emit now is deleted. If the service-to-service read
+of `GET /collections` fails and the process has no successful read cached, the
 provider **skips the refresh entirely** rather than emitting the configured
 collections alone — a config-only emission would delete every UI-created
 collection in the instance. The cost is that configured collections are also not
 refreshed on that tick.
+
+**A per-collection skip, however, does remove that collection's entity**, and
+for a UI-created one that matters more than it looks: the dashboard's Remove
+action is gated on the entity's `usebruno.com/origin`, so a collection with no
+entity is a stored row nothing in the product can reach. The provider therefore
+does not skip a UI collection whose manifest has gone missing — it emits the
+entity without collection metadata, so it stays removable, and logs why. The one
+case left is a name that a `bruno.collections[]` entry claimed first: the
+configured entry wins by design and cannot be overruled from here, so the
+collection stays a stored row with no entity. That row is not stranded — the
+dashboard's pending-collections strip shows it as **stalled** once it is past
+`frequencySeconds * 2 + 30`, names both possible causes, and offers a Remove
+that calls `DELETE /collections/:name` directly.
 
 ## RISK #1 — credential isolation
 

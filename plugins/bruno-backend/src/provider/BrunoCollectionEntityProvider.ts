@@ -89,10 +89,24 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
    *
    * Emission is a `full` mutation, which the catalog applies by SET DIFFERENCE:
    * anything this provider emitted before and does not emit now is deleted
-   * (`DefaultProviderDatabase`'s `toRemove`). That is why the stored list is
-   * fetched before anything else and why a failure to fetch it is handled the
-   * way it is below — an emission missing the UI-created collections is not a
-   * degraded result, it is a deletion.
+   * (`DefaultProviderDatabase`'s `toRemove`). Every omission from the emitted
+   * set is therefore a deletion, and the two kinds of omission are handled
+   * differently on purpose:
+   *
+   *  - A FAILED READ OF THE STORE never deletes anything. With no successful
+   *    read cached in this process, `run()` returns before `applyMutation` and
+   *    skips the refresh entirely, because the alternative — emitting the
+   *    configured entries alone — would drop every UI-created collection in the
+   *    instance.
+   *  - A PER-COLLECTION SKIP inside the loop below DOES remove that one
+   *    collection's entity, and for a UI-created collection that is destructive
+   *    in a way a configured one is not: the entity is the only handle the
+   *    dashboard has on the stored row. So the no-manifest skip emits a
+   *    metadata-less entity instead when the entry came from the UI, and the
+   *    `normalize` skip is unreachable for one. The single case left is a name
+   *    a `bruno.collections[]` entry claimed first, which cannot be resolved
+   *    here — the operator's file legitimately wins — and surfaces in the
+   *    dashboard's pending strip as a stalled row with a Remove control.
    */
   async run(): Promise<void> {
     if (!this.connection) {
@@ -181,6 +195,13 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
       // URL and throws on a scheme-less one, and a throw out here would reject
       // `run()` before `applyMutation`, leaving every other configured
       // collection unpublished on this tick and every tick after it.
+      //
+      // This skip is NOT a way to orphan a UI-created row, which is why it does
+      // not branch on origin the way the no-manifest one below does: a stored
+      // row's URL was put through this same `normalize` by `POST /collections`
+      // before it was written, and `normalize` is idempotent, so a URL that
+      // normalized once cannot throw here. Only a hand-edited
+      // `app-config.yaml` reaches this branch.
       let url: string;
       try {
         url = probe.normalize(entry.url);
@@ -212,12 +233,38 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
       if (!unreadable && !manifest) {
         // Authoritative: an unreachable URL surfaces as a throw above, so
         // `undefined` really does mean "read fine, no manifest there".
+        //
+        // AND SKIPPING IT IS ONLY SAFE FOR A CONFIGURED ENTRY. A skip drops the
+        // collection from a `full` mutation, which deletes its entity — and for
+        // a UI-created collection the entity is the ONLY handle on the row that
+        // produced it. The dashboard's Remove control is gated on the ENTITY's
+        // `usebruno.com/origin: ui`, so deleting the entity is exactly what
+        // makes its `bruno_ui_collections` row permanent: nothing in the
+        // product can reach it afterwards, and the user is left with a
+        // collection they can neither see nor remove. A configured entry has no
+        // such problem — it is removed by editing `app-config.yaml`, so pruning
+        // its entity strands nothing, and the skip is the right signal that the
+        // operator's file points at a folder with no collection in it.
+        if (entry.origin === 'config') {
+          logger.error(
+            `Bruno collection ${url}: no bruno.json or opencollection.yml/.yaml `
+            + `found; skipping.`
+          );
+          skipped += 1;
+          continue;
+        }
+        // Emitted anyway, without collection metadata, exactly as the
+        // unreadable case above does and for a stronger version of the same
+        // reason: a metadata-less entity is strictly better than a row nobody
+        // can delete. The manifest was there when `POST /collections` validated
+        // it, so this means it has since been moved or deleted in source
+        // control, and removing the collection is the only sensible response —
+        // which requires the entity to still exist.
         logger.error(
           `Bruno collection ${url}: no bruno.json or opencollection.yml/.yaml `
-          + `found; skipping.`
+          + `found any more; emitting without collection metadata so it stays `
+          + `removable from the Bruno dashboard.`
         );
-        skipped += 1;
-        continue;
       }
 
       const name = entry.name ?? collectionNameFromUrl(url);

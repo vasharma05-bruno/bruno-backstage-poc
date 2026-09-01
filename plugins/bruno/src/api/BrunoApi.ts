@@ -111,6 +111,27 @@ export interface StoredCollectionSummary {
   createdAt: string;
 }
 
+/**
+ * What {@link BrunoApi.listCollections} answers: the stored rows, and the
+ * interval that says how long any of them should still be waiting.
+ *
+ * The rows travel in an envelope rather than as a bare array because the list
+ * alone cannot be read honestly. A row that is stored but not yet an entity is
+ * normally a few seconds from landing — but it may also be one that never will,
+ * because the provider skipped it, and the difference is entirely a matter of
+ * how long it has been waiting relative to the provider's tick. That tick is
+ * `bruno.schedule.frequencySeconds`, which a browser has no way to read, so it
+ * comes back with the rows.
+ */
+export interface StoredCollections {
+  collections: StoredCollectionSummary[];
+  /**
+   * The provider's refresh interval, as on {@link CreatedCollection}. Here it
+   * is what turns `createdAt` into a verdict rather than a timestamp.
+   */
+  refreshSeconds: number;
+}
+
 /** What the backend confirmed, once a collection has been removed. */
 export interface DeletedCollection {
   name: string;
@@ -230,8 +251,12 @@ export interface BrunoApi {
    * Not a substitute for the catalog anywhere else. It knows nothing about
    * configured or descriptor-defined collections, carries no processed metadata,
    * and is not filtered by anything the user picked.
+   *
+   * Answers a {@link StoredCollections} envelope, not a bare array, so the
+   * caller can also say WHICH side of the provider's tick each row is on — see
+   * that type for why the list is not readable without the interval.
    */
-  listCollections(): Promise<StoredCollectionSummary[]>;
+  listCollections(): Promise<StoredCollections>;
 }
 
 export const brunoApiRef = createApiRef<BrunoApi>({

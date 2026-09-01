@@ -69,9 +69,23 @@ export function createStoredCollectionReader(options: {
           `GET /collections failed with ${res.status} ${res.statusText}`
         );
       }
-      const body = await res.json();
-      if (!Array.isArray(body)) {
-        throw new Error('GET /collections returned a non-array body');
+      // The route answers with an ENVELOPE — `{ collections, refreshSeconds }` —
+      // because the dashboard needs the provider's tick alongside the rows to
+      // tell a collection that is still landing from one that never will. This
+      // reader wants only the rows, but it asserts the envelope rather than
+      // accepting either shape: a bare array here would mean the route is not
+      // the one in this repository, and quietly coping with that is how a
+      // provider ends up emitting a set built from something it did not
+      // recognise, under a `full` mutation.
+      const body: unknown = await res.json();
+      const collections
+        = typeof body === 'object' && body !== null
+          ? (body as { collections?: unknown }).collections
+          : undefined;
+      if (!Array.isArray(collections)) {
+        throw new Error(
+          'GET /collections returned a body with no `collections` array'
+        );
       }
 
       // Per-row shape guard, tolerant like the config reader: a row missing the
@@ -79,7 +93,7 @@ export function createStoredCollectionReader(options: {
       // of the list still reaches the catalog. Throwing on one malformed row
       // would take every other UI-created collection down with it.
       const rows: StoredCollection[] = [];
-      for (const raw of body as unknown[]) {
+      for (const raw of collections as unknown[]) {
         if (typeof raw !== 'object' || raw === null) {
           continue;
         }
