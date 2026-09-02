@@ -141,7 +141,7 @@ export function UnlinkDialog(props: {
           className={brandClasses.accentButton}
           disabled={planning}
           startIcon={planning ? <CircularProgress size={16} /> : undefined}
-          onClick={() => pr.prepare({ apiRef, collectionName })}
+          onClick={() => pr.prepare({ apiRefs: [apiRef], collectionName })}
         >
           {planning ? 'Reading descriptor…' : 'Prepare pull request'}
         </Button>

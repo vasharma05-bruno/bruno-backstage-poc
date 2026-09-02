@@ -117,12 +117,13 @@ export function RelatedApisCard(): JSX.Element {
    */
   const [openPrs, setOpenPrs] = useState<Record<string, string>>({});
   /**
-   * Link pull requests, as `[apiRef, url]`. Kept separately from `openPrs`
-   * because a linked API is NOT in the table yet — the relation only exists
-   * once the pull request is merged and the descriptor re-read — so there is no
-   * row to hang a chip on.
+   * Link pull requests, as the APIs they add and the pull request URL. Kept
+   * separately from `openPrs` because a linked API is NOT in the table yet —
+   * the relation only exists once the pull request is merged and the descriptor
+   * re-read — so there is no row to hang a chip on. The names travel with the
+   * chip for the same reason: nothing else on screen says what was linked.
    */
-  const [linkPrs, setLinkPrs] = useState<{ apiRef: string; link: string }[]>([]);
+  const [linkPrs, setLinkPrs] = useState<{ names: string; link: string }[]>([]);
 
   const columns: TableColumn<Entity>[] = [
     {
@@ -179,9 +180,9 @@ export function RelatedApisCard(): JSX.Element {
   const location = descriptorLocation(entity);
   const emptyHint = useDescriptorAdvice({ location, direction: 'link' }) ?? (
     <Typography variant="body2" color="textSecondary" component="span">
-      Use <strong>Link API</strong> above to attach one — that adds the API to
-      this collection&apos;s <code>spec.partOf</code>, which is what the catalog
-      turns into the relation shown here.
+      Use <strong>Link APIs</strong> above to attach one or more — that adds
+      them to this collection&apos;s <code>spec.partOf</code>, which is what the
+      catalog turns into the relations shown here.
     </Typography>
   );
 
@@ -217,7 +218,7 @@ export function RelatedApisCard(): JSX.Element {
       action={(
         <Box mr={1} mt={1}>
           <Button size="small" onClick={() => setLinkOpen(true)}>
-            Link API
+            Link APIs
           </Button>
         </Box>
       )}
@@ -230,7 +231,7 @@ export function RelatedApisCard(): JSX.Element {
             <Chip
               key={pr.link}
               size="small"
-              label={`Link PR open: ${pr.apiRef}`}
+              label={`Link PR open: ${pr.names}`}
               component="a"
               clickable
               href={pr.link}
@@ -256,8 +257,16 @@ export function RelatedApisCard(): JSX.Element {
         onClose={() => setLinkOpen(false)}
         collection={entity}
         linkedRefs={(entities ?? []).map((e) => stringifyEntityRef(e))}
-        onSubmitted={(apiRef, link) =>
-          setLinkPrs((prs) => [...prs, { apiRef, link }])}
+        onSubmitted={(apis, link) =>
+          setLinkPrs((prs) => [
+            ...prs,
+            {
+              names: apis
+                .map((api) => api.metadata.title ?? api.metadata.name)
+                .join(', '),
+              link
+            }
+          ])}
       />
     </BrunoInfoCard>
   );

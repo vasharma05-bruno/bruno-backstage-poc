@@ -66,8 +66,8 @@ export interface PartOfPlan {
   before: string;
   /** The descriptor with the reference removed. */
   after: string;
-  /** The API entity reference being added or removed, normalised. */
-  apiRef: string;
+  /** The API entity references being added or removed, normalised. */
+  apiRefs: string[];
 }
 
 /**
@@ -153,8 +153,16 @@ function findRefIndex(
   });
 }
 
+/** ``a``, ``b`` — references as inline code, for a message or a body. */
+const codeList = (refs: string[]): string =>
+  refs.map((ref) => `\`${ref}\``).join(', ');
+
+/** A pull request subject names one reference, or counts several. */
+const subject = (refs: string[]): string =>
+  refs.length === 1 ? refs[0] : `${refs.length} APIs`;
+
 /**
- * Adds `apiRef` to `spec.partOf` in a `catalog-info.yaml`, preserving every
+ * Adds `apiRefs` to `spec.partOf` in a `catalog-info.yaml`, preserving every
  * comment and all formatting outside the edited sequence.
  *
  * Creates the `partOf` key when the collection has none — the common case, since
@@ -163,13 +171,16 @@ function findRefIndex(
  * a Bruno entity (`spec.url` is required), so a missing or non-map `spec` is
  * treated as "this is not the file we think it is" rather than silently rebuilt.
  *
- * Throws {@link PartOfEditError} with `already-present` when the reference is
- * already listed: the relation exists in source control and is merely waiting
- * for a processing cycle, so an empty pull request would help nobody.
+ * References already listed are SKIPPED rather than failing the edit: with
+ * several APIs selected at once, one that a colleague linked yesterday should
+ * not block the rest. Only an edit that would change nothing at all throws
+ * {@link PartOfEditError} with `already-present` — the relation exists in
+ * source control and is merely waiting for a processing cycle, so an empty pull
+ * request would help nobody.
  */
-function addPartOf(yamlText: string, apiRef: string): string {
+function addPartOf(yamlText: string, apiRefs: string[]): string {
   const doc = parseDescriptor(yamlText);
-  const target = normaliseApiRef(apiRef);
+  const targets = apiRefs.map(normaliseApiRef);
 
   const spec = doc.getIn(['spec']);
   if (spec !== undefined && spec !== null && !isMap(spec)) {
@@ -181,7 +192,7 @@ function addPartOf(yamlText: string, apiRef: string): string {
 
   const seq = doc.getIn(['spec', 'partOf']);
   if (seq === undefined || seq === null) {
-    doc.setIn(['spec', 'partOf'], doc.createNode([target]));
+    doc.setIn(['spec', 'partOf'], doc.createNode(targets));
     return doc.toString();
   }
   if (!isSeq(seq)) {
@@ -192,34 +203,39 @@ function addPartOf(yamlText: string, apiRef: string): string {
     );
   }
 
-  if (findRefIndex(doc, seq, target) !== -1) {
+  const missing = targets.filter((t) => findRefIndex(doc, seq, t) === -1);
+  if (missing.length === 0) {
     throw new PartOfEditError(
       'already-present',
-      `\`${target}\` is already listed in this collection's \`spec.partOf\`. The `
-      + 'relation may just be waiting for Backstage to re-read the descriptor.'
+      `${codeList(targets)} ${targets.length === 1 ? 'is' : 'are'} already `
+      + `listed in this collection's \`spec.partOf\`. The relation may just be `
+      + 'waiting for Backstage to re-read the descriptor.'
     );
   }
 
-  seq.add(doc.createNode(target));
+  for (const target of missing) {
+    seq.add(doc.createNode(target));
+  }
   return doc.toString();
 }
 
 /**
- * Removes `apiRef` from `spec.partOf` in a `catalog-info.yaml`, preserving every
- * comment and all formatting outside the edited sequence.
+ * Removes `apiRefs` from `spec.partOf` in a `catalog-info.yaml`, preserving
+ * every comment and all formatting outside the edited sequence.
  *
  * Drops the `partOf` key entirely when the sequence empties — an empty list is
  * schema-legal but reads as "someone forgot to finish this", and re-adding the
  * key is what {@link addPartOf} does anyway.
  *
  * Throws a {@link PartOfEditError} rather than returning the input unchanged
- * when the reference is not there: that means the link was already removed
- * upstream, and opening an empty pull request would be worse than saying so.
+ * when none of the references are there: that means the link was already
+ * removed upstream, and opening an empty pull request would be worse than
+ * saying so.
  */
-function removePartOf(yamlText: string, apiRef: string): string {
+function removePartOf(yamlText: string, apiRefs: string[]): string {
   const doc = parseDescriptor(yamlText);
+  const targets = apiRefs.map(normaliseApiRef);
 
-  const target = normaliseApiRef(apiRef);
   const seq = doc.getIn(['spec', 'partOf']);
   if (!isSeq(seq)) {
     throw new PartOfEditError(
@@ -229,16 +245,24 @@ function removePartOf(yamlText: string, apiRef: string): string {
     );
   }
 
-  const index = findRefIndex(doc, seq, target);
-  if (index === -1) {
+  // Re-found per removal: `deleteIn` shifts every later index along.
+  let removed = 0;
+  for (const target of targets) {
+    const index = findRefIndex(doc, seq, target);
+    if (index !== -1) {
+      seq.deleteIn([index]);
+      removed += 1;
+    }
+  }
+  if (removed === 0) {
     throw new PartOfEditError(
       'not-present',
-      `\`${target}\` is not listed in this collection's \`spec.partOf\`. The `
-      + 'relation may already have been removed upstream.'
+      `${codeList(targets)} ${targets.length === 1 ? 'is' : 'are'} not listed `
+      + `in this collection's \`spec.partOf\`. The relation may already have `
+      + 'been removed upstream.'
     );
   }
 
-  seq.deleteIn([index]);
   if (seq.items.length === 0) {
     doc.deleteIn(['spec', 'partOf']);
   }
@@ -315,26 +339,26 @@ const DIRECTIONS: Record<
   PartOfDirection,
   {
     branchPrefix: string;
-    edit: (yamlText: string, apiRef: string) => string;
-    title: (apiRef: string) => string;
-    body: (apiRef: string, path: string) => string;
+    edit: (yamlText: string, apiRefs: string[]) => string;
+    title: (apiRefs: string[]) => string;
+    body: (apiRefs: string[], path: string) => string;
   }
 > = {
   link: {
     branchPrefix: 'bruno-link',
     edit: addPartOf,
-    title: (apiRef) => `Link ${apiRef} to Bruno collection`,
-    body: (apiRef, path) =>
-      `Adds \`${apiRef}\` to \`spec.partOf\` in \`${path}\`.\n\n`
+    title: (refs) => `Link ${subject(refs)} to Bruno collection`,
+    body: (refs, path) =>
+      `Adds ${codeList(refs)} to \`spec.partOf\` in \`${path}\`.\n\n`
       + 'Opened from Backstage. The catalog relation appears once this pull '
       + 'request is merged and Backstage re-reads the descriptor.'
   },
   unlink: {
     branchPrefix: 'bruno-unlink',
     edit: removePartOf,
-    title: (apiRef) => `Unlink ${apiRef} from Bruno collection`,
-    body: (apiRef, path) =>
-      `Removes \`${apiRef}\` from \`spec.partOf\` in \`${path}\`.\n\n`
+    title: (refs) => `Unlink ${subject(refs)} from Bruno collection`,
+    body: (refs, path) =>
+      `Removes ${codeList(refs)} from \`spec.partOf\` in \`${path}\`.\n\n`
       + 'Opened from Backstage. The catalog relation disappears once this pull '
       + 'request is merged and Backstage re-reads the descriptor.'
   }
@@ -351,11 +375,11 @@ const DIRECTIONS: Record<
 async function planPartOfEdit(opts: {
   direction: PartOfDirection;
   descriptorUrl: string;
-  apiRef: string;
+  apiRefs: string[];
   collectionName: string;
   token: string;
 }): Promise<PartOfPlan> {
-  const { direction, descriptorUrl, apiRef, collectionName, token } = opts;
+  const { direction, descriptorUrl, apiRefs, collectionName, token } = opts;
   const parsed = parseGitHubDescriptorUrl(descriptorUrl);
   if (!parsed) {
     throw new PartOfEditError(
@@ -387,7 +411,7 @@ async function planPartOfEdit(opts: {
 
   const before = decodeBase64(data.content);
   const spec = DIRECTIONS[direction];
-  const after = spec.edit(before, apiRef);
+  const after = spec.edit(before, apiRefs);
 
   return {
     direction,
@@ -402,7 +426,7 @@ async function planPartOfEdit(opts: {
     fileSha: data.sha,
     before,
     after,
-    apiRef: normaliseApiRef(apiRef)
+    apiRefs: apiRefs.map(normaliseApiRef)
   };
 }
 
@@ -431,7 +455,7 @@ async function submitPartOfEdit(
     sha: baseRef.data.object.sha
   });
 
-  const message = DIRECTIONS[plan.direction].title(plan.apiRef);
+  const message = DIRECTIONS[plan.direction].title(plan.apiRefs);
   await octokit.repos.createOrUpdateFileContents({
     owner: plan.owner,
     repo: plan.repo,
@@ -448,7 +472,7 @@ async function submitPartOfEdit(
     head: plan.branch,
     base: plan.baseBranch,
     title: message,
-    body: DIRECTIONS[plan.direction].body(plan.apiRef, plan.path)
+    body: DIRECTIONS[plan.direction].body(plan.apiRefs, plan.path)
   });
 
   return { link: pr.data.html_url };
@@ -463,7 +487,7 @@ async function submitPartOfEdit(
  */
 export function planUnlink(opts: {
   descriptorUrl: string;
-  apiRef: string;
+  apiRefs: string[];
   collectionName: string;
   token: string;
 }): Promise<UnlinkPlan> {
@@ -479,7 +503,7 @@ export function submitUnlink(
 
 export function planLink(opts: {
   descriptorUrl: string;
-  apiRef: string;
+  apiRefs: string[];
   collectionName: string;
   token: string;
 }): Promise<PartOfPlan> {

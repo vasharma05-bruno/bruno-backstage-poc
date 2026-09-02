@@ -54,6 +54,23 @@ export function useEntityOptions(kind: string, open: boolean): EntityOptions {
 }
 
 /**
+ * How many entities the caller is picking. One flow wants exactly one and the
+ * other wants a set, and the two have different `value`/`onChange` types — a
+ * discriminated union keeps a caller from mixing them up.
+ */
+type Selection
+  = | {
+    multiple?: false;
+    value: Entity | null;
+    onChange: (entity: Entity | null) => void;
+  }
+  | {
+    multiple: true;
+    value: Entity[];
+    onChange: (entities: Entity[]) => void;
+  };
+
+/**
  * The "which entity" step both link flows open with: an autocomplete over one
  * kind, minus what is already linked.
  *
@@ -66,8 +83,6 @@ export function EntityPicker(props: {
   options: EntityOptions;
   /** Refs already linked, hidden from the list. */
   excluded: string[];
-  value: Entity | null;
-  onChange: (entity: Entity | null) => void;
   disabled?: boolean;
   name: string;
   label: string;
@@ -78,12 +93,10 @@ export function EntityPicker(props: {
   emptyAll: string;
   /** Leads the message when the catalog call itself failed. */
   errorTitle: string;
-}): JSX.Element {
+} & Selection): JSX.Element {
   const {
     options,
     excluded,
-    value,
-    onChange,
     disabled,
     name,
     label,
@@ -116,16 +129,36 @@ export function EntityPicker(props: {
     );
   }
 
-  return (
-    <CatalogAutocomplete<Entity>
-      name={name}
-      label={label}
-      options={available}
-      value={value}
-      disabled={disabled}
-      getOptionLabel={(option) => option.metadata.title ?? option.metadata.name}
-      onChange={(_event, entity) => onChange(entity ?? null)}
-      TextFieldProps={{ placeholder }}
-    />
-  );
+  const common = {
+    name,
+    label,
+    disabled,
+    options: available,
+    getOptionLabel: (option: Entity) =>
+      option.metadata.title ?? option.metadata.name,
+    // Entities are compared by reference otherwise, and the catalog hands back
+    // a fresh object on every fetch.
+    getOptionSelected: (option: Entity, value: Entity) =>
+      stringifyEntityRef(option) === stringifyEntityRef(value),
+    TextFieldProps: { placeholder }
+  };
+
+  return props.multiple
+    ? (
+        <CatalogAutocomplete<Entity, true>
+          {...common}
+          multiple
+          // Picking a second API should not mean reopening the list.
+          disableCloseOnSelect
+          value={props.value}
+          onChange={(_event, entities) => props.onChange(entities)}
+        />
+      )
+    : (
+        <CatalogAutocomplete<Entity>
+          {...common}
+          value={props.value}
+          onChange={(_event, entity) => props.onChange(entity ?? null)}
+        />
+      );
 }

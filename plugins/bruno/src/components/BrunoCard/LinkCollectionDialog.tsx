@@ -261,7 +261,7 @@ export function LinkCollectionDialog(props: {
               startIcon={planning ? <CircularProgress size={16} /> : undefined}
               onClick={() =>
                 pr.prepare({
-                  apiRef,
+                  apiRefs: [apiRef],
                   collectionName:
                     (selected as Entity).metadata.title
                     ?? (selected as Entity).metadata.name

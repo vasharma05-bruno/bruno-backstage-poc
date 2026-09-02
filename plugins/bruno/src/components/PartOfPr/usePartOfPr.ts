@@ -26,8 +26,12 @@ export interface PartOfPr {
   stage: PartOfStage;
   /** Back to the dialog's first step, discarding any plan or error. */
   reset: () => void;
-  /** Reads the descriptor and composes the edit, writing nothing. */
-  prepare: (opts: { apiRef: string; collectionName: string }) => void;
+  /**
+   * Reads the descriptor and composes the edit, writing nothing. Several
+   * references go into ONE pull request: they all edit the same `spec.partOf`
+   * in the same file, so a branch each would be noise.
+   */
+  prepare: (opts: { apiRefs: string[]; collectionName: string }) => void;
   /** Creates the branch, commits the descriptor and opens the pull request. */
   submit: (plan: PartOfPlan, onSubmitted?: (link: string) => void) => void;
 }
@@ -86,12 +90,12 @@ export function usePartOfPr(opts: {
   return {
     stage,
     reset: () => setStage({ status: 'idle' }),
-    prepare: ({ apiRef, collectionName }) => {
+    prepare: ({ apiRefs, collectionName }) => {
       setStage({ status: 'planning' });
       void withToken(async (token) => {
         const plan = await (direction === 'link' ? planLink : planUnlink)({
           descriptorUrl: descriptorUrl as string,
-          apiRef,
+          apiRefs,
           collectionName,
           token
         });
