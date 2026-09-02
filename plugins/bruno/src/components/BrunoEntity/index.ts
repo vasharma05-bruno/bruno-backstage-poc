@@ -3,4 +3,5 @@ export { BrunoApiDocsContent } from './BrunoApiDocsContent';
 export { CollectionDocsCard } from './CollectionDocsCard';
 export { EnvironmentsCard } from './EnvironmentsCard';
 export { RelatedApisCard } from './RelatedApisCard';
+export { LinkApiDialog } from './LinkApiDialog';
 export { UnlinkDialog } from './UnlinkDialog';

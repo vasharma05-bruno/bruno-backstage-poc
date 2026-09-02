@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import Box from '@material-ui/core/Box';
+import Button from '@material-ui/core/Button';
 import Chip from '@material-ui/core/Chip';
 import IconButton from '@material-ui/core/IconButton';
 import Menu from '@material-ui/core/Menu';
@@ -22,7 +24,9 @@ import {
   useRelatedEntities
 } from '@backstage/plugin-catalog-react';
 import { BrunoInfoCard } from '../BrunoInfoCard';
+import { useDescriptorAdvice } from '../PartOfPr';
 import { descriptorLocation } from '../../lib/brunoEntity';
+import { LinkApiDialog } from './LinkApiDialog';
 import { UnlinkDialog } from './UnlinkDialog';
 
 const useStyles = makeStyles((theme) => ({
@@ -31,6 +35,12 @@ const useStyles = makeStyles((theme) => ({
   },
   empty: {
     padding: theme.spacing(2)
+  },
+  prStrip: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: theme.spacing(1),
+    padding: theme.spacing(1, 2, 2)
   }
 }));
 
@@ -95,6 +105,7 @@ export function RelatedApisCard(): JSX.Element {
     kind: 'API'
   });
 
+  const [linkOpen, setLinkOpen] = useState(false);
   const [unlinkTarget, setUnlinkTarget] = useState<string | undefined>();
   /**
    * Open unlink pull requests, keyed by API entity ref.
@@ -105,6 +116,13 @@ export function RelatedApisCard(): JSX.Element {
    * lives where it belongs, in the SCM host.
    */
   const [openPrs, setOpenPrs] = useState<Record<string, string>>({});
+  /**
+   * Link pull requests, as `[apiRef, url]`. Kept separately from `openPrs`
+   * because a linked API is NOT in the table yet — the relation only exists
+   * once the pull request is merged and the descriptor re-read — so there is no
+   * row to hang a chip on.
+   */
+  const [linkPrs, setLinkPrs] = useState<{ apiRef: string; link: string }[]>([]);
 
   const columns: TableColumn<Entity>[] = [
     {
@@ -155,40 +173,17 @@ export function RelatedApisCard(): JSX.Element {
   ];
 
   let body: JSX.Element;
-  // The advice depends on where the entity is DECLARED, not on where the
-  // collection lives. A `bruno.collections[]` entry has no descriptor file at
-  // all, so telling its operator to edit a catalog-info.yaml sends them looking
-  // for a file that does not exist -- see `descriptorLocation`, which carries a
-  // distinct reason for each case precisely so the copy can differ.
+  // Why this collection's links cannot be edited from here, when they cannot —
+  // the same four cases the link and unlink dialogs explain, in the one place a
+  // reader looking at an empty card will actually be.
   const location = descriptorLocation(entity);
-  let emptyHint: JSX.Element;
-  if (location.kind === 'none' && location.reason === 'provider') {
-    emptyHint = (
-      <>
-        Add the API&apos;s entity reference to <code>partOf</code> on this
-        collection&apos;s <code>bruno.collections[]</code> entry in{' '}
-        <code>app-config.yaml</code>.
-      </>
-    );
-  } else if (location.kind === 'none' && location.reason === 'discovery') {
-    // A discovered collection has no descriptor and no config entry; authoring
-    // a descriptor is what takes it over, because discovery defers to one.
-    emptyHint = (
-      <>
-        This collection was discovered by <code>bruno.discovery</code>. Add a{' '}
-        <code>catalog-info.yaml</code> declaring <code>kind: Bruno</code> with{' '}
-        <code>spec.partOf</code> to its repository, which discovery will then
-        leave to that descriptor.
-      </>
-    );
-  } else {
-    emptyHint = (
-      <>
-        Add the API&apos;s entity reference to <code>spec.partOf</code> in the
-        collection&apos;s <code>catalog-info.yaml</code>.
-      </>
-    );
-  }
+  const emptyHint = useDescriptorAdvice({ location, direction: 'link' }) ?? (
+    <Typography variant="body2" color="textSecondary" component="span">
+      Use <strong>Link API</strong> above to attach one — that adds the API to
+      this collection&apos;s <code>spec.partOf</code>, which is what the catalog
+      turns into the relation shown here.
+    </Typography>
+  );
 
   if (loading) {
     body = <Progress />;
@@ -198,13 +193,12 @@ export function RelatedApisCard(): JSX.Element {
     );
   } else if (!entities || entities.length === 0) {
     body = (
-      <Typography
-        variant="body2"
-        color="textSecondary"
-        className={classes.empty}
-      >
-        This collection is not linked to any API entity. {emptyHint}
-      </Typography>
+      <Box className={classes.empty}>
+        <Typography variant="body2" color="textSecondary" paragraph>
+          This collection is not linked to any API entity.
+        </Typography>
+        {emptyHint}
+      </Box>
     );
   } else {
     body = (
@@ -217,8 +211,35 @@ export function RelatedApisCard(): JSX.Element {
   }
 
   return (
-    <BrunoInfoCard title="Related APIs" noPadding>
+    <BrunoInfoCard
+      title="Related APIs"
+      noPadding
+      action={(
+        <Box mr={1} mt={1}>
+          <Button size="small" onClick={() => setLinkOpen(true)}>
+            Link API
+          </Button>
+        </Box>
+      )}
+    >
       {body}
+
+      {linkPrs.length > 0 && (
+        <Box className={classes.prStrip}>
+          {linkPrs.map((pr) => (
+            <Chip
+              key={pr.link}
+              size="small"
+              label={`Link PR open: ${pr.apiRef}`}
+              component="a"
+              clickable
+              href={pr.link}
+              target="_blank"
+              rel="noopener noreferrer"
+            />
+          ))}
+        </Box>
+      )}
       {unlinkTarget && (
         <UnlinkDialog
           open
@@ -229,6 +250,15 @@ export function RelatedApisCard(): JSX.Element {
             setOpenPrs((prs) => ({ ...prs, [unlinkTarget]: link }))}
         />
       )}
+
+      <LinkApiDialog
+        open={linkOpen}
+        onClose={() => setLinkOpen(false)}
+        collection={entity}
+        linkedRefs={(entities ?? []).map((e) => stringifyEntityRef(e))}
+        onSubmitted={(apiRef, link) =>
+          setLinkPrs((prs) => [...prs, { apiRef, link }])}
+      />
     </BrunoInfoCard>
   );
 }
