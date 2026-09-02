@@ -122,21 +122,34 @@ export function RelatedApisCard(): JSX.Element {
   // for a file that does not exist -- see `descriptorLocation`, which carries a
   // distinct reason for each case precisely so the copy can differ.
   const location = descriptorLocation(entity);
-  const emptyHint
-    = location.kind === 'none' && location.reason === 'provider'
-      ? (
-          <>
-            Add the API&apos;s entity reference to <code>partOf</code> on this
-            collection&apos;s <code>bruno.collections[]</code> entry in{' '}
-            <code>app-config.yaml</code>.
-          </>
-        )
-      : (
-          <>
-            Add the API&apos;s entity reference to <code>spec.partOf</code> in the
-            collection&apos;s <code>catalog-info.yaml</code>.
-          </>
-        );
+  let emptyHint: JSX.Element;
+  if (location.kind === 'none' && location.reason === 'provider') {
+    emptyHint = (
+      <>
+        Add the API&apos;s entity reference to <code>partOf</code> on this
+        collection&apos;s <code>bruno.collections[]</code> entry in{' '}
+        <code>app-config.yaml</code>.
+      </>
+    );
+  } else if (location.kind === 'none' && location.reason === 'discovery') {
+    // A discovered collection has no descriptor and no config entry; authoring
+    // a descriptor is what takes it over, because discovery defers to one.
+    emptyHint = (
+      <>
+        This collection was discovered by <code>bruno.discovery</code>. Add a{' '}
+        <code>catalog-info.yaml</code> declaring <code>kind: Bruno</code> with{' '}
+        <code>spec.partOf</code> to its repository, which discovery will then
+        leave to that descriptor.
+      </>
+    );
+  } else {
+    emptyHint = (
+      <>
+        Add the API&apos;s entity reference to <code>spec.partOf</code> in the
+        collection&apos;s <code>catalog-info.yaml</code>.
+      </>
+    );
+  }
 
   if (loading) {
     body = <Progress />;

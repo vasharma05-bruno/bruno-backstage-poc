@@ -1,6 +1,6 @@
 import type { Config } from '@backstage/config';
 import type { LoggerService } from '@backstage/backend-plugin-api';
-import type { BrunoCollectionConfig } from '../types';
+import type { BrunoCollectionConfig, BrunoDiscoveryConfig } from '../types';
 import type { DefinitionOptions } from './definitionBuilder';
 
 /** 1 MiB. Admits every realistic collection — the largest real-world reference
@@ -59,6 +59,68 @@ export function readBrunoCollections(
   }
 
   return collections;
+}
+
+/** Every discovery entry defaults to public GitHub, the only host with a
+ *  self-defaulting integration entry. */
+const DEFAULT_DISCOVERY_HOST = 'github.com';
+
+/**
+ * Reads the `bruno.discovery` block — the organizations swept for collections.
+ * Returns [] if absent.
+ *
+ * Tolerant per entry, for the same reason `readBrunoCollections` is: this runs
+ * inside a scheduled provider task, and one mistyped entry must not stop the
+ * others from being swept.
+ *
+ * The `repositoryPattern` regex is COMPILED HERE rather than at match time, so
+ * a bad pattern is reported once, against the entry that owns it, and that
+ * entry alone is dropped. Compiling it in the sweep instead would either throw
+ * out of a run that had already listed other organizations, or — worse — be
+ * caught there and turned into "matches nothing", which in a `full` mutation
+ * deletes every entity the entry had published.
+ */
+export function readBrunoDiscovery(
+  config: Config,
+  logger?: LoggerService
+): BrunoDiscoveryConfig[] {
+  const brunoConfig = config.getOptionalConfig('bruno');
+  if (!brunoConfig) {
+    return [];
+  }
+
+  const entries: BrunoDiscoveryConfig[] = [];
+  const raw = brunoConfig.getOptionalConfigArray('discovery') ?? [];
+
+  for (const [index, d] of raw.entries()) {
+    try {
+      const organization = d.getString('organization');
+      const repositoryPattern = d.getOptionalString('repositoryPattern');
+      const excludePathPattern = d.getOptionalString('excludePathPattern');
+      for (const pattern of [repositoryPattern, excludePathPattern]) {
+        if (pattern !== undefined) {
+          // Anchored the same way `new RegExp` will anchor it in the sweep, so
+          // a pattern that only fails when anchored fails here too.
+          new RegExp(`^(?:${pattern})$`);
+        }
+      }
+      entries.push({
+        host: d.getOptionalString('host') ?? DEFAULT_DISCOVERY_HOST,
+        organization,
+        repositoryPattern,
+        excludePathPattern,
+        owner: d.getOptionalString('owner'),
+        deferToCatalogInfo: d.getOptionalBoolean('deferToCatalogInfo') ?? true
+      });
+    } catch (e) {
+      logger?.error(
+        `bruno.discovery[${index}]: ${String((e as Error)?.message ?? e)}; `
+        + 'skipping.'
+      );
+    }
+  }
+
+  return entries;
 }
 
 /**

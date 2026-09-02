@@ -178,3 +178,39 @@ export interface BrunoCollectionConfig {
   /** Optional entity-name override; see config.d.ts for why it exists. */
   name?: string;
 }
+
+/**
+ * One entry of `bruno.discovery[]` in app-config — an organization (or user
+ * account) to sweep for Bruno collections.
+ *
+ * There is deliberately no `branch` knob. Every discovered collection tracks
+ * its repository's DEFAULT branch, because the URL grammar cannot express a ref
+ * for a collection at the repo root: `composePathStyleCollectionUrl` reduces an
+ * empty subpath to the bare repo URL, so a pinned branch would be honoured for
+ * a subfolder collection and silently dropped for a root one. Pinning a branch
+ * is what a `bruno.collections[]` entry with an explicit `/tree/<branch>/` URL
+ * is for.
+ */
+export interface BrunoDiscoveryConfig {
+  /** SCM host, matched against `integrations.github[].host`. */
+  host: string;
+  /** GitHub organization or user login whose repositories are swept. */
+  organization: string;
+  /**
+   * Anchored regular expression over the repository NAME (not `owner/name`).
+   * Absent means every repository the credential can list.
+   */
+  repositoryPattern?: string;
+  /**
+   * Anchored regular expression over a collection's repo-relative path (`''`
+   * for one at the repository root). A root that matches is NOT discovered.
+   */
+  excludePathPattern?: string;
+  /** Entity reference stamped as `spec.owner` on everything found here. */
+  owner?: string;
+  /**
+   * Whether a collection already declared by an authored `catalog-info.yaml`
+   * is left to that descriptor instead of being emitted here. Default true.
+   */
+  deferToCatalogInfo: boolean;
+}

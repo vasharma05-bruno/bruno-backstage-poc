@@ -12,6 +12,10 @@ import {
   ORIGIN_ANNOTATION
 } from '../processor/BrunoKindProcessor';
 import type { BrunoOrigin } from '../processor/BrunoKindProcessor';
+import type {
+  CollectionDiscovery,
+  DiscoveredCollection
+} from '../discovery';
 import { readBrunoCollections } from '../service/brunoConfig';
 import { sanitizeName } from '../service/entityName';
 import type { CollectionManifest, ManifestProbe } from '../service/manifestProbe';
@@ -24,16 +28,19 @@ import type {
 const LOCATION_TYPE = 'bruno-collection';
 
 /**
- * Materializes every configured and every UI-created collection as a
- * `kind: Bruno` entity, so a collection can be catalogued without authoring a
- * `catalog-info.yaml`.
+ * Materializes every configured, every UI-created and every DISCOVERED
+ * collection as a `kind: Bruno` entity, so a collection can be catalogued
+ * without authoring a `catalog-info.yaml`.
  *
- * Two mutable sources, one loop. `bruno.collections[]` is the operator's file;
- * the UI-created rows are read service-to-service from
+ * Three mutable sources, one loop. `bruno.collections[]` is the operator's
+ * file; the UI-created rows are read service-to-service from
  * `GET /api/bruno/collections`, because the catalog has no write model of its
- * own and this provider is what turns a stored row into an entity. They go
- * through identical guards and identical identity rules, which is what lets a
- * config/UI name collision be caught by machinery that already works.
+ * own and this provider is what turns a stored row into an entity; the
+ * discovered ones are swept out of the organizations named by
+ * `bruno.discovery[]` (see `discovery/githubDiscovery.ts`, which also explains
+ * why Backstage's own catalog-info autodiscovery cannot carry them). All three
+ * go through identical guards and identical identity rules, which is what lets
+ * a cross-source name collision be caught by machinery that already works.
  *
  * The entities are written unprocessed and then flow through the same
  * processing loop as authored ones, so `BrunoKindProcessor` enriches and
@@ -57,6 +64,10 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
    */
   private lastStored?: StoredCollection[];
 
+  /** The last successful sweep in THIS process, for the same reason — a failed
+   *  sweep must not be mistaken for "these collections are gone". */
+  private lastDiscovered?: DiscoveredCollection[];
+
   constructor(
     private readonly options: {
       config: Config;
@@ -67,6 +78,10 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
        *  function of its inputs and the degrade branch in `run()` is reachable
        *  by handing it a reader that throws. */
       storedCollections: StoredCollectionReader;
+      /** Absent when `bruno.discovery[]` is empty, which is the only way to
+       *  turn discovery off — an always-present sweep with no entries would
+       *  still cost a listing per tick. */
+      discovery?: CollectionDiscovery;
     }
   ) {}
 
@@ -97,6 +112,9 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
    *    read cached in this process, `run()` returns before `applyMutation` and
    *    skips the refresh entirely, because the alternative — emitting the
    *    configured entries alone — would drop every UI-created collection in the
+   *    instance.
+   *  - A FAILED SWEEP behaves identically, and for the same reason: emitting
+   *    the other two sources alone would delete every discovered entity in the
    *    instance.
    *  - A PER-COLLECTION SKIP inside the loop below DOES remove that one
    *    collection's entity, and for a UI-created collection that is destructive
@@ -149,6 +167,37 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
       stored = this.lastStored;
     }
 
+    // Same contract, same failure handling. `discover()` is specified to throw
+    // rather than return a short list, so this catch is the only place that
+    // decides what an unknown sweep means — and it never means "delete".
+    let discovered: DiscoveredCollection[] = [];
+    if (this.options.discovery) {
+      try {
+        discovered = await this.options.discovery.discover();
+        this.lastDiscovered = discovered;
+      } catch (error) {
+        if (this.lastDiscovered === undefined) {
+          logger.warn(
+            'BrunoCollectionEntityProvider could not sweep the bruno.discovery '
+            + 'organizations and has no successful sweep cached from an earlier '
+            + 'run in this process; SKIPPING this refresh entirely, for the '
+            + 'same reason as a failed store read: a full mutation deletes by '
+            + 'set difference, so emitting now would drop every discovered '
+            + 'collection.',
+            error instanceof Error ? error : new Error(String(error))
+          );
+          return;
+        }
+        logger.warn(
+          'BrunoCollectionEntityProvider could not sweep the bruno.discovery '
+          + 'organizations; emitting the last set this process swept '
+          + 'successfully.',
+          error instanceof Error ? error : new Error(String(error))
+        );
+        discovered = this.lastDiscovered;
+      }
+    }
+
     const entities: BrunoEntity[] = [];
     /**
      * Emitted entity name -> the URL that claimed it, and from where.
@@ -163,12 +212,26 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
      * the name as written is what reaches the entity and the log line below.
      */
     const claimed = new Map<string, { url: string; origin: SourceOrigin }>();
+    /**
+     * Normalized URL -> the entity name that claimed it.
+     *
+     * Only DISCOVERED entries are dropped on a hit here. A sweep cannot see the
+     * other two sources, so the same collection being configured (or added from
+     * the UI) and also discovered is the normal case, not a conflict: without
+     * this it would land twice, under two names, and the operator's chosen name
+     * would be shadowed by a repo-derived one. Two `bruno.collections[]` entries
+     * pointing at one URL under different names stay legal — that is somebody
+     * deliberately cataloguing a collection twice.
+     */
+    const claimedUrls = new Map<string, string>();
     let skipped = 0;
+    let deduped = 0;
     let fromConfig = 0;
     let fromUi = 0;
+    let fromDiscovery = 0;
 
     // CONFIG FIRST, deliberately. The `claimed` guard below is first-wins, and
-    // the two sources are not equal: `app-config.yaml` is the operator's file
+    // the sources are not equal: `app-config.yaml` is the operator's file
     // and cannot be edited from the UI, whereas a UI-created collection can be
     // renamed by whoever made it. So the UI one is the one that should lose,
     // and `POST /collections` pre-rejects the collision anyway so that it is
@@ -187,6 +250,19 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
         partOf: row.partOf,
         owner: row.owner,
         origin: 'ui' as const
+      })),
+      // LAST, deliberately. The `claimed` and `claimedUrls` guards below are
+      // both first-wins, and a discovered entry is the one that should lose
+      // every contest: it is re-derived from source control on every tick, so
+      // dropping it strands nothing and it reappears by itself once whatever
+      // shadowed it is gone. A UI-created row cannot say that — its entity is
+      // the only handle the dashboard has on it.
+      ...discovered.map((collection) => ({
+        url: collection.url,
+        name: collection.name,
+        partOf: [] as string[],
+        owner: collection.owner,
+        origin: 'discovery' as const
       }))
     ];
 
@@ -212,6 +288,18 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
           }; skipping.`
         );
         skipped += 1;
+        continue;
+      }
+
+      // Before the probe, so a collection that is both configured and
+      // discovered costs one tree read rather than two.
+      const claimedUrlBy = claimedUrls.get(url);
+      if (entry.origin === 'discovery' && claimedUrlBy !== undefined) {
+        logger.debug(
+          `Bruno collection ${url}: discovered, but already catalogued as `
+          + `"${claimedUrlBy}"; not emitting it a second time.`
+        );
+        deduped += 1;
         continue;
       }
 
@@ -245,7 +333,12 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
         // such problem — it is removed by editing `app-config.yaml`, so pruning
         // its entity strands nothing, and the skip is the right signal that the
         // operator's file points at a folder with no collection in it.
-        if (entry.origin === 'config') {
+        //
+        // A DISCOVERED entry skips for the same reason as a configured one, and
+        // hitting this branch at all means the manifest moved between the sweep
+        // and the probe — the sweep only proposes a root it found a manifest in.
+        // The next sweep will not propose it again.
+        if (entry.origin !== 'ui') {
           logger.error(
             `Bruno collection ${url}: no bruno.json or opencollection.yml/.yaml `
             + `found; skipping.`
@@ -284,10 +377,13 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
         continue;
       }
       claimed.set(claimKey, { url, origin: entry.origin });
+      claimedUrls.set(url, name);
       if (entry.origin === 'config') {
         fromConfig += 1;
-      } else {
+      } else if (entry.origin === 'ui') {
         fromUi += 1;
+      } else {
+        fromDiscovery += 1;
       }
       entities.push(
         buildEntity({
@@ -311,17 +407,23 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
 
     logger.info(
       `BrunoCollectionEntityProvider emitted ${entities.length} Bruno `
-      + `entity(ies) (${fromConfig} from config, ${fromUi} from the UI), `
-      + `skipped ${skipped}.`
+      + `entity(ies) (${fromConfig} from config, ${fromUi} from the UI, `
+      + `${fromDiscovery} discovered), skipped ${skipped}.`
+      // Only when it happened: with discovery off it is always zero, and a
+      // line that runs every tick has to stay readable.
+      + (deduped > 0
+        ? ` Dropped ${deduped} discovered duplicate(s) of a collection that is `
+        + `already catalogued from another source.`
+        : '')
     );
   }
 }
 
 /** Which mutable source an entry came from. A subset of `BrunoOrigin`: this
- *  provider is the only writer of the other two values. */
-type SourceOrigin = 'config' | 'ui';
+ *  provider is the only writer of these three, and neither of the other two. */
+type SourceOrigin = 'config' | 'ui' | 'discovery';
 
-/** One collection to emit, from either source, before any guard has run. */
+/** One collection to emit, from any of the sources, before any guard has run. */
 type SourceEntry = {
   url: string;
   name?: string;
@@ -331,7 +433,12 @@ type SourceEntry = {
 };
 
 function describeOrigin(origin: SourceOrigin): string {
-  return origin === 'config' ? 'app-config.yaml' : 'added from the Bruno UI';
+  if (origin === 'config') {
+    return 'app-config.yaml';
+  }
+  return origin === 'ui'
+    ? 'added from the Bruno UI'
+    : 'discovered by bruno.discovery';
 }
 
 /** What the operator actually has to change to break a name collision. */
@@ -347,6 +454,24 @@ function disambiguationAdvice(
   }
   if (losing === 'config' && winning === 'ui') {
     return 'Set `name:` on the bruno.collections entry to disambiguate.';
+  }
+  // Discovery is swept LAST, so it always loses; there is no `winning ===
+  // 'discovery'` case to advise on.
+  if (losing === 'discovery' && winning === 'discovery') {
+    return (
+      'Both names were derived from `<repo>[-<path>]`, so they collided after '
+      + 'the 63-character clamp: rename one of the collection folders, or '
+      + 'exclude one of them with `repositoryPattern`/`excludePathPattern`.'
+    );
+  }
+  if (losing === 'discovery') {
+    // A discovered name cannot be overridden, so the only levers are the
+    // losing side's pattern and the winning side's name.
+    return (
+      'A discovered collection has no name override: exclude it with '
+      + '`repositoryPattern`/`excludePathPattern` on the bruno.discovery '
+      + 'entry, or rename the collection that claimed the name first.'
+    );
   }
   if (losing === 'ui') {
     return 'Remove one of the two collections from the Bruno dashboard.';

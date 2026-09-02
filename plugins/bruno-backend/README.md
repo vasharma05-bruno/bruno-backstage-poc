@@ -66,6 +66,14 @@ bruno:
       owner: guests
       partOf:
         - api:default/payments-api
+  # Autodiscovery. Optional, and off when absent.
+  discovery:
+    - organization: acme
+      host: github.com
+      repositoryPattern: '.*-api'
+      excludePathPattern: '(tests|examples)/.*'
+      owner: guests
+      deferToCatalogInfo: true
   definition:
     maxBytes: 1048576
   cacheTtlSeconds: 60
@@ -85,6 +93,12 @@ Read by [`src/service/brunoConfig.ts`](src/service/brunoConfig.ts) and
 | `bruno.collections[].name` | last path segment of `url` | `metadata.name` override. Not part of the PRD's config shape; a documented superset, for when two collections would otherwise collide or a folder gets renamed. |
 | `bruno.collections[].owner` | — | Entity ref for `spec.owner`. Unprefixed values default to a Group. Without it a configured collection has no `ownedBy` relation and reads as unowned. |
 | `bruno.collections[].partOf` | `[]` | Entity ref(s) for `spec.partOf`. A bare string is accepted and treated as a one-element list — the PRD writes it singular, the entity contract is plural. |
+| `bruno.discovery[].organization` | — | GitHub organization to sweep. A **user login** works too: the sweep falls back to the user endpoint when the organization endpoint 404s. |
+| `bruno.discovery[].host` | `github.com` | SCM host. Anything but public `github.com` needs an `integrations.github` entry. |
+| `bruno.discovery[].repositoryPattern` | every listed repo | **Anchored** regex over the repository *name*: `payments` matches `payments` and not `payments-legacy`. Compiled when the config is read, so a bad pattern drops that entry alone. |
+| `bruno.discovery[].excludePathPattern` | — | **Anchored** regex over a collection's repo-relative path (`''` at the repository root). Excludes collections a sweep finds but nobody publishes — test fixtures, examples. |
+| `bruno.discovery[].owner` | — | `spec.owner` for everything this entry finds. Nothing in a repository states who owns a collection, so without it discovered collections read as unowned. |
+| `bruno.discovery[].deferToCatalogInfo` | `true` | Leave a collection that already has a `kind: Bruno` `catalog-info.yaml` to that descriptor — see [Autodiscovery](#autodiscovery). |
 | `bruno.cacheTtlSeconds` | 60 | How long a fetched collection stays cached before the probe revalidates it. Also the upper bound on how long a catalog Sync takes to show new content. |
 | `bruno.definition.maxBytes` | 1048576 | Hard cap on the YAML stored on an entity. Over the cap the definition is **omitted, never truncated**, and the entity is annotated. |
 | `bruno.schedule.frequencySeconds` | 60 | The provider's tick — and therefore the latency of both the dashboard's add and its remove. |
@@ -255,13 +269,13 @@ would never land at all rather than merely losing one relation.
 
 | Annotation | Written by | Meaning |
 | --- | --- | --- |
-| `usebruno.com/origin` | provider (`config`/`ui`), processor (`file`/`descriptor`), or the descriptor itself | How the collection got into the catalog — see below. |
+| `usebruno.com/origin` | provider (`config`/`ui`/`discovery`), processor (`file`/`descriptor`), or the descriptor itself | How the collection got into the catalog — see below. |
 | `usebruno.com/definition-omitted` | processor | `size` (over `bruno.definition.maxBytes`) or `error` (the collection could not be read/converted). Deleted again once a definition is stored, so an over-cap collection that later shrinks stops claiming to be omitted. |
 | `usebruno.com/definition-bytes` | processor | How big the omitted document would have been. |
 | `backstage.io/source-location` | processor / provider | The collection **folder**, `url:<normalized>/`. |
 | `backstage.io/managed-by-location`, `…-origin-location` | provider | A real `url:` ref to the collection folder, not a synthetic `bruno-provider:` one — that is what makes the About card's native Refresh button appear, and it is safe because `readLocation` only dereferences `kind: Location` entities. |
 
-`usebruno.com/origin` has four values, and it exists because the frontend used to
+`usebruno.com/origin` has five values, and it exists because the frontend used to
 guess by asking whether `managed-by-location` ended in `.yaml`. That guess is
 right for every case we ship and wrong for two we cannot rule out: a descriptor
 served from a URL with no YAML suffix, and a collection onboarded through the
@@ -271,6 +285,7 @@ Bruno UI, which produces a descriptor indistinguishable from a hand-written one.
 | --- | --- | --- |
 | `config` | the provider, for a `bruno.collections[]` entry | `app-config.yaml`; there is no descriptor file anywhere |
 | `ui` | the Bruno plugin, into the `catalog-info.yaml` it generates | that descriptor — and the dashboard's Remove action is offered |
+| `discovery` | the provider, for a collection swept out of a `bruno.discovery[]` organization | nothing local: it is re-derived from source control every tick. Authoring a `kind: Bruno` `catalog-info.yaml` in the repository takes the collection over, because discovery defers to one |
 | `file` | the processor, for a `catalog.locations` entry of `type: file` | the file on the Backstage host's disk; it is not in an SCM and cannot take a pull request |
 | `descriptor` | the processor, by default | the hand-authored `catalog-info.yaml` in source control |
 
@@ -288,14 +303,23 @@ a given entity, so — unlike, say, a source commit sha — stamping it cannot c
 
 ### Name collisions
 
-The provider iterates **config entries first**, and the claim guard is
-first-wins, keyed on the **lower-cased** name (an entity ref is lower-cased when
-stringified, so `Payments` and `payments` are one entity). Config wins because
+The provider iterates **config entries first, then UI-created ones, then
+discovered ones**, and the claim guard is first-wins, keyed on the
+**lower-cased** name (an entity ref is lower-cased when stringified, so
+`Payments` and `payments` are one entity). Config wins because
 `app-config.yaml` is the operator's file and cannot be edited from the UI,
-whereas a UI-created collection can be renamed by whoever made it. The log line
-names both sides and gives advice specific to which origin lost.
-`POST /collections` pre-rejects the same collision at write time so it is
+whereas a UI-created collection can be renamed by whoever made it. Discovery is
+swept last, so it always loses: a discovered entry is re-derived every tick, so
+dropping it strands nothing and it reappears by itself once whatever shadowed it
+is gone. The log line names both sides and gives advice specific to which origin
+lost. `POST /collections` pre-rejects the same collision at write time so it is
 normally caught with a message rather than silently here.
+
+A **discovered duplicate of an already-catalogued URL** is not a collision at
+all: a sweep cannot see the other two sources, so the same collection being
+configured *and* discovered is expected. Those are dropped quietly by URL
+(before the probe runs, so they cost no tree read) and counted separately in the
+provider's summary line.
 
 ## Adding a collection from the UI
 
@@ -364,6 +388,133 @@ collection stays a stored row with no entity. That row is not stranded — the
 dashboard's pending-collections strip shows it as **stalled** once it is past
 `frequencySeconds * 2 + 30`, names both possible causes, and offers a Remove
 that calls `DELETE /collections/:name` directly.
+
+## Autodiscovery
+
+`bruno.discovery[]` sweeps organizations for `bruno.json` /
+`opencollection.yml`/`.yaml` and emits a `kind: Bruno` entity per manifest
+found, so a collection is catalogued by being pushed rather than by being
+declared. Implemented in [`src/discovery/`](src/discovery/); it is the third
+source of the same provider, and every entity it produces goes through the same
+probe, the same guards and the same enrichment as a configured one.
+
+### Why not Backstage's own autodiscovery
+
+`GithubEntityProvider` will find any filename — `catalogPath` accepts a glob —
+but what it emits is a `kind: Location` of `type: url` pointing **at the file**,
+and the catalog then reads that file with the entity-descriptor parser. A Bruno
+manifest has no `apiVersion`/`kind`, so every hit would land as a processing
+error instead of an entity. The two seams that could bend that are both wrong
+for a plugin to take: `CatalogProcessor.readLocation` keys on the location
+*type*, which that provider hardcodes to `url`, and
+`catalogModelExtensionPoint.setEntityDataParser` is a single global singleton
+that would put this plugin in charge of parsing every descriptor in the catalog.
+Emitting the entities directly costs one sweep and owns nothing else.
+
+### What a sweep costs
+
+One repository listing per entry per tick, plus one recursive tree call for each
+repository whose `pushed_at` moved since the last sweep. That second clause is
+what makes this viable on the 60-second default schedule: in a steady state an
+organization of any size costs its listing alone, and only a repository somebody
+pushed to is re-read. `pushed_at` covers pushes to *any* branch, so it
+over-invalidates and never under-invalidates for the default branch — the
+direction that matters. Archived and empty repositories are skipped without a
+tree call at all.
+
+Verified against the public `github.com/bruno-collections` org: 37 repositories
+swept, 41 collections found, and a second sweep a moment later reused all 37
+cached results with zero tree calls. Note the credential's rate limit, though —
+that first sweep is 37 calls, and an **anonymous** reader gets 60 an hour, so
+discovery of any real organization needs an `integrations.github` token (5000 an
+hour). The sweep fails loudly when it runs out rather than emitting a short set.
+
+GitHub's code-search API would replace the per-repo calls with one query, but it
+is authenticated-only, indexes the default branch late, misses large
+repositories and allows 30 requests a minute. A discovery source that silently
+lags behind source control is worse than one that costs a tree call.
+
+### What a sweep finds
+
+Every collection in a repository, which includes ones nobody meant to publish: a
+client library's `tests/fixtures/bru` holds a real `bruno.json` and nothing
+about it says otherwise. The sweep of `bruno-collections` above found three such
+fixture collections. `repositoryPattern` cannot exclude them, because the noise
+is inside a repository that does belong in the sweep — that is what
+`excludePathPattern` is for, matched (anchored) against a collection's
+repo-relative path, `''` for one at the repository root:
+
+```yaml
+bruno:
+  discovery:
+    - organization: acme
+      excludePathPattern: '(tests|examples|fixtures)/.*'
+```
+
+### Names, refs and owners
+
+A discovered entity is named `<repo>` for a collection at the repository root
+and `<repo>-<path-with-dashes>` for one in a subfolder, sanitized. **Not** the
+URL's last segment, the way a `bruno.collections[]` entry is named: a folder
+called `collection`, `api` or `tests` is the single most likely thing to find in
+two different repositories, and a name collision is resolved by skipping the
+loser — so the second repository's collection would simply never appear. There
+is no `name:` override for a discovered collection, which is why the name has to
+be unambiguous by construction. The manifest's own name still lands in
+`metadata.title`.
+
+Every discovered collection tracks its repository's **default branch**. There is
+deliberately no `branch` knob: the URL grammar cannot express a ref for a
+collection at the repository root (an empty subpath reduces to the bare repo
+URL), so a pinned branch would be honoured for a subfolder collection and
+silently dropped for a root one. Pin a branch with a `bruno.collections[]` entry
+and an explicit `/tree/<branch>/` URL instead.
+
+`owner` comes from the discovery entry, because nothing in a repository states
+who owns a collection.
+
+### Deferring to an authored descriptor
+
+With `deferToCatalogInfo` (default `true`), a collection whose own directory or
+repository root holds a `catalog-info.yaml`/`.yml` declaring `kind: Bruno` is
+left to that descriptor. The descriptor is the richer source — it can carry
+`spec.partOf`, an owner and a chosen name, none of which a sweep can infer — and
+publishing both would put two differently-named entities on one collection,
+which the sweep could not even detect, since it cannot see the catalog. Only
+those two locations are checked, so a descriptor kept somewhere else means the
+collection is both authored and discovered.
+
+The cost of the default is a repository whose descriptor nobody registered with
+Backstage: its collection is skipped here and never appears. The skip is logged
+at info with the descriptor's path, and `deferToCatalogInfo: false` discovers it
+anyway.
+
+### Failure semantics
+
+The provider applies a `full` mutation, which deletes by set difference, so a
+partial sweep is indistinguishable from "these collections are gone". Discovery
+therefore **throws rather than returning a short list**, and the provider
+answers a throw the same way it answers a failed read of the UI store: it
+emits the last set this process swept successfully, or — if it has none —
+skips the tick entirely and changes nothing.
+
+Inside a sweep the same rule is applied per repository:
+
+| Situation | Behaviour |
+| --- | --- |
+| repository listing fails | the whole sweep throws |
+| tree read fails, repository swept before | keep the collections found last time, warn |
+| tree read fails, repository new since the last successful sweep | skip it, warn — it has published nothing, so skipping deletes nothing |
+| tree read fails on the entry's **first** sweep in this process | throw: what that repository publishes is unknown |
+| collection URL cannot be composed (a default branch with a slash in it) | skip that root, error — a deterministic failure, so it was never emitted before either |
+| GitHub truncates the tree listing | warn, naming the repository: collections past the truncation point cannot be discovered, and a `bruno.collections[]` entry is the way to reach them |
+
+### Limits
+
+GitHub only. The `ScmProvider` seam is per-host and the sweep's GitHub calls sit
+behind a small injectable client, so GitLab and Bitbucket Cloud are the same
+shape of work; nothing about the provider, naming, deferral or failure handling
+would change.
 
 ## Fetching and caching
 

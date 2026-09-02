@@ -137,12 +137,24 @@ export function definitionOmittedBytes(entity: Entity): string | undefined {
  * the processor has not stamped yet (annotations it writes appear a cycle after
  * the entity itself) or one ingested by an older backend.
  */
-export type BrunoOrigin = 'descriptor' | 'config' | 'ui' | 'file' | 'unknown';
+export type BrunoOrigin
+  = | 'descriptor'
+    | 'config'
+    | 'ui'
+    | 'file'
+    | 'discovery'
+    | 'unknown';
 
 /** Stamped by `BrunoKindProcessor`; see its docblock for who writes what. */
 export const BRUNO_ORIGIN_ANNOTATION = 'usebruno.com/origin';
 
-const ORIGINS: readonly string[] = ['descriptor', 'config', 'ui', 'file'];
+const ORIGINS: readonly string[] = [
+  'descriptor',
+  'config',
+  'ui',
+  'file',
+  'discovery'
+];
 
 /**
  * Where this collection came from, and therefore what has to be edited to
@@ -183,7 +195,7 @@ export function collectionOrigin(entity: Entity): BrunoOrigin {
 /** Where the `catalog-info.yaml` describing this entity lives, if anywhere. */
 export type DescriptorLocation
   = | { kind: 'url'; target: string }
-    | { kind: 'none'; reason: 'provider' | 'file' | 'absent' };
+    | { kind: 'none'; reason: 'provider' | 'discovery' | 'file' | 'absent' };
 
 /**
  * Resolves the descriptor file this entity was read from, if it has one.
@@ -200,10 +212,15 @@ export type DescriptorLocation
  * was a guess that misread any descriptor served from a URL not ending in
  * `.yaml` as provider-managed.
  *
- * The three "none" reasons are all real and all need different copy:
+ * The four "none" reasons are all real and all need different copy:
  *  - `provider` — the location is the collection folder stamped by
  *    `BrunoCollectionEntityProvider` for a `bruno.collections[]` entry. There is
  *    no file to edit; the operator edits `app-config.yaml`.
+ *  - `discovery` — the same provider, for a collection swept out of a
+ *    `bruno.discovery[]` organization. Kept apart from `provider` because the
+ *    advice differs in kind, not in wording: there is no config entry to edit
+ *    either, and the way to give the collection a `partOf` is to author a
+ *    `catalog-info.yaml` in its own repository, which discovery then defers to.
  *  - `file` — a `file:` location (this repo's `examples/bruno-entities.yaml`).
  *    The file is on the Backstage host's disk, not in an SCM we can open a pull
  *    request against.
@@ -214,6 +231,9 @@ export function descriptorLocation(entity: Entity): DescriptorLocation {
   const origin = collectionOrigin(entity);
   if (origin === 'config') {
     return { kind: 'none', reason: 'provider' };
+  }
+  if (origin === 'discovery') {
+    return { kind: 'none', reason: 'discovery' };
   }
   if (origin === 'file') {
     return { kind: 'none', reason: 'file' };

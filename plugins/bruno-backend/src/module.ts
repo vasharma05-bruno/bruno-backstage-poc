@@ -3,7 +3,9 @@ import {
   createBackendModule
 } from '@backstage/backend-plugin-api';
 import { catalogProcessingExtensionPoint } from '@backstage/plugin-catalog-node';
+import { createGithubCollectionDiscovery } from './discovery';
 import {
+  readBrunoDiscovery,
   readCacheTtlMs,
   readDefinitionOptions
 } from './service/brunoConfig';
@@ -17,8 +19,9 @@ import { BrunoKindProcessor } from './processor/BrunoKindProcessor';
  * Catalog module wiring the two Bruno catalog extensions:
  *
  * - {@link BrunoCollectionEntityProvider} — materializes one `kind: Bruno`
- *   entity per `bruno.collections[]` entry AND per collection added from the
- *   Bruno UI, read service-to-service from `GET /api/bruno/collections`, on a
+ *   entity per `bruno.collections[]` entry, per collection added from the
+ *   Bruno UI (read service-to-service from `GET /api/bruno/collections`), and
+ *   per collection swept out of the organizations in `bruno.discovery[]`, on a
  *   scheduled refresh (driven by `bruno.schedule`, default every 60s).
  * - {@link BrunoKindProcessor} — teaches the catalog about `kind: Bruno` and
  *   enriches every such entity, whether it came from that provider or from an
@@ -70,13 +73,30 @@ export const brunoCatalogModule = createBackendModule({
           auth
         });
 
+        // Constructed only when there is something to sweep: the provider
+        // treats an absent sweeper as "discovery is off", which is what keeps
+        // an empty `bruno.discovery[]` from costing a repository listing per
+        // tick. Note the two unrelated senses of the word in this scope —
+        // `discovery` above is Backstage's own service discovery, this is
+        // collection discovery.
+        const discoveryEntries = readBrunoDiscovery(config, logger);
+        const collectionDiscovery
+          = discoveryEntries.length > 0
+            ? createGithubCollectionDiscovery({
+                config,
+                logger,
+                entries: discoveryEntries
+              })
+            : undefined;
+
         catalog.addEntityProvider(
           new BrunoCollectionEntityProvider({
             config,
             logger,
             probe,
             taskRunner: scheduler.createScheduledTaskRunner(schedule),
-            storedCollections
+            storedCollections,
+            discovery: collectionDiscovery
           })
         );
 

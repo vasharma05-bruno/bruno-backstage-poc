@@ -52,14 +52,31 @@ export const ORIGIN_ANNOTATION = 'usebruno.com/origin';
  *   `BrunoCollectionEntityProvider`; there is no descriptor file anywhere.
  * - `ui` — onboarded through the Bruno plugin, which opened a pull request for
  *   the `catalog-info.yaml` and wrote this annotation into it.
+ * - `discovery` — swept out of an organization named by `bruno.discovery[]`.
+ *   Stamped by `BrunoCollectionEntityProvider`; like `config` there is no
+ *   descriptor file anywhere, and unlike `config` there is no config entry to
+ *   edit either — the collection is re-derived from source control every tick,
+ *   so the only ways to change it are the repository itself and the discovery
+ *   entry's filters.
  * - `file` — a descriptor on the Backstage host's disk (`catalog.locations` of
  *   `type: file`), which is not in an SCM and cannot take a pull request.
  * - `descriptor` — a hand-authored `catalog-info.yaml` in source control.
  *   The default, because it is the only case that needs no special handling.
  */
-export type BrunoOrigin = 'descriptor' | 'config' | 'ui' | 'file';
+export type BrunoOrigin
+  = | 'descriptor'
+    | 'config'
+    | 'ui'
+    | 'file'
+    | 'discovery';
 
-const ORIGINS: readonly string[] = ['descriptor', 'config', 'ui', 'file'];
+const ORIGINS: readonly string[] = [
+  'descriptor',
+  'config',
+  'ui',
+  'file',
+  'discovery'
+];
 
 /**
  * The origin to stamp, preferring one already on the entity.

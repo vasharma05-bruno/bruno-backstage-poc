@@ -163,6 +163,38 @@ bruno:
       # relation that the Bruno Card on an API page reads, e.g.
       #   partOf:
       #     - api:default/some-api
+  # Autodiscovery: organizations swept for bruno.json / opencollection.yml
+  # instead of collections being listed one by one above.
+  #
+  # NOT `catalog.providers.github` with a different `catalogPath`. That provider
+  # emits a `kind: Location` of `type: url` pointing at whatever its glob
+  # matched, and the catalog then parses the target as an entity descriptor — a
+  # Bruno manifest has no apiVersion/kind, so every hit would land as a
+  # processing error rather than an entity. The sweep therefore lives in the
+  # Bruno catalog module and emits `kind: Bruno` entities directly; see
+  # plugins/bruno-backend/src/discovery/githubDiscovery.ts.
+  #
+  # Cost per tick: one repository listing per entry, plus one recursive tree
+  # call for each repository whose `pushed_at` moved since the last sweep. An
+  # organization nobody pushed to therefore costs its listing alone, which is
+  # what makes this safe to run on the 60s schedule below.
+  #
+  # Left commented because a sweep needs a real organization: an entry naming
+  # one that does not exist (or that `integrations.github` cannot see) fails the
+  # whole refresh with GitHub's 404 rather than degrading, which is deliberate —
+  # emitting a short list would delete every discovered collection.
+  # discovery:
+  #   - organization: bruno-collections
+  #     # host: github.com               # default; GHE needs an integrations entry
+  #     # repositoryPattern: '.*'        # ANCHORED regex over the repo name
+  #     # A sweep finds EVERY collection in a repo, test fixtures included —
+  #     # sweeping github.com/bruno-collections turns up three under tests/.
+  #     # excludePathPattern: '(tests|examples|fixtures)/.*'
+  #     owner: guests                    # nothing in a repo says who owns it
+  #     # deferToCatalogInfo: true       # default: leave a collection that
+  #     #                                # already has a kind: Bruno
+  #     #                                # catalog-info.yaml to that descriptor
+  #
   # PRD §"Post ingestion" / §"Entity Sync". The generated OpenCollection YAML
   # is stored inline on each Bruno entity's `spec.definition`, mirroring how a
   # kind: API entity stores its OpenAPI document.

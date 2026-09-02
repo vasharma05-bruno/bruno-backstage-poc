@@ -418,7 +418,7 @@ export function LinkCollectionDialog(props: {
                 </>
               )}
             </Typography>
-            {/* The same three "no descriptor to edit" cases UnlinkDialog
+            {/* The same four "no descriptor to edit" cases UnlinkDialog
                 explains, checked here BEFORE a pull request is attempted. */}
             {location?.kind === 'none' && location.reason === 'provider' && (
               <Typography variant="body2" color="error" className={classes.detail}>
@@ -426,6 +426,18 @@ export function LinkCollectionDialog(props: {
                 your Backstage <code>app-config.yaml</code>, not by a{' '}
                 <code>catalog-info.yaml</code>. Add <code>{apiRef}</code> to that
                 entry&apos;s <code>partOf</code> list and restart Backstage.
+              </Typography>
+            )}
+            {location?.kind === 'none' && location.reason === 'discovery' && (
+              <Typography variant="body2" color="error" className={classes.detail}>
+                This collection was discovered in its repository by{' '}
+                <code>bruno.discovery</code>, so it has neither a{' '}
+                <code>catalog-info.yaml</code> nor a{' '}
+                <code>bruno.collections[]</code> entry to add{' '}
+                <code>{apiRef}</code> to. Author a{' '}
+                <code>catalog-info.yaml</code> declaring <code>kind: Bruno</code>{' '}
+                in that repository — discovery defers to it — and link from
+                there.
               </Typography>
             )}
             {location?.kind === 'none' && location.reason === 'file' && (

@@ -175,6 +175,27 @@ export function UnlinkDialog(props: {
       </>
     );
     actions = <Button onClick={close}>Close</Button>;
+  } else if (location.kind === 'none' && location.reason === 'discovery') {
+    // Discovered by `bruno.discovery[]`: no descriptor, and no config entry to
+    // edit either — the entity is re-derived from the repository every tick.
+    body = (
+      <>
+        <Typography variant="body2">
+          This collection was discovered in its repository by{' '}
+          <code>bruno.discovery</code>, so there is no{' '}
+          <code>catalog-info.yaml</code> and no{' '}
+          <code>bruno.collections[]</code> entry to edit — its links are
+          re-derived from source control on every refresh.
+        </Typography>
+        <Typography variant="body2" className={classes.detail}>
+          To control <code>spec.partOf</code> yourself, add a{' '}
+          <code>catalog-info.yaml</code> declaring{' '}
+          <code>kind: Bruno</code> to the collection&apos;s repository:
+          discovery leaves an authored descriptor to take over.
+        </Typography>
+      </>
+    );
+    actions = <Button onClick={close}>Close</Button>;
   } else if (location.kind === 'none' && location.reason === 'file') {
     body = (
       <Typography variant="body2">
