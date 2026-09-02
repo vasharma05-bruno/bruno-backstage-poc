@@ -1,9 +1,11 @@
 import { useState } from 'react';
-import Button from '@material-ui/core/Button';
 import Chip from '@material-ui/core/Chip';
+import IconButton from '@material-ui/core/IconButton';
+import Menu from '@material-ui/core/Menu';
+import MenuItem from '@material-ui/core/MenuItem';
 import Typography from '@material-ui/core/Typography';
 import { makeStyles } from '@material-ui/core/styles';
-import LinkOffIcon from '@material-ui/icons/LinkOff';
+import MoreVertIcon from '@material-ui/icons/MoreVert';
 import { Progress, Table, WarningPanel } from '@backstage/core-components';
 import type { TableColumn } from '@backstage/core-components';
 import {
@@ -31,6 +33,47 @@ const useStyles = makeStyles((theme) => ({
     padding: theme.spacing(2)
   }
 }));
+
+/**
+ * The per-row action menu: Unlink.
+ *
+ * Its own component because each row needs its own menu anchor, and a hook
+ * cannot be called from a `render` callback. Mirrors `CollectionActions` on the
+ * API side of the same relation, so the two ends of a link behave alike.
+ */
+function ApiActions(props: {
+  api: Entity;
+  onUnlink: () => void;
+}): JSX.Element {
+  const { api, onUnlink } = props;
+  const classes = useStyles();
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+
+  const close = (): void => setAnchor(null);
+
+  return (
+    <>
+      <IconButton
+        size="small"
+        aria-label={`Actions for ${api.metadata.name}`}
+        onClick={(event) => setAnchor(event.currentTarget)}
+      >
+        <MoreVertIcon fontSize="small" />
+      </IconButton>
+      <Menu anchorEl={anchor} open={Boolean(anchor)} onClose={close}>
+        <MenuItem
+          className={classes.danger}
+          onClick={() => {
+            close();
+            onUnlink();
+          }}
+        >
+          Unlink
+        </MenuItem>
+      </Menu>
+    </>
+  );
+}
 
 /**
  * Overview card listing the API entities this collection documents.
@@ -103,14 +146,10 @@ export function RelatedApisCard(): JSX.Element {
       width: '1%',
       sorting: false,
       render: (row) => (
-        <Button
-          size="small"
-          className={classes.danger}
-          startIcon={<LinkOffIcon />}
-          onClick={() => setUnlinkTarget(stringifyEntityRef(row))}
-        >
-          Unlink
-        </Button>
+        <ApiActions
+          api={row}
+          onUnlink={() => setUnlinkTarget(stringifyEntityRef(row))}
+        />
       )
     }
   ];
