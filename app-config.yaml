@@ -284,6 +284,9 @@ catalog:
   rules:
     - allow: [Component, System, API, Resource, Location, Bruno]
   locations:
+    - type: url
+      target: https://github.com/vasharma05-bruno/private-bruno-collection/blob/main/catalog-info.yaml
+
     # Local example data, file locations are relative to the backend process, typically `packages/backend`
     - type: file
       target: ../../examples/entities.yaml

@@ -46,6 +46,7 @@ spec:
   url: https://github.com/bruno-collections/openapi-sync-ws/tree/main/collections/Orders%20API
   partOf:
     - api:default/orders-api
+    - api:default/scim-provisioning-api
 ---
 apiVersion: usebruno.com/v1alpha1
 kind: Bruno
