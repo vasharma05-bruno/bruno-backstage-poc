@@ -12,6 +12,7 @@ import { CodeSnippet, CopyTextButton, Link } from '@backstage/core-components';
 import { useApiHolder } from '@backstage/core-plugin-api';
 import { scmAuthApiRef, scmIntegrationsApiRef } from '@backstage/integration-react';
 import type { Entity } from '@backstage/catalog-model';
+import { InlineNotice } from '../InlineNotice';
 import { useBrandStyles } from '../../theme/brandStyles';
 import { descriptorLocation } from '../../lib/brunoEntity';
 import type { UnlinkPlan } from '../../lib/unlinkPr';
@@ -161,18 +162,16 @@ export function UnlinkDialog(props: {
   if (location.kind === 'none' && location.reason === 'provider') {
     // A `bruno.collections[]` entry: the provider stamps the collection FOLDER
     // as the managed-by-location, so there is no descriptor file anywhere.
+    // Stated as the same standing notice the link flow uses, for the same
+    // reason: the collection is registered and healthy, and being configured
+    // this way is not a fault to be reported.
     body = (
-      <>
-        <Typography variant="body2">
-          This collection is defined by <code>bruno.collections[]</code> in your
-          Backstage <code>app-config.yaml</code>, not by a{' '}
-          <code>catalog-info.yaml</code>. There is no descriptor file to edit.
-        </Typography>
-        <Typography variant="body2" className={classes.detail}>
-          Remove <code>{apiRef}</code> from that entry&apos;s{' '}
-          <code>partOf</code> list and restart Backstage.
-        </Typography>
-      </>
+      <InlineNotice>
+        Declared by <code>bruno.collections[]</code> in{' '}
+        <code>app-config.yaml</code>, so there is no descriptor to open a pull
+        request against. Remove <code>{apiRef}</code> from that entry&apos;s{' '}
+        <code>partOf</code> list and restart Backstage.
+      </InlineNotice>
     );
     actions = <Button onClick={close}>Close</Button>;
   } else if (location.kind === 'none' && location.reason === 'discovery') {
@@ -198,11 +197,11 @@ export function UnlinkDialog(props: {
     actions = <Button onClick={close}>Close</Button>;
   } else if (location.kind === 'none' && location.reason === 'file') {
     body = (
-      <Typography variant="body2">
-        This entity is registered from a local file location, which is on the
-        Backstage host&apos;s disk rather than in source control. Edit that file
-        directly to remove <code>{apiRef}</code> from <code>spec.partOf</code>.
-      </Typography>
+      <InlineNotice>
+        Registered from a local file on the Backstage host&apos;s disk, not from
+        source control. Remove <code>{apiRef}</code> from its{' '}
+        <code>spec.partOf</code> in that file directly.
+      </InlineNotice>
     );
     actions = <Button onClick={close}>Close</Button>;
   } else if (location.kind === 'none') {

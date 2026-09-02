@@ -11,7 +11,6 @@ import Divider from '@material-ui/core/Divider';
 import Typography from '@material-ui/core/Typography';
 import { makeStyles } from '@material-ui/core/styles';
 import AddIcon from '@material-ui/icons/Add';
-import InfoOutlinedIcon from '@material-ui/icons/InfoOutlined';
 import { CodeSnippet, CopyTextButton, Link, Progress } from '@backstage/core-components';
 import { useApi, useApiHolder } from '@backstage/core-plugin-api';
 import { useRouteRef } from '@backstage/frontend-plugin-api';
@@ -20,6 +19,7 @@ import { stringifyEntityRef } from '@backstage/catalog-model';
 import type { Entity } from '@backstage/catalog-model';
 import { CatalogAutocomplete, catalogApiRef } from '@backstage/plugin-catalog-react';
 import { brunoPageRouteRef } from '../../extensions';
+import { InlineNotice } from '../InlineNotice';
 import { descriptorLocation, sourceUrl, version } from '../../lib/brunoEntity';
 import type { PartOfPlan } from '../../lib/unlinkPr';
 import { planLink, submitLink } from '../../lib/unlinkPr';
@@ -54,30 +54,6 @@ const useStyles = makeStyles((theme) => ({
   },
   divider: {
     marginTop: theme.spacing(2)
-  },
-  /**
-   * The standing "no pull request is possible here" notice.
-   *
-   * One line of text behind an icon, not a panel: it sits inside a dialog that
-   * is already mostly prose, and a titled callout for a routine fact about the
-   * selected collection read as an incident.
-   */
-  notice: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: theme.spacing(1),
-    marginTop: theme.spacing(1),
-    padding: theme.spacing(0.75, 1),
-    borderRadius: theme.shape.borderRadius,
-    border: `1px solid ${theme.palette.divider}`,
-    backgroundColor: theme.palette.background.default
-  },
-  noticeIcon: {
-    fontSize: 18,
-    // Optical alignment with the cap height of the first line, not the box.
-    marginTop: 2,
-    flex: '0 0 auto',
-    color: theme.palette.text.secondary
   }
 }));
 
@@ -463,15 +439,12 @@ export function LinkCollectionDialog(props: {
             {/* The same four "no descriptor to edit" cases UnlinkDialog
                 explains, checked here BEFORE a pull request is attempted. */}
             {noDescriptor === 'provider' && (
-              <Box className={classes.notice}>
-                <InfoOutlinedIcon className={classes.noticeIcon} />
-                <Typography variant="body2" color="textSecondary">
-                  Declared by <code>bruno.collections[]</code> in{' '}
-                  <code>app-config.yaml</code>, so there is no descriptor to
-                  open a pull request against. Add <code>{apiRef}</code> to that
-                  entry&apos;s <code>partOf</code> list and restart Backstage.
-                </Typography>
-              </Box>
+              <InlineNotice className={classes.detail}>
+                Declared by <code>bruno.collections[]</code> in{' '}
+                <code>app-config.yaml</code>, so there is no descriptor to open
+                a pull request against. Add <code>{apiRef}</code> to that
+                entry&apos;s <code>partOf</code> list and restart Backstage.
+              </InlineNotice>
             )}
             {location?.kind === 'none' && location.reason === 'discovery' && (
               <Typography variant="body2" color="error" className={classes.detail}>
@@ -486,14 +459,11 @@ export function LinkCollectionDialog(props: {
               </Typography>
             )}
             {noDescriptor === 'file' && (
-              <Box className={classes.notice}>
-                <InfoOutlinedIcon className={classes.noticeIcon} />
-                <Typography variant="body2" color="textSecondary">
-                  Registered from a local file on the Backstage host&apos;s
-                  disk, not from source control. Add <code>{apiRef}</code> to
-                  its <code>spec.partOf</code> in that file directly.
-                </Typography>
-              </Box>
+              <InlineNotice className={classes.detail}>
+                Registered from a local file on the Backstage host&apos;s disk,
+                not from source control. Add <code>{apiRef}</code> to its{' '}
+                <code>spec.partOf</code> in that file directly.
+              </InlineNotice>
             )}
             {location?.kind === 'none' && location.reason === 'absent' && (
               <Typography variant="body2" color="error" className={classes.detail}>
