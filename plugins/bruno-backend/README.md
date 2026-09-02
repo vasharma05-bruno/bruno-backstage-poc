@@ -138,6 +138,9 @@ in [`src/plugin.ts`](src/plugin.ts).
 | `POST /collections` | `user` | `201` with `{ name, namespace, entityRef, url, refreshSeconds }`. |
 | `GET /collections` | `user` \| `service` | `{ collections, refreshSeconds }`. A **user** principal gets rows with `createdBy` omitted. |
 | `DELETE /collections/:name` | `user` | `{ deleted: true, name, refreshSeconds }`, or `404` when no stored row exists. |
+| `GET /links` | `service` | `{ links }` — every runtime link in the instance, for `BrunoKindProcessor`. |
+| `POST /links` | `user` | Body `{ collectionRef, apiRefs }`. `201` with `{ linked: true, collectionRef, apiRefs, refreshRequested }` — all of the refs or none. |
+| `DELETE /links?collection=&api=` | `user` | `{ unlinked: true, collectionRef, apiRefs, refreshRequested }`, or `404` when no such row exists. |
 | `GET /entities/:namespace/:name/docs` | `user-cookie` | `text/html` — the OpenCollection docs page for that entity. `?theme=light\|dark`. |
 
 **The probe's three outcomes are deliberately not three status codes.**
@@ -160,6 +163,40 @@ every tick is a 403 and no UI-created collection ever reaches the catalog.
 `'user'` was added later for the dashboard's pending strip, with `createdBy`
 stripped: that omission is what makes the widening safe, since every remaining
 field is about to be public on a catalog entity a minute from now.
+
+**The `/links` routes mirror the `/collections` ones, one level down.** A
+relation cannot be written into the catalog either — relations are derived
+output, recomputed and rewritten on every stitch — so a link has exactly two
+durable homes: `spec.partOf` in a file, or a row here. `GET /links` is
+`service`-only for the reason `GET /collections` originally was: the processor is
+the reader it exists for, and a browser needs no such list — what it needs is
+which APIs are linked to the collection *it* is looking at, and that arrives on
+the entity as `usebruno.com/runtime-part-of`. `POST` and `DELETE` are `user`-only,
+like `POST /collections`, because `created_by` is read off the principal.
+
+Both writes then call `catalog.refreshEntity` for the collection and report
+whether it worked as `refreshRequested`. That is what makes a runtime link feel
+like a link: without it the processor would not run again for a full processing
+interval, so the user would click Link and watch nothing happen. A failed
+refresh is reported rather than thrown — the row is written either way, so the
+change is slow, not wrong, and the dialog says which.
+
+**`POST /links` takes a LIST of API refs and `DELETE` takes one**, which
+matches the screens: the collection-side dialog picks several APIs at once and
+they all land in the same `partOf`, so one call is one refresh and one
+all-or-nothing outcome, while unlinking is a per-row action on both cards. The
+rows go in with a single multi-row `insert`, so a unique violation on any pair
+fails the statement rather than leaving half a selection. Every 409 and 404 on
+the route *names* the offending refs — with six APIs picked, "one of them is
+already linked" is not an answer anyone can act on — which is why the route
+pre-checks the table instead of leaving it to the insert, whose unique violation
+cannot say which pair caused it.
+
+**The refs travel in the query string on the `DELETE`.** They are entity refs,
+which contain `:` and `/`; percent-encoding those into a path segment works but
+is the kind of thing a proxy in front of the backend decodes early and then
+routes wrong. A body on a `DELETE` is the other option and is worse — widely
+dropped in transit.
 
 **The docs route is reached by an iframe `src`**, a browser GET with no
 Authorization header, so it cannot use bearer auth. `httpRouter.addAuthPolicy`
@@ -184,6 +221,11 @@ not discovered by surprise:
 - Any authenticated user may add a collection everyone else then sees, and may
   **delete any** UI-created collection: `created_by` is recorded and *not*
   enforced (IDOR). Beta hardening is a permission plus an ownership check.
+- The same applies to runtime links: any authenticated user may link any
+  collection to any API entity **they can read** — the routes resolve both
+  entities as the requesting user, so visibility is inherited from the catalog —
+  and may then remove any runtime link in the instance. `created_by` is recorded
+  and not enforced there either.
 - The docs CSP allows `https:` broadly rather than pinned hosts, because the
   renderer bundle lazy-loads from several CDNs. Beta hardening is to pin them and
   serve the route from a dedicated origin.
@@ -279,6 +321,7 @@ would never land at all rather than merely losing one relation.
 | `usebruno.com/origin` | provider (`config`/`ui`/`discovery`), processor (`file`/`descriptor`), or the descriptor itself | How the collection got into the catalog — see below. |
 | `usebruno.com/definition-omitted` | processor | `size` (over `bruno.definition.maxBytes`) or `error` (the collection could not be read/converted). Deleted again once a definition is stored, so an over-cap collection that later shrinks stops claiming to be omitted. |
 | `usebruno.com/definition-bytes` | processor | How big the omitted document would have been. |
+| `usebruno.com/runtime-part-of` | processor | The API refs linked to this collection **in this instance** rather than in source control — comma-separated, canonical, sorted. Derived from `bruno_runtime_links`; deleted again when the last link goes, and an authored value is discarded rather than honoured. |
 | `backstage.io/source-location` | processor / provider | The collection **folder**, `url:<normalized>/`. |
 | `backstage.io/managed-by-location`, `…-origin-location` | provider | A real `url:` ref to the collection folder, not a synthetic `bruno-provider:` one — that is what makes the About card's native Refresh button appear, and it is safe because `readLocation` only dereferences `kind: Location` entities. |
 
@@ -395,6 +438,91 @@ collection stays a stored row with no entity. That row is not stranded — the
 dashboard's pending-collections strip shows it as **stalled** once it is past
 `frequencySeconds * 2 + 30`, names both possible causes, and offers a Remove
 that calls `DELETE /collections/:name` directly.
+
+## Linking at runtime
+
+The same argument as the section above, applied to **relations** instead of
+entities. A catalog relation is derived output: the processors recompute it and
+the stitcher rewrites it wholesale on every cycle, and
+`plugin-catalog-backend`'s router exposes no relation-mutation endpoint. So a
+link written straight into the catalog would be reverted within one processing
+cycle, and the only durable homes for one are a file (`spec.partOf`) or a row
+here.
+
+The Bruno plugin's link dialog leads with a **pull request** against the
+collection's `catalog-info.yaml`, because a link in source control is reviewable
+and travels with the repository. A runtime link is the second option, and the
+only one for a collection whose `partOf` cannot be edited by pull request at
+all: a `bruno.collections[]` entry, a discovered collection, a `file:` location,
+or a descriptor on a host other than GitHub.
+
+**Table `bruno_runtime_links`** (`src/store/runtimeLinkStore.ts`), created on
+first boot, no formal migrations:
+
+| column           | notes                                                          |
+| ---------------- | -------------------------------------------------------------- |
+| `collection_ref` | Canonical ref of the Bruno collection, e.g. `bruno:default/payments`. |
+| `api_ref`        | Canonical ref of the API entity, e.g. `api:default/orders`.     |
+| `created_by`     | Entity ref of the user who made the link. Recorded, not enforced. |
+| `created_at`     | ISO timestamp.                                                  |
+
+The primary key is the **pair**, which is the whole integrity model: a link
+either exists or it does not, there is nothing to update, and a second `POST` for
+the same pair is a conflict rather than a duplicate row. Both refs are stored
+canonical (`stringifyEntityRef` output, lower-cased component by component) by
+one shared helper, [`src/service/entityRefs.ts`](src/service/entityRefs.ts) —
+`spec.partOf` is written by hand, so `orders`, `api:orders` and
+`api:default/orders` all key the same relation, and a link created under one
+spelling and looked up under another could not be removed.
+
+**How a row becomes a relation.** `BrunoKindProcessor` reads the whole link
+table over HTTP on every processing cycle
+([`src/processor/runtimeLinks.ts`](src/processor/runtimeLinks.ts), the same
+service-to-service pattern the provider uses for stored collections), stamps
+this collection's links on the entity as `usebruno.com/runtime-part-of` in
+`preProcessEntity`, and emits `partOf`/`hasPart` from that annotation alongside
+the ones `spec.partOf` declares. Re-deriving it every cycle is exactly what
+makes the link survive the rewrite. The annotation is sorted, so re-ordering
+rows in the table cannot churn `resultHash`; it changes only when a link does,
+which is when the entity *should* be rewritten.
+
+**The two kinds of link stay distinguishable**, and that is why the annotation is
+not merged into `spec.partOf`. The relation is identical — every card that reads
+relations shows both without knowing there are two kinds — but they are removed
+in completely different ways, and a UI that could not tell them apart would
+offer a pull request that removes a line no file contains. `POST /links` refuses
+a link `spec.partOf` already declares for the same reason.
+
+**There is no TTL cache on the link read**, deliberately. The reader is called
+once per Bruno entity per cycle and the obvious optimisation is to cache the list
+for a few seconds — but `POST /links` marks the collection for *immediate*
+reprocessing, and a cache filled a moment before that write would answer the
+reprocess with the old list, pushing the change out to the next full processing
+interval. What is deduplicated instead is **concurrency**: overlapping calls
+share one in-flight request, which collapses a sweep of a whole catalog into a
+handful of reads without ever answering from a result that predates the caller.
+
+**A failed read costs relations for one cycle, never more.** The processor keeps
+the last set it read successfully in this process and emits that; with nothing
+cached — the first cycle after a restart — it emits no runtime links and logs
+once per failure streak. Unlike the provider's identical-looking problem this is
+recoverable rather than destructive: the next cycle that can read the table
+restores everything.
+
+**Latency.** A runtime link appears (and a removed one disappears) within a few
+seconds — `refreshEntity` plus one processing run — rather than within
+`bruno.schedule.frequencySeconds`, which is the provider's tick and has nothing
+to do with this path.
+
+**Dev-database caveat**, as for UI-created collections: the default dev config is
+`better-sqlite3` on `:memory:`, so runtime links do not survive a backend
+restart. Neither does the catalog, so the two stay consistent.
+
+Deleting a UI-created collection drops its runtime links with it
+(`deleteForCollection`). The rows are keyed by entity ref and the entity is about
+to stop existing, so leaving them would leave rows nothing can read or remove —
+and a collection re-added under the same name would silently inherit the links of
+the one it replaced.
 
 ## Autodiscovery
 

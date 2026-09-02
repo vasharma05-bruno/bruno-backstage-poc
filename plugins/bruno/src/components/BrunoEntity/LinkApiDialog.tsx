@@ -12,11 +12,14 @@ import { stringifyEntityRef } from '@backstage/catalog-model';
 import type { Entity } from '@backstage/catalog-model';
 import {
   EntityPicker,
+  LinkMethodChoice,
   PartOfPreview,
   useDescriptorAdvice,
   useEntityOptions,
+  useLinkMethod,
   usePartOfPr,
-  usePartOfStyles
+  usePartOfStyles,
+  useRuntimeLink
 } from '../PartOfPr';
 import { descriptorLocation } from '../../lib/brunoEntity';
 import { useBrandStyles } from '../../theme/brandStyles';
@@ -33,23 +36,26 @@ function nameList(names: string[]): string {
  * "Link APIs": attaches this Bruno collection to existing API entities.
  *
  * The mirror of `BrunoCard`'s `LinkCollectionDialog`, run from the other end of
- * the same relation, and it edits exactly the same file: `spec.partOf` lives on
- * the Bruno entity, so linking from either side means a pull request against
- * THIS collection's `catalog-info.yaml`. See `lib/unlinkPr.ts` for why a pull
- * request rather than a write.
+ * the same relation, and it records the link in exactly the same two places:
+ * `partOf` lives on the Bruno entity, so linking from either side means either
+ * a pull request against THIS collection's `catalog-info.yaml` or a row in the
+ * `bruno` backend for this collection. See `LinkMethodChoice` for the choice,
+ * and `lib/unlinkPr.ts` for why the first is a pull request rather than a write.
  *
- * Several APIs at once, and one pull request for all of them: they add to the
- * same `spec.partOf` in the same file, so a branch each would be noise. The
- * copy names them throughout — in the picker's chips, under it as the refs that
- * will actually land in the YAML, and in the message that reports the pull
- * request — since by then the reader has left the list behind and the pull
- * request is the only thing that can still tell them what they linked.
+ * Several APIs at once, and ONE of whichever it is for all of them: the pull
+ * request because they add to the same `spec.partOf` in the same file, so a
+ * branch each would be noise; the runtime link because the backend writes the
+ * rows in one statement, so a selection is never half-applied. The copy names
+ * them throughout — in the picker's chips, under it as the refs that will
+ * actually land, and in the message that reports the result — since by then the
+ * reader has left the list behind and that message is the only thing that can
+ * still tell them what they linked.
  *
  * One thing genuinely differs from the API-side flow, and the shape of the
  * dialog follows it: here the collection is fixed, so whether a pull request is
- * possible at all is known before anything is picked. That answer is therefore
- * given first, the way `UnlinkDialog` gives it — rather than after a choice, as
- * the API-side dialog must, where each candidate collection brings its own
+ * possible at all is known before anything is picked. That answer therefore
+ * sits on the method chooser from the start, rather than arriving with a choice
+ * as it must on the API side, where each candidate collection brings its own
  * descriptor.
  */
 export function LinkApiDialog(props: {
@@ -60,9 +66,25 @@ export function LinkApiDialog(props: {
   /** Refs of APIs already linked, hidden from the picker. */
   linkedRefs: string[];
   /** Called with the APIs linked and the pull request URL once one is open. */
-  onSubmitted?: (apis: Entity[], link: string) => void;
+  onPrOpened?: (apis: Entity[], link: string) => void;
+  /**
+   * Called with the APIs linked once the runtime rows are written.
+   *
+   * Separate from `onPrOpened` for the reason `LinkCollectionDialog` gives:
+   * a pull request is a promise about a review, a runtime link has already
+   * happened. `refreshRequested` says whether re-reading the entity now will
+   * find anything.
+   */
+  onRuntimeLinked?: (apis: Entity[], refreshRequested: boolean) => void;
 }): JSX.Element {
-  const { open, onClose, collection, linkedRefs, onSubmitted } = props;
+  const {
+    open,
+    onClose,
+    collection,
+    linkedRefs,
+    onPrOpened,
+    onRuntimeLinked
+  } = props;
   const classes = usePartOfStyles();
   const brandClasses = useBrandStyles();
 
@@ -70,10 +92,11 @@ export function LinkApiDialog(props: {
   const collectionName = collection.metadata.title ?? collection.metadata.name;
   const descriptorUrl = location.kind === 'url' ? location.target : undefined;
   const pr = usePartOfPr({ direction: 'link', descriptorUrl });
+  const runtime = useRuntimeLink();
   const options = useEntityOptions('API', open);
   const [selected, setSelected] = useState<Entity[]>([]);
 
-  const { stage } = pr;
+  const collectionRef = stringifyEntityRef(collection);
   const apiRefs = selected.map(stringifyEntityRef);
   const names = nameList(
     selected.map((api) => api.metadata.title ?? api.metadata.name)
@@ -81,20 +104,27 @@ export function LinkApiDialog(props: {
   // The collection is fixed here, so this is known before anything is picked —
   // and so it is stated without naming a reference, since there is none yet.
   const advice = useDescriptorAdvice({ location, direction: 'link' });
+  // `advice` is `undefined` exactly when a pull request can be opened, so it is
+  // the whole test — no second reading of the location.
+  const { method, setMethod, reset: resetMethod } = useLinkMethod(!advice);
 
   const close = (): void => {
     pr.reset();
+    runtime.reset();
+    resetMethod();
     setSelected([]);
     onClose();
   };
 
+  /** True while either write is in flight, which is what blocks the dialog. */
+  const inFlight
+    = pr.stage.status === 'submitting' || runtime.stage.status === 'working';
+
   let body: JSX.Element;
   let actions: JSX.Element;
 
-  if (advice) {
-    body = advice;
-    actions = <Button onClick={close}>Close</Button>;
-  } else if (stage.status === 'submitted') {
+  if (pr.stage.status === 'submitted') {
+    const { link } = pr.stage;
     body = (
       <>
         <Typography variant="body2">
@@ -104,31 +134,68 @@ export function LinkApiDialog(props: {
           collection&apos;s descriptor.
         </Typography>
         <Typography variant="body2" className={classes.detail}>
-          <Link to={stage.link}>{stage.link}</Link>
+          <Link to={link}>{link}</Link>
         </Typography>
       </>
     );
     actions = (
       <>
-        <CopyTextButton text={stage.link} tooltipText="Pull request link copied" />
+        <CopyTextButton text={link} tooltipText="Pull request link copied" />
         <Button onClick={close}>Close</Button>
       </>
     );
-  } else if (stage.status === 'error') {
+  } else if (runtime.stage.status === 'linked') {
+    const { refreshRequested } = runtime.stage;
+    body = (
+      <>
+        <Typography variant="body2">
+          {names || 'The selected APIs'} linked in this Backstage instance.{' '}
+          {refreshRequested
+            ? `${selected.length === 1 ? 'It appears' : 'They appear'} in this `
+            + 'card within a few seconds, as soon as Backstage has finished '
+            + 're-reading this collection.'
+            : `Backstage could not be asked to re-read this collection `
+              + `straight away, so ${
+                selected.length === 1 ? 'it appears' : 'they appear'
+              } on the next catalog processing cycle.`}
+        </Typography>
+        <Typography variant="body2" className={classes.detail}>
+          Nothing in source control changed. The links live in this instance
+          only — <strong>Unlink</strong> on a row removes one again, and they
+          are not carried by this collection&apos;s repository.
+        </Typography>
+      </>
+    );
+    actions = <Button onClick={close}>Close</Button>;
+  } else if (pr.stage.status === 'error' || runtime.stage.status === 'error') {
+    const message
+      = pr.stage.status === 'error'
+        ? pr.stage.message
+        : (runtime.stage as { message: string }).message;
     body = (
       <Typography variant="body2" color="error">
-        {stage.message}
+        {message}
       </Typography>
     );
     actions = (
       <>
-        <Button onClick={pr.reset}>Back</Button>
+        <Button
+          onClick={() => {
+            pr.reset();
+            runtime.reset();
+          }}
+        >
+          Back
+        </Button>
         <Button onClick={close}>Close</Button>
       </>
     );
-  } else if (stage.status === 'preview' || stage.status === 'submitting') {
-    const { plan } = stage;
-    const submitting = stage.status === 'submitting';
+  } else if (
+    pr.stage.status === 'preview'
+    || pr.stage.status === 'submitting'
+  ) {
+    const { plan } = pr.stage;
+    const submitting = pr.stage.status === 'submitting';
     body = <PartOfPreview plan={plan} />;
     actions = (
       <>
@@ -141,22 +208,26 @@ export function LinkApiDialog(props: {
           disabled={submitting}
           startIcon={submitting ? <CircularProgress size={16} /> : undefined}
           onClick={() =>
-            pr.submit(plan, (link) => onSubmitted?.(selected, link))}
+            pr.submit(plan, (link) => onPrOpened?.(selected, link))}
         >
           {submitting ? 'Opening pull request…' : 'Open pull request'}
         </Button>
       </>
     );
   } else {
-    const planning = stage.status === 'planning';
+    const planning = pr.stage.status === 'planning';
+    const working = runtime.stage.status === 'working';
+    const busy = planning || working;
     body = (
       <>
         <Typography variant="body2">
           Linking adds the APIs you pick to this collection&apos;s{' '}
-          <code>spec.partOf</code>, in one pull request. Catalog relations are
-          generated from source control, so this opens that pull request against
-          the collection&apos;s <code>catalog-info.yaml</code>; the APIs appear
-          here once it is merged and Backstage re-reads the file.
+          <code>partOf</code>, which is what the catalog turns into the
+          relations shown on both entities. It can be recorded in this
+          collection&apos;s <code>catalog-info.yaml</code> — where it is
+          reviewed and travels with the repository — or in this Backstage
+          instance, which is immediate and the only option for a collection with
+          no descriptor.
         </Typography>
         {descriptorUrl && (
           <Typography variant="body2" className={classes.detail}>
@@ -169,7 +240,7 @@ export function LinkApiDialog(props: {
             excluded={linkedRefs}
             value={selected}
             onChange={setSelected}
-            disabled={planning}
+            disabled={busy}
             multiple
             name="api-entities"
             label="APIs"
@@ -179,36 +250,58 @@ export function LinkApiDialog(props: {
             errorTitle="Could not load APIs"
           />
         </Box>
-        {selected.length > 0 && (
-          <Typography
-            variant="body2"
-            color="textSecondary"
-            className={classes.detail}
-          >
-            Adds{' '}
-            {apiRefs.map((ref, index) => (
-              <span key={ref}>
-                {index > 0 && ', '}
-                <code>{ref}</code>
-              </span>
-            ))}
-          </Typography>
-        )}
+        <LinkMethodChoice
+          method={method}
+          onChange={setMethod}
+          advice={advice}
+          disabled={busy}
+          target={
+            apiRefs.length > 0
+              ? (
+                  <>
+                    {apiRefs.map((ref, index) => (
+                      <span key={ref}>
+                        {index > 0 && ', '}
+                        <code>{ref}</code>
+                      </span>
+                    ))}
+                  </>
+                )
+              : <>the APIs you pick</>
+          }
+        />
       </>
     );
     actions = (
       <>
-        <Button onClick={close} disabled={planning}>
+        <Button onClick={close} disabled={busy}>
           Cancel
         </Button>
         <Button
           variant="contained"
           className={brandClasses.accentButton}
-          disabled={planning || apiRefs.length === 0}
-          startIcon={planning ? <CircularProgress size={16} /> : undefined}
-          onClick={() => pr.prepare({ apiRefs, collectionName })}
+          disabled={busy || apiRefs.length === 0}
+          startIcon={busy ? <CircularProgress size={16} /> : undefined}
+          onClick={() => {
+            if (method === 'pr') {
+              pr.prepare({ apiRefs, collectionName });
+              return;
+            }
+            runtime.link({
+              collectionRef,
+              apiRefs,
+              onLinked: (refreshRequested) =>
+                onRuntimeLinked?.(selected, refreshRequested)
+            });
+          }}
         >
-          {planning ? 'Reading descriptor…' : 'Prepare pull request'}
+          {planning
+            ? 'Reading descriptor…'
+            : working
+              ? 'Linking…'
+              : method === 'pr'
+                ? 'Prepare pull request'
+                : 'Link APIs'}
         </Button>
       </>
     );
@@ -219,10 +312,10 @@ export function LinkApiDialog(props: {
       open={open}
       maxWidth="md"
       fullWidth
-      // A half-created branch is confusing, so the dialog is not dismissable
-      // while the pull request is being opened.
-      disableBackdropClick={stage.status === 'submitting'}
-      disableEscapeKeyDown={stage.status === 'submitting'}
+      // A half-created branch is confusing, and so is a half-written link, so
+      // the dialog is not dismissable while either is in flight.
+      disableBackdropClick={inFlight}
+      disableEscapeKeyDown={inFlight}
       onClose={close}
     >
       <DialogTitle>Link APIs</DialogTitle>

@@ -7,6 +7,7 @@ import { createRouter } from './service/router';
 import { readCacheTtlMs, readDefinitionOptions } from './service/brunoConfig';
 import { createManifestProbe } from './service/manifestProbe';
 import { readRefreshSeconds } from './service/schedule';
+import { createRuntimeLinkStore } from './store/runtimeLinkStore';
 import { createUiCollectionStore } from './store/uiCollectionStore';
 
 /**
@@ -25,13 +26,17 @@ export const brunoPlugin = createBackendPlugin({
         logger: coreServices.logger,
         config: coreServices.rootConfig,
         httpAuth: coreServices.httpAuth,
-        // Stores the collections added from the Bruno dashboard — the write
-        // model the catalog does not have. `BrunoCollectionEntityProvider`
-        // reads these rows back over HTTP and materialises them as entities.
+        // Stores the collections added from the Bruno dashboard, and the links
+        // made in this instance instead of in source control — the two write
+        // models the catalog does not have. `BrunoCollectionEntityProvider`
+        // reads the first back over HTTP and materialises them as entities;
+        // `BrunoKindProcessor` reads the second and emits the relations.
         database: coreServices.database,
-        // Reads `kind: Bruno` entities for the entity-keyed docs route. Calls
-        // are made with the REQUESTING user's credentials, not the plugin's, so
-        // the route inherits the catalog's own visibility rules.
+        // Reads `kind: Bruno` entities for the entity-keyed docs route and for
+        // the link routes, and marks a collection for immediate reprocessing
+        // when a runtime link changes. Calls are made with the REQUESTING
+        // user's credentials, not the plugin's, so the routes inherit the
+        // catalog's own visibility rules.
         catalog: catalogServiceRef,
         // Reads collection folders for the add-collection scan, with the
         // SERVER's `integrations` credentials.
@@ -61,6 +66,7 @@ export const brunoPlugin = createBackendPlugin({
         });
 
         const uiCollections = await createUiCollectionStore(database);
+        const runtimeLinks = await createRuntimeLinkStore(database);
 
         httpRouter.use(
           await createRouter({
@@ -70,6 +76,7 @@ export const brunoPlugin = createBackendPlugin({
             httpAuth,
             probe,
             uiCollections,
+            runtimeLinks,
             refreshSeconds: readRefreshSeconds(config)
           })
         );

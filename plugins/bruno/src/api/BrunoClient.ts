@@ -5,6 +5,9 @@ import type {
   CreatedCollection,
   DeletedCollection,
   ProbeResult,
+  RuntimeLinkInput,
+  RuntimeLinkResult,
+  RuntimeUnlinkInput,
   StoredCollections
 } from './BrunoApi';
 
@@ -213,6 +216,69 @@ export class BrunoClient implements BrunoApi {
       );
     }
     return (await response.json()) as StoredCollections;
+  }
+
+  /**
+   * `POST /links`.
+   *
+   * Every non-2xx is a failure the user has to see, and all of them carry a
+   * sentence worth showing: "already listed in spec.partOf", "already linked",
+   * "no such entity". {@link errorFromResponse} prefers those over the status
+   * for the same reason it does on the create — the entire value of a 409 here
+   * is in the explanation of which of the two kinds of link already exists —
+   * and, with several APIs picked at once, of WHICH of them is the problem.
+   */
+  async createRuntimeLinks(
+    input: RuntimeLinkInput
+  ): Promise<RuntimeLinkResult> {
+    const base = await this.baseUrl();
+    const response = await this.fetchApi.fetch(`${base}/links`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input)
+    });
+
+    if (!response.ok) {
+      throw await errorFromResponse(
+        response,
+        `Could not link ${input.apiRefs.join(', ')} to ${input.collectionRef}`
+      );
+    }
+    return (await response.json()) as RuntimeLinkResult;
+  }
+
+  /**
+   * `DELETE /links?collection=&api=`.
+   *
+   * The refs go in the QUERY STRING because that is where the route reads them:
+   * an entity ref contains `:` and `/`, and percent-encoding those into a path
+   * segment is the kind of thing an intermediate proxy decodes early and then
+   * routes wrong.
+   *
+   * `URLSearchParams` rather than string concatenation, so the encoding is not
+   * something this method has to get right. These refs come off entities in the
+   * catalog rather than out of a form, but a URL assembled by hand is not the
+   * place to rely on a validator somewhere else having run.
+   */
+  async deleteRuntimeLink(
+    input: RuntimeUnlinkInput
+  ): Promise<RuntimeLinkResult> {
+    const base = await this.baseUrl();
+    const query = new URLSearchParams({
+      collection: input.collectionRef,
+      api: input.apiRef
+    });
+    const response = await this.fetchApi.fetch(`${base}/links?${query}`, {
+      method: 'DELETE'
+    });
+
+    if (!response.ok) {
+      throw await errorFromResponse(
+        response,
+        `Could not unlink ${input.apiRef} from ${input.collectionRef}`
+      );
+    }
+    return (await response.json()) as RuntimeLinkResult;
   }
 
   async getEntityDocsUrl(

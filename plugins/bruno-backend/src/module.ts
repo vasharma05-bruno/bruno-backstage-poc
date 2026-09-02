@@ -14,6 +14,7 @@ import { readSchedule } from './service/schedule';
 import { BrunoCollectionEntityProvider } from './provider/BrunoCollectionEntityProvider';
 import { createStoredCollectionReader } from './provider/storedCollections';
 import { BrunoKindProcessor } from './processor/BrunoKindProcessor';
+import { createRuntimeLinkReader } from './processor/runtimeLinks';
 
 /**
  * Catalog module wiring the two Bruno catalog extensions:
@@ -26,7 +27,10 @@ import { BrunoKindProcessor } from './processor/BrunoKindProcessor';
  *   that sweep it makes no SCM request of its own.
  * - {@link BrunoKindProcessor} — teaches the catalog about `kind: Bruno` and
  *   enriches every such entity, whether it came from that provider or from an
- *   authored `catalog-info.yaml`.
+ *   authored `catalog-info.yaml`. It also re-derives the runtime links from
+ *   `GET /api/bruno/links` on every processing cycle and emits their relations
+ *   alongside the ones `spec.partOf` declares — the only way such a link can
+ *   last, since relations are rewritten wholesale on every stitch.
  *
  * @public
  */
@@ -41,9 +45,10 @@ export const brunoCatalogModule = createBackendModule({
         config: coreServices.rootConfig,
         reader: coreServices.urlReader,
         scheduler: coreServices.scheduler,
-        // The `bruno` plugin owns the store of UI-created collections and this
-        // module cannot reach it in process, so the provider reads it over HTTP
-        // with a plugin token. These two are what mint and address that call.
+        // The `bruno` plugin owns the stores of UI-created collections and of
+        // runtime links, and this module cannot reach either in process, so the
+        // provider and the processor read them over HTTP with a plugin token.
+        // These two are what mint and address those calls.
         discovery: coreServices.discovery,
         auth: coreServices.auth
       },
@@ -75,6 +80,13 @@ export const brunoCatalogModule = createBackendModule({
           auth
         });
 
+        // Separate reader from the one above even though both call the same
+        // plugin: they answer different questions with different failure rules.
+        // A missed collection read must never delete entities (the provider
+        // skips the whole tick); a missed link read only costs relations for one
+        // cycle, and the processor keeps its own last-known set for that.
+        const runtimeLinks = createRuntimeLinkReader({ discovery, auth });
+
         // Constructed only when there is something to sweep: the provider
         // treats an absent sweeper as "discovery is off", which is what keeps
         // an empty `bruno.discovery[]` from costing a repository listing per
@@ -105,7 +117,9 @@ export const brunoCatalogModule = createBackendModule({
         // Claims `kind: Bruno`. Without a processor validating the kind, the
         // catalog rejects such entities as unrecognized no matter what
         // `catalog.rules` allows.
-        catalog.addProcessor(new BrunoKindProcessor({ logger, probe }));
+        catalog.addProcessor(
+          new BrunoKindProcessor({ logger, probe, runtimeLinks })
+        );
       }
     });
   }

@@ -1,5 +1,6 @@
 import { ANNOTATION_LOCATION } from '@backstage/catalog-model';
 import type { Entity } from '@backstage/catalog-model';
+import { tryNormaliseApiRef } from './apiRef';
 
 /**
  * Read-only accessors for `kind: Bruno` entities.
@@ -87,6 +88,87 @@ export function partOfRefs(entity: Entity): string[] {
     return [];
   }
   return [...new Set(refs.filter((r): r is string => typeof r === 'string' && !!r))];
+}
+
+/**
+ * Written by `BrunoKindProcessor` from the `bruno` backend's link table: the
+ * API refs linked to this collection IN THIS INSTANCE rather than in source
+ * control, comma-separated and sorted.
+ *
+ * Mirrors `RUNTIME_PART_OF_ANNOTATION` in
+ * plugins/bruno-backend/src/processor/BrunoKindProcessor.ts — keep the two in
+ * step. A drift here does not break a relation (the processor emits those from
+ * its own reading) but it does make every runtime link look
+ * descriptor-declared to the dialogs, which then offer a pull request that
+ * would remove a line no file contains.
+ */
+export const BRUNO_RUNTIME_PART_OF_ANNOTATION = 'usebruno.com/runtime-part-of';
+
+/**
+ * The API refs linked to this collection at runtime, deduped.
+ *
+ * The counterpart of {@link partOfRefs}, and the two must be read together
+ * wherever a link is being explained or undone: a `spec.partOf` entry lives in
+ * a file and is removed by editing it (a pull request, usually), while one of
+ * these lives in the backend's database and is removed by a single call. The
+ * relations they produce are identical, so nothing that merely LISTS links
+ * needs to care — see {@link linkSource} for the callers that do.
+ */
+export function runtimePartOfRefs(entity: Entity): string[] {
+  const raw
+    = entity.metadata.annotations?.[BRUNO_RUNTIME_PART_OF_ANNOTATION];
+  if (!raw) {
+    return [];
+  }
+  return [
+    ...new Set(
+      raw
+        .split(',')
+        .map((ref) => ref.trim())
+        .filter((ref) => ref !== '')
+    )
+  ];
+}
+
+/**
+ * Where the link between a collection and one API is recorded.
+ *
+ *  - `descriptor` — in the collection's `spec.partOf`, which is a
+ *    `catalog-info.yaml`, a `bruno.collections[]` entry or a discovered
+ *    default. Undone by editing that source; {@link descriptorLocation} says
+ *    which one and whether a pull request can do it.
+ *  - `runtime` — in the `bruno` backend's link table, put there from this UI.
+ *    Undone by one call, and gone within seconds.
+ *  - `both` — the descriptor grew an entry that a runtime link already covered.
+ *    `POST /links` refuses to create this state, so reaching it means somebody
+ *    edited the file afterwards; the link then survives removing either one
+ *    alone, which is the thing a dialog has to say out loud.
+ *  - `none` — this API is not linked to this collection at all.
+ *
+ * Compares NORMALISED refs on both sides, so `github-rest-api` in a descriptor
+ * matches `api:default/github-rest-api` from the catalog. An entry neither the
+ * catalog nor this function can parse is dropped: the backend ignores it when
+ * emitting relations, so it names no link either.
+ */
+export type LinkSource = 'descriptor' | 'runtime' | 'both' | 'none';
+
+export function linkSource(collection: Entity, apiRef: string): LinkSource {
+  const target = tryNormaliseApiRef(apiRef);
+  if (!target) {
+    return 'none';
+  }
+  const holds = (refs: string[]): boolean =>
+    refs.some((ref) => tryNormaliseApiRef(ref) === target);
+
+  const inDescriptor = holds(partOfRefs(collection));
+  const inRuntime = holds(runtimePartOfRefs(collection));
+  if (inDescriptor && inRuntime) {
+    return 'both';
+  }
+  if (inDescriptor) {
+    return 'descriptor';
+  }
+  return inRuntime ? 'runtime' : 'none';
 }
 
 /** `spec.environments` — the collection's environment names. */

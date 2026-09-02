@@ -154,6 +154,59 @@ export interface DeletedCollection {
 }
 
 /**
+ * What {@link BrunoApi.createRuntimeLinks} links, in one call.
+ *
+ * A runtime link is the alternative to a `spec.partOf` entry: the same
+ * `partOf`/`hasPart` relation, recorded in the `bruno` backend's own table
+ * instead of in a file. It exists because the pull-request flow cannot always
+ * run — a `bruno.collections[]` entry and a discovered collection have no
+ * descriptor to edit, a `file:` location is not in an SCM, and automatic pull
+ * requests are GitHub-only — and because a user is sometimes not waiting for a
+ * review to see a relation.
+ *
+ * Plural for the same reason `planLink` takes `apiRefs`: the collection-side
+ * dialog picks several APIs at once and they all land in the same `partOf`, so
+ * one call is one refresh and one all-or-nothing outcome.
+ */
+export interface RuntimeLinkInput {
+  /** Entity ref of the Bruno collection — the `partOf` SOURCE. */
+  collectionRef: string;
+  /** Entity refs of the API entities the collection is part of. */
+  apiRefs: string[];
+}
+
+/** The one pair {@link BrunoApi.deleteRuntimeLink} removes. */
+export interface RuntimeUnlinkInput {
+  collectionRef: string;
+  apiRef: string;
+}
+
+/** What the backend recorded, once a runtime link has been made or removed. */
+export interface RuntimeLinkResult {
+  /** The refs as the backend NORMALISED them, which is what its table holds. */
+  collectionRef: string;
+  /**
+   * The API refs the call acted on, normalised. One entry for an unlink, and
+   * for a link the whole selection — deduped by the backend, which is why it
+   * is read back rather than assumed to be what was sent.
+   */
+  apiRefs: string[];
+  /**
+   * Whether the backend managed to mark the collection for immediate
+   * reprocessing.
+   *
+   * The write itself is done either way; this says how long the relation takes
+   * to appear or disappear. `true` means seconds — the catalog reprocesses the
+   * entity now, `BrunoKindProcessor` re-reads the link table and re-emits the
+   * relations. `false` means the refresh call failed, so the change waits for
+   * the catalog's own next processing cycle, which is minutes. Reported rather
+   * than assumed because a dialog that says "a few seconds" and then sits there
+   * for five minutes is worse than one that says which it is.
+   */
+  refreshRequested: boolean;
+}
+
+/**
  * Client for the `bruno` backend plugin.
  *
  * All calls resolve the backend base URL through the discovery API for plugin
@@ -174,6 +227,14 @@ export interface DeletedCollection {
  *  - and, following from that, which collections have been brought into
  *    existence but are not entities YET — a question the catalog answers "none"
  *    to by construction, because the gap is exactly what it does not know about.
+ *
+ * The fifth is the same gap one level down: a RELATION cannot be written
+ * either. Relations are derived output — recomputed by the processors and
+ * rewritten wholesale on every stitch — and `plugin-catalog-backend`'s router
+ * exposes no relation-mutation endpoint, so a link written straight into the
+ * catalog would be reverted within one processing cycle. The two link calls
+ * below write a row that `BrunoKindProcessor` re-derives the relation from on
+ * every cycle, which is what makes it last.
  *
  * That third one is here because the catalog is a read model with no write
  * model. There is no "create entity" endpoint anywhere in `catalogApi`:
@@ -266,6 +327,48 @@ export interface BrunoApi {
    * that type for why the list is not readable without the interval.
    */
   listCollections(): Promise<StoredCollections>;
+
+  /**
+   * Links one or more API entities to a Bruno collection in THIS Backstage
+   * instance, without touching source control.
+   *
+   * The secondary way to link, and the one that always works. A `spec.partOf`
+   * entry in the collection's descriptor is better where it is possible —
+   * reviewable, and it travels with the repository — which is why the link
+   * dialog leads with the pull request and offers this beside it. Where no
+   * descriptor can be edited, this is the only way.
+   *
+   * All of them or none: the backend writes the rows in one statement, so a
+   * selection is never half-applied. Resolving means the rows are written, not
+   * that the relations exist yet — the backend marks the collection for
+   * reprocessing and they follow, within seconds when `refreshRequested` came
+   * back `true`. Callers have to say so on screen rather than showing a
+   * relation that is not there.
+   *
+   * REJECTS with the backend's own message for everything the user can act on,
+   * and every one of those messages NAMES the references at fault: a collection
+   * or API that is not in the catalog, an entity that is not a Bruno
+   * collection, a link the descriptor already declares (there would be nothing
+   * to add), and one that already exists.
+   */
+  createRuntimeLinks(input: RuntimeLinkInput): Promise<RuntimeLinkResult>;
+
+  /**
+   * Removes one link made by {@link createRuntimeLinks}.
+   *
+   * Singular where the create is plural, and deliberately: unlinking is a
+   * per-row action on both cards, so there is no screen from which several go
+   * at once.
+   *
+   * Only a runtime link. A link declared by `spec.partOf` is not touched and
+   * cannot be — the rejection says which file to edit instead, because a
+   * "success" that leaves the relation in place would have the user waiting for
+   * a change that is never coming. `linkSource` in `lib/brunoEntity.ts` is how
+   * a caller tells the two apart before offering either.
+   *
+   * Eventually consistent in the same way and to the same degree as the create.
+   */
+  deleteRuntimeLink(input: RuntimeUnlinkInput): Promise<RuntimeLinkResult>;
 }
 
 export const brunoApiRef = createApiRef<BrunoApi>({

@@ -16,7 +16,9 @@ import {
 } from '../processor/BrunoKindProcessor';
 import { collectionNameFromUrl } from '../provider/BrunoCollectionEntityProvider';
 import { readBrunoCollections } from './brunoConfig';
+import { normaliseApiRef, normaliseCollectionRef } from './entityRefs';
 import type { UiCollectionStore } from '../store/uiCollectionStore';
+import type { RuntimeLinkStore } from '../store/runtimeLinkStore';
 import { escapeHtml, generateOcDocsHtml } from './generateOcDocsHtml';
 
 /**
@@ -44,6 +46,10 @@ export interface RouterOptions {
   /** The write model for collections added from the Bruno dashboard. Read back
    *  service-to-service by `BrunoCollectionEntityProvider`. */
   uiCollections: UiCollectionStore;
+  /** The write model for links made in this instance instead of in source
+   *  control. Read back service-to-service by `BrunoKindProcessor`, which turns
+   *  the rows into the same relations `spec.partOf` produces. */
+  runtimeLinks: RuntimeLinkStore;
   /** `bruno.schedule.frequencySeconds` — the provider's tick, and therefore how
    *  long a created collection takes to appear and a deleted one to vanish.
    *  Returned on the create and delete responses so the UI can quote the real
@@ -62,6 +68,10 @@ export interface RouterOptions {
  *                                              (auth: user | service; a user's
  *                                              rows omit `createdBy`)
  *   DELETE /collections/:name               -> { deleted: true } (auth: user)
+ *   GET    /links                           -> { links } (auth: service)
+ *   POST   /links                           -> 201 (link at runtime; auth: user)
+ *                                              takes `apiRefs[]`, all or none
+ *   DELETE /links?collection=&api=          -> { unlinked: true } (auth: user)
  *
  * The first three are read-only and were the whole of this plugin: everything
  * the UI knows about an EXISTING collection travels on the `kind: Bruno` entity
@@ -71,8 +81,8 @@ export interface RouterOptions {
  * a read of a repository that has not been catalogued yet, which a browser
  * cannot perform.
  *
- * The last three are why this plugin grew a database again. The catalog is a
- * read model with no WRITE model: entities come from a Location (a descriptor
+ * The three `/collections` routes are why this plugin grew a database again.
+ * The catalog is a read model with no WRITE model: entities come from a Location (a descriptor
  * that must already exist) or from an EntityProvider, and there is no
  * insert-an-entity API anywhere in Backstage. So the Bruno UI's "add a
  * collection" cannot write to the catalog at all — it writes HERE, and
@@ -80,6 +90,14 @@ export interface RouterOptions {
  * its next tick, exactly as it already does for `bruno.collections[]`. This
  * plugin is now the authoritative store for UI-created collections; the catalog
  * is downstream of it and always will be.
+ *
+ * The `/links` three are the same argument applied to RELATIONS. A relation is
+ * derived output — recomputed and rewritten on every stitch — so there is no
+ * relation to insert or delete either, and the only durable place a link can
+ * live is a file (`spec.partOf`) or a row here. The rows are read back by
+ * `BrunoKindProcessor`, which stamps them on the collection entity and emits
+ * the relations from them on every processing cycle; that is what makes a
+ * runtime link survive the rewrite. See `store/runtimeLinkStore.ts`.
  */
 export async function createRouter(
   options: RouterOptions
@@ -91,8 +109,43 @@ export async function createRouter(
     httpAuth,
     probe,
     uiCollections,
+    runtimeLinks,
     refreshSeconds
   } = options;
+
+  /**
+   * Marks a collection for immediate reprocessing, and says whether it worked.
+   *
+   * This is what makes a runtime link feel like a link rather than like the
+   * add-collection flow's minute-long wait. The rows below are read by
+   * `BrunoKindProcessor`, which only runs when the catalog processes the
+   * entity — on its own schedule, minutes away — so without this the user
+   * clicks Link and nothing visibly happens. `refreshEntity` sets the entity
+   * due now, and the relation lands within seconds.
+   *
+   * Failure is REPORTED, never thrown: the row is already written and the
+   * relation will appear on the catalog's own next cycle regardless, so a
+   * failed refresh makes the change slow, not wrong. The caller passes the
+   * boolean back to the browser so the dialog can say "in a few seconds"
+   * or "on the next catalog refresh" and be right either way.
+   */
+  const requestRefresh = async (
+    entityRef: string,
+    credentials: Parameters<typeof catalog.refreshEntity>[1]['credentials']
+  ): Promise<boolean> => {
+    try {
+      await catalog.refreshEntity(entityRef, { credentials });
+      return true;
+    } catch (e) {
+      logger.warn(
+        `Could not schedule an immediate refresh of ${entityRef} after a `
+        + 'runtime link change; the relation will follow on the catalog\'s own '
+        + 'next processing cycle.',
+        e instanceof Error ? e : new Error(String(e))
+      );
+      return false;
+    }
+  };
 
   const router = Router();
   router.use(express.json());
@@ -406,7 +459,199 @@ export async function createRouter(
         + 'source control, are removed by editing that file.'
       );
     }
+
+    // The collection's runtime links go with it. They are keyed by entity ref
+    // and the entity is about to stop existing, so leaving them would leave
+    // rows nothing can ever read or remove — and a collection re-added under
+    // the same name would silently inherit the links of the one it replaced.
+    // Deliberately AFTER the delete and deliberately not in a transaction: the
+    // row is what the user asked to remove, and failing their delete because a
+    // cleanup did not run would be the wrong trade. A leftover here is inert.
+    try {
+      const droppedLinks = await runtimeLinks.deleteForCollection(
+        normaliseCollectionRef(`bruno:default/${name}`)
+      );
+      if (droppedLinks > 0) {
+        logger.info(
+          `Removed ${droppedLinks} runtime link(s) along with the UI `
+          + `collection "${name}".`
+        );
+      }
+    } catch (error) {
+      // Swallowed on purpose. The row the user asked to remove is already gone,
+      // so reporting a failure here would describe a delete that did happen as
+      // one that did not, and the leftover link rows are inert — they name an
+      // entity that is about to stop existing.
+      logger.warn(
+        `Removed the UI collection "${name}" but could not remove its runtime `
+        + 'links; they are inert, and name an entity that no longer exists.',
+        error instanceof Error ? error : new Error(String(error))
+      );
+    }
+
     res.json({ deleted: true, name, refreshSeconds });
+  });
+
+  // Every runtime link in the instance, for `BrunoKindProcessor`.
+  //
+  // `['service']` ONLY, and for the same reason `GET /collections` was
+  // service-only until it grew a user-facing consumer: the processor is the
+  // reader this route exists for, and a browser has no use for the list. What a
+  // browser needs is which APIs are linked to the collection IT is looking at,
+  // and that arrives on the entity itself — the processor stamps
+  // `usebruno.com/runtime-part-of` from these rows, so the catalog answers it
+  // with no call here. Widening to `'user'` would also disclose `created_by`
+  // for every link in the instance, which is the thing `GET /collections`
+  // strips.
+  router.get('/links', async (req, res) => {
+    await httpAuth.credentials(req, { allow: ['service'] });
+    res.json({ links: await runtimeLinks.listAll() });
+  });
+
+  // Links an API to a Bruno collection in THIS instance, without touching
+  // source control.
+  //
+  // The pull-request flow in the frontend stays the primary one, and this route
+  // does not replace it: a `spec.partOf` entry is reviewable, survives a rebuilt
+  // database and travels with the repository. What this covers is every case
+  // where that flow cannot run at all — a `bruno.collections[]` entry and a
+  // discovered collection have no descriptor to edit, a `file:` location is not
+  // in an SCM, and automatic pull requests are GitHub-only — plus the user who
+  // does not want to wait for a review to see the relation.
+  //
+  // Auth is `['user']` and excludes services, exactly as `POST /collections`
+  // does: `created_by` is read off the principal, and admitting a service token
+  // would let any backend plugin mint catalog-visible relations with no user
+  // attribution.
+  //
+  // POC scope, matching the rest of this router: any authenticated user may
+  // link any collection to any API entity they can read, and any authenticated
+  // user may then remove that link. Documented, not fixed — see
+  // docs/execution/UI-P6-plan.md §"Standing constraints".
+  router.post('/links', async (req, res) => {
+    const credentials = await httpAuth.credentials(req, { allow: ['user'] });
+    const createdBy = credentials.principal.userEntityRef;
+
+    const body = (req.body ?? {}) as {
+      collectionRef?: unknown;
+      apiRefs?: unknown;
+    };
+    const collectionRef = readCollectionRef(body.collectionRef);
+    const apiRefs = readApiRefs(body.apiRefs);
+
+    // Read AS THE USER, so this route can never link a collection or an API the
+    // caller could not see in the catalog themselves.
+    const collection = await catalog.getEntityByRef(collectionRef, {
+      credentials
+    });
+    if (!collection) {
+      throw new NotFoundError(
+        `No entity ${collectionRef} exists in the catalog, so it cannot be `
+        + 'linked. A collection has to be registered before it can be linked '
+        + 'to an API.'
+      );
+    }
+    if (collection.kind.toLocaleLowerCase('en-US') !== 'bruno') {
+      throw new InputError(
+        `${collectionRef} is a ${collection.kind} entity, not a Bruno `
+        + 'collection. Only a Bruno collection can hold a link to an API.'
+      );
+    }
+
+    // One call for the whole selection rather than a read each: the refs come
+    // straight off a picker, so a user linking six APIs should not cost six
+    // round trips to the catalog.
+    const apis = await catalog.getEntitiesByRefs(
+      { entityRefs: apiRefs },
+      { credentials }
+    );
+    const unknownRefs = apiRefs.filter((_ref, index) => !apis.items[index]);
+    if (unknownRefs.length > 0) {
+      throw new NotFoundError(
+        `${describeRefs(unknownRefs)} ${
+          unknownRefs.length === 1 ? 'does' : 'do'
+        } not exist in the catalog, so linking would produce a relation `
+        + 'pointing at nothing.'
+      );
+    }
+
+    // Refuse a link source control already declares. The relation is either
+    // there or one processing cycle away, so the row would add nothing — and it
+    // would then have to be removed separately from the descriptor entry,
+    // leaving a user who unlinks by pull request watching a relation that does
+    // not go away.
+    const declared = declaredPartOf(collection);
+    const alreadyDeclared = apiRefs.filter((ref) => declared.includes(ref));
+    if (alreadyDeclared.length > 0) {
+      throw new ConflictError(
+        `${describeRefs(alreadyDeclared)} ${
+          alreadyDeclared.length === 1 ? 'is' : 'are'
+        } already listed in ${collectionRef}'s \`spec.partOf\`, so the link is `
+        + 'declared in source control. There is nothing to add here.'
+      );
+    }
+
+    // Pre-checked against the table as well, so the message can NAME the ref
+    // that is already linked — the unique violation the insert would raise
+    // cannot say which pair caused it. The insert still catches its own race.
+    const existing = new Set(
+      await runtimeLinks.listForCollection(collectionRef)
+    );
+    const alreadyLinked = apiRefs.filter((ref) => existing.has(ref));
+    if (alreadyLinked.length > 0) {
+      throw new ConflictError(
+        `${describeRefs(alreadyLinked)} ${
+          alreadyLinked.length === 1 ? 'is' : 'are'
+        } already linked to ${collectionRef} in this Backstage instance.`
+      );
+    }
+
+    await runtimeLinks.insert(
+      apiRefs.map((apiRef) => ({ collectionRef, apiRef, createdBy }))
+    );
+    const refreshRequested = await requestRefresh(collectionRef, credentials);
+
+    res.status(201).json({
+      linked: true,
+      collectionRef,
+      apiRefs,
+      refreshRequested
+    });
+  });
+
+  // Removes a runtime link. The mirror of `POST /links`, and the only way to
+  // remove one — a link this route did not write lives in a file, and the 404
+  // below says so rather than reporting a success that changes nothing.
+  //
+  // The two refs travel as QUERY parameters rather than path segments. They are
+  // entity refs, which contain `:` and `/`; percent-encoding those into a path
+  // works but is the kind of thing a proxy in front of the backend decodes
+  // early and then routes wrong. A DELETE with a body is the other option and
+  // is worse — bodies on DELETE are widely dropped in transit.
+  router.delete('/links', async (req, res) => {
+    const credentials = await httpAuth.credentials(req, { allow: ['user'] });
+    const collectionRef = readCollectionRef(req.query.collection);
+    const apiRef = readApiRef(req.query.api);
+
+    const removed = await runtimeLinks.delete(collectionRef, apiRef);
+    if (!removed) {
+      throw new NotFoundError(
+        `${apiRef} is not linked to ${collectionRef} in this Backstage `
+        + 'instance. A link declared by `spec.partOf` in the collection\'s '
+        + 'descriptor, or by `partOf` on its app-config entry, is removed by '
+        + 'editing that file.'
+      );
+    }
+    const refreshRequested = await requestRefresh(collectionRef, credentials);
+
+    // `apiRefs` even though this route removes exactly one, so both link
+    // responses have one shape and a client needs one result type.
+    res.json({
+      unlinked: true,
+      collectionRef,
+      apiRefs: [apiRef],
+      refreshRequested
+    });
   });
 
   // The `kind: Bruno` entity's docs, built from the OpenCollection YAML the
@@ -480,6 +725,106 @@ export async function createRouter(
   router.use(middleware.error());
 
   return router;
+}
+
+/**
+ * Reads and normalises the refs a runtime link is made of.
+ *
+ * Three readers rather than one per route, because `POST /links` and
+ * `DELETE /links` have to agree on the spelling to the character: the POST
+ * writes the rows and the DELETE looks one up by exact match on both columns,
+ * so a difference of one normalisation step between them is a link that cannot
+ * be removed. They take the refs from different places — a JSON body and a
+ * query string — which is why the parameters are typed `unknown`.
+ *
+ * Unparseable is an `InputError`, not a 500: `spec.partOf` is written by hand
+ * and a browser can hand us whatever the user's screen showed, so a bad ref is
+ * ordinary input.
+ */
+function readCollectionRef(raw: unknown): string {
+  if (typeof raw !== 'string' || !raw.trim()) {
+    throw new InputError('A Bruno collection entity reference is required.');
+  }
+  try {
+    return normaliseCollectionRef(raw);
+  } catch (e) {
+    throw new InputError(
+      `"${raw}" is not a usable entity reference: ${
+        String((e as Error)?.message ?? e)
+      }`
+    );
+  }
+}
+
+function readApiRef(raw: unknown): string {
+  if (typeof raw !== 'string' || !raw.trim()) {
+    throw new InputError('An API entity reference is required.');
+  }
+  try {
+    return normaliseApiRef(raw);
+  } catch (e) {
+    throw new InputError(
+      `"${raw}" is not a usable entity reference: ${
+        String((e as Error)?.message ?? e)
+      }`
+    );
+  }
+}
+
+/**
+ * The API refs of a `POST /links` body: at least one, deduped, normalised.
+ *
+ * Deduped AFTER normalising, so a body naming the same API twice under two
+ * spellings — which is what a hand-edited `spec.partOf` looks like — is one
+ * link rather than a unique violation against itself.
+ */
+function readApiRefs(raw: unknown): string[] {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new InputError('At least one API entity reference is required.');
+  }
+  return [...new Set(raw.map(readApiRef))];
+}
+
+/** `` `a` ``, `` `a` and `b` `` — refs a sentence can hold. */
+function describeRefs(refs: string[]): string {
+  const quoted = refs.map((ref) => `\`${ref}\``);
+  if (quoted.length <= 1) {
+    return quoted[0] ?? '';
+  }
+  return `${quoted.slice(0, -1).join(', ')} and ${quoted[quoted.length - 1]}`;
+}
+
+/**
+ * The API refs a collection's own descriptor declares, normalised.
+ *
+ * Read off `spec.partOf` rather than off the entity's RELATIONS on purpose. The
+ * relations of a collection with a runtime link already include that link — the
+ * processor emits both kinds identically, which is the point — so comparing
+ * against them would report every runtime link as source-control-declared and
+ * refuse to remove it. `spec.partOf` is the file, and the file is what this
+ * check is about.
+ *
+ * An entry the catalog cannot parse is dropped rather than thrown: the
+ * processor already logs it and ignores it when emitting relations, so it names
+ * no relation, and it is certainly not the ref being looked for.
+ */
+function declaredPartOf(collection: Entity): string[] {
+  const raw = (collection.spec as { partOf?: unknown } | undefined)?.partOf;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const refs: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'string' || !entry) {
+      continue;
+    }
+    try {
+      refs.push(normaliseApiRef(entry));
+    } catch {
+      continue;
+    }
+  }
+  return refs;
 }
 
 /**

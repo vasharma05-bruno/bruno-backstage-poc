@@ -64,6 +64,8 @@ step.
 | --- | --- | --- |
 | `sourceUrl` | `spec.url` — the collection folder in source control | authored / provider |
 | `partOfRefs` | `spec.partOf` — API entity refs, deduped | authored / provider |
+| `runtimePartOfRefs` | `usebruno.com/runtime-part-of` — API refs linked in **this instance** | `BrunoKindProcessor`, from the backend's link table |
+| `linkSource` | both of the above, for one API ref: `descriptor` \| `runtime` \| `both` \| `none` | — |
 | `version` | `metadata.version` | manifest, via the processor |
 | `requestCount` | `spec.requestCount` | `BrunoKindProcessor` |
 | `environments` / `hasEnvironments` | `spec.environments` | `BrunoKindProcessor` |
@@ -77,6 +79,15 @@ rather than throwing — because the fields the processor writes appear a cycle
 after the entity itself. `hasEnvironments` exists so a card can tell "this
 collection defines no environments" (empty array) from "it has not been read yet"
 (absent key); the two need different copy.
+
+`linkSource` is what the link and unlink flows branch on, and it compares
+**normalised** refs on both sides (via `lib/apiRef.ts`) so `orders`,
+`api:orders` and `api:default/orders` in a descriptor all match the ref the
+catalog hands the card. It answers `both` when a descriptor grew an entry a
+runtime link already covered: the relation then survives removing either half
+alone, so the Unlink dialog has to walk the user through both. `POST /links`
+refuses to create that state, so reaching it means somebody edited the file
+afterwards.
 
 `descriptorLocation` reads `managed-by-location`, **not**
 `backstage.io/source-location`: the processor stamps `source-location` to the
@@ -136,6 +147,8 @@ URL is `discoveryApi.getBaseUrl('bruno')`.
 | `createCollection(input)` | `POST /collections` | the catalog has no write model; the backend stores the row a provider later materializes |
 | `deleteCollection(name)` | `DELETE /collections/:name` | the same, in reverse |
 | `listCollections()` | `GET /collections` | the collections that have been registered but are **not entities yet** — a question the catalog answers "none" to by construction |
+| `createRuntimeLinks(input)` | `POST /links` | a **relation** has no write model either: relations are derived output, rewritten on every stitch |
+| `deleteRuntimeLink(input)` | `DELETE /links?collection=&api=` | the same, in reverse |
 | `getEntityDocsUrl(ns, name, theme)` | builds `/entities/:ns/:name/docs?theme=` | a **rendered** document, which needs an origin whose CSP admits the OpenCollection renderer bundle |
 
 `probeCollection` returns a three-way union, not a nullable. A repository that
@@ -156,6 +169,21 @@ hardcoded 60. Errors are surfaced as the backend's own sentence: a 409 from
 `POST /collections` says *which* name is taken and by what, and collapsing that
 to a status code leaves the user in front of a form with no idea which field is
 wrong.
+
+The two **link** methods are eventually consistent in the same way, but on a
+different clock: the backend marks the collection for immediate reprocessing and
+`refreshRequested` on the response says whether that worked — `true` means
+seconds, `false` means the next full catalog processing cycle. `createRuntimeLinks`
+is plural for the same reason `planLink` takes `apiRefs` — the collection-side
+dialog picks several at once, and they land all or none — while
+`deleteRuntimeLink` is singular because unlinking is a per-row action.
+
+They only ever touch a *runtime* link: `deleteRuntimeLink` will not remove a
+`spec.partOf` entry, and rejects with the backend's own sentence naming the file
+to edit instead, because a "success" that left the relation in place would have
+the user waiting for a change that is never coming. `linkSource` in
+`lib/brunoEntity.ts` is how a caller tells the two apart before offering
+either.
 
 `getEntityDocsUrl` is the one method that builds a URL rather than fetching one,
 because the result is handed to an iframe `src`, which carries no Authorization
@@ -296,20 +324,40 @@ reload or a back-navigation does not silently reopen the dialog.
 
 **Bruno Collections** lists the collections that document this API, read from the
 catalog `hasPart` relation to `kind: Bruno` — the mirror `BrunoKindProcessor`
-emits for each collection's `spec.partOf`. Per row: *Fetch in Bruno*, *View
-Collection Docs*, *Unlink*. **Link collection** attaches an existing collection
-from this side.
+emits for each collection's `partOf`, from either of the two places that can
+record one. Per row: *Fetch in Bruno*, *View Collection Docs*, *Unlink*.
+**Link collection** attaches an existing collection from this side.
 
-Link and unlink are both **pull requests**, not writes, and
-[`src/lib/unlinkPr.ts`](src/lib/unlinkPr.ts) is the single implementation of both
-directions. Catalog relations are derived output — recomputed and rewritten on
-every stitch, with no relation-mutation endpoint anywhere in
-`plugin-catalog-backend` — so a relation written at runtime would be reverted
-within one processing cycle. `spec.partOf` in the collection's
-`catalog-info.yaml` is the only place the link actually exists. The token comes
-from `scmAuthApi.getCredentials({ additionalScope: { repoWrite: true } })`, so the
-pull request is authored by the **actual user**: correct attribution, correct
-audit trail, no server-side write credential. The file is edited through `yaml`'s
+### Two places a link can live
+
+Catalog relations are derived output — recomputed and rewritten on every stitch,
+with no relation-mutation endpoint anywhere in `plugin-catalog-backend` — so a
+relation written at runtime would be reverted within one processing cycle. A link
+therefore has exactly two durable homes, and both link dialogs offer both:
+
+| | Where it lives | Undone by | Latency |
+| --- | --- | --- | --- |
+| **Pull request** (default) | `spec.partOf` in the collection's `catalog-info.yaml` | another pull request | a review, then a re-read |
+| **Runtime link** | a row in the `bruno` backend, re-derived into a relation on every processing cycle | one call, from this card | a few seconds |
+
+The pull request leads because a link in source control is reviewable, survives a
+rebuilt database and travels with the repository. The runtime option is the
+second choice — and the *only* one when no descriptor can be edited by pull
+request at all: a `bruno.collections[]` entry and a discovered collection have no
+descriptor, a `file:` location is not in an SCM, and pull requests are GitHub-only.
+Those four cases used to dead-end the dialog with a paragraph about what to edit
+by hand. It still says that, as the reason the pull-request radio is disabled,
+rather than as the end of the flow.
+
+Rows carry a **Runtime link** chip (or *Runtime + descriptor*) where `linkSource`
+says so, because that is what decides what Unlink will do — and because a link
+that lives only in this instance is worth being able to spot at a glance.
+
+**Pull requests** are implemented once for both directions in
+[`src/lib/unlinkPr.ts`](src/lib/unlinkPr.ts). The token comes from
+`scmAuthApi.getCredentials({ additionalScope: { repoWrite: true } })`, so the pull
+request is authored by the **actual user**: correct attribution, correct audit
+trail, no server-side write credential. The file is edited through `yaml`'s
 `parseDocument` rather than `js-yaml` because a round-trip through the latter
 strips every comment, and a PR that silently deletes a team's comments will not
 get merged. `catalogImportApi.submitPullRequest` is not used: it writes to the
@@ -317,9 +365,30 @@ repository root rather than the descriptor's real path, it can only create a fil
 and never update one, and it uses a fixed branch name so a second unlink collides
 with the first.
 
-Open pull requests are shown as session-scoped chips. Persisting them would mean
-a side store of link state outside source control, which is the thing the
-relation model exists to avoid.
+**Runtime links** go through `useRuntimeLink` in the same
+[`PartOfPr/`](src/components/PartOfPr/) module — the counterpart of
+`usePartOfPr`, and its own hook rather than another branch inside it: the two
+share a stage/reset/action shape at the top and nothing below it, since this one
+has no credential dance, no plan and no preview. There is nothing to preview
+because no file changes, so what the user is agreeing to is stated on the radio
+instead. `LinkMethodChoice` holds that radio for both link dialogs, and takes
+the `useDescriptorAdvice` result as its own test: the advice is `undefined`
+exactly when a pull request is possible, so its presence both disables that
+option and explains why, in the same words the unlink dialog and the empty card
+use.
+
+The backend marks the collection for immediate reprocessing and reports whether
+that worked; [`lib/entityRefresh.ts`](src/lib/entityRefresh.ts) then re-reads the
+entity a few times over nine seconds, which is what makes the row appear, since
+`useRelatedEntities` derives its list from the relations on the entity object and
+nothing moves until the entity itself is fetched again. When the backend could
+not schedule the refresh the card says the change is a full catalog cycle away
+instead of polling for something that is not coming.
+
+Open pull requests are shown as session-scoped chips; so is a runtime link that
+has not surfaced as a relation yet, dropped as soon as it does. Neither is
+persisted — a pull request already lives somewhere better, and a runtime link is
+seconds from being visible on the entity itself.
 
 ## On `kind: Bruno` entity pages — [`src/components/BrunoEntity/`](src/components/BrunoEntity/)
 
@@ -338,7 +407,13 @@ both are empty.
 
 **Related APIs** (`RelatedApisCard.tsx`) reads the `partOf` **relation** — so a
 ref that names a non-existent entity is simply absent rather than rendered as a
-dead row — with the per-row Unlink.
+dead row, and so runtime links are listed alongside descriptor-declared ones —
+with the per-row action menu and the same **Runtime link** chip the API-side
+card shows. **Link APIs** runs `LinkApiDialog`, the mirror of the API-side flow:
+several APIs into one pull request or one runtime write, with the same method
+chooser. Because the collection is fixed here, whether a pull request is
+possible is known before anything is picked, so that answer sits on the chooser
+from the start rather than arriving with a choice.
 
 **Environments** (`EnvironmentsCard.tsx`) reads `spec.environments`, with three
 distinct states: key missing (not read yet), empty list (no environments

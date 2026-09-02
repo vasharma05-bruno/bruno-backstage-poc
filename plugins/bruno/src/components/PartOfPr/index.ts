@@ -1,6 +1,10 @@
 export { useDescriptorAdvice } from './DescriptorAdvice';
+export { LinkMethodChoice, useLinkMethod } from './LinkMethod';
+export type { LinkMethod } from './LinkMethod';
 export { EntityPicker, useEntityOptions } from './EntityPicker';
 export type { EntityOptions } from './EntityPicker';
 export { PartOfPreview, usePartOfStyles } from './PartOfPreview';
 export { usePartOfPr } from './usePartOfPr';
 export type { PartOfPr, PartOfStage } from './usePartOfPr';
+export { useRuntimeLink } from './useRuntimeLink';
+export type { RuntimeLink, RuntimeStage } from './useRuntimeLink';

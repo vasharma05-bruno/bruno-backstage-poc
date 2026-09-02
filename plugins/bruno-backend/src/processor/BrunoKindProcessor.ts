@@ -17,6 +17,7 @@ import type {
 } from '@backstage/plugin-catalog-node';
 import { processingResult } from '@backstage/plugin-catalog-node';
 import type { CollectionSnapshot, ManifestProbe } from '../service/manifestProbe';
+import type { RuntimeLink, RuntimeLinkReader } from './runtimeLinks';
 import type { BrunoEntity } from '../types';
 
 const SOURCE_LOCATION_ANNOTATION = 'backstage.io/source-location';
@@ -27,6 +28,54 @@ const SOURCE_LOCATION_ANNOTATION = 'backstage.io/source-location';
  *  document to render — one definition of the keys, not two. */
 export const DEFINITION_OMITTED_ANNOTATION = 'usebruno.com/definition-omitted';
 export const DEFINITION_BYTES_ANNOTATION = 'usebruno.com/definition-bytes';
+
+/**
+ * The API entity refs linked to this collection IN THIS INSTANCE — a
+ * comma-separated list of canonical refs, sorted.
+ *
+ * The carrier between the `bruno` plugin's `bruno_runtime_links` table and the
+ * relations this processor emits, and the reason a runtime link is durable at
+ * all. Relations are derived output, recomputed and rewritten on every stitch,
+ * so a relation row written at runtime would be reverted within one cycle; a
+ * row in that table re-read on every cycle is not. `preProcessEntity` stamps
+ * this from the rows, `postProcessEntity` emits `partOf`/`hasPart` from it
+ * exactly as it does from `spec.partOf`, and the frontend reads it to tell the
+ * two kinds of link apart — which it must, because they are removed in
+ * completely different ways.
+ *
+ * DERIVED, and the processor owns the key outright: an authored value in a
+ * `catalog-info.yaml` is deleted rather than honoured, the same way
+ * `spec.definition` is overwritten. Sorted so that reordering rows in the table
+ * cannot churn `resultHash`; a pure function of the link rows otherwise, so it
+ * changes only when a link does — which is exactly when the entity SHOULD be
+ * rewritten.
+ *
+ * Kept apart from `spec.partOf` rather than merged into it, deliberately. The
+ * spec is the descriptor's own words, and a UI that cannot distinguish "in the
+ * file" from "in this database" cannot tell a user whether to open a pull
+ * request or to click Unlink — and would offer a pull request that removes a
+ * line no file contains.
+ */
+export const RUNTIME_PART_OF_ANNOTATION = 'usebruno.com/runtime-part-of';
+
+/**
+ * Reads {@link RUNTIME_PART_OF_ANNOTATION} back off an entity.
+ *
+ * Comma-separated rather than JSON because an entity ref contains `:` and `/`
+ * but never a comma, so the list needs no escaping and stays readable in the
+ * catalog's own entity inspector. Mirrored by `runtimePartOfRefs` in the
+ * frontend's `lib/brunoEntity.ts` — keep the two in step.
+ */
+export function readRuntimePartOf(entity: Entity): string[] {
+  const raw = entity.metadata.annotations?.[RUNTIME_PART_OF_ANNOTATION];
+  if (!raw) {
+    return [];
+  }
+  return raw
+    .split(',')
+    .map((ref) => ref.trim())
+    .filter((ref) => ref !== '');
+}
 
 /**
  * How this collection came to be in the catalog — the one thing the UI cannot
@@ -285,6 +334,13 @@ function sameAnnotations(
  * catalog refresh re-runs processors and never providers, so generation has to
  * live here for both entry points to converge on it.
  *
+ * It also stamps `usebruno.com/runtime-part-of` — the links made in this
+ * instance rather than in source control — and emits relations from those
+ * alongside the ones `spec.partOf` declares. That annotation is the only reason
+ * a runtime link survives: relations are rewritten on every stitch, so the link
+ * has to be re-derived from the `bruno` plugin's link table on every cycle
+ * rather than written into a relation once. See {@link RUNTIME_PART_OF_ANNOTATION}.
+ *
  * It also writes `spec.definition` — the whole collection's OpenCollection YAML,
  * mirroring how a `kind: API` entity stores its OpenAPI document. Note the
  * deliberate ASYMMETRY with the metadata rule above it: authored
@@ -295,15 +351,107 @@ function sameAnnotations(
  * permanent no-op. When generation fails, whatever was there is left alone.
  */
 export class BrunoKindProcessor implements CatalogProcessor {
+  /**
+   * The last link set this PROCESS read successfully, and whether the last read
+   * failed.
+   *
+   * A failed read must not be mistaken for "there are no links": the
+   * annotation is deleted when the list comes back empty, which deletes the
+   * relations, so answering an outage with `[]` would unlink every runtime link
+   * in the instance for a cycle. The cached set is emitted instead. With
+   * nothing cached — the first cycle after a restart — the links are genuinely
+   * unknown and the cycle emits none; it is recoverable on the next one, which
+   * is the whole difference from the provider's identical-looking problem,
+   * where the omission would be a permanent delete.
+   *
+   * `degraded` exists only to keep the log readable: the reader is called once
+   * per Bruno entity per cycle, so an unreachable `bruno` plugin would
+   * otherwise write one warning per collection per cycle forever.
+   */
+  private lastKnownLinks?: RuntimeLink[];
+  private degraded = false;
+
   constructor(
     private readonly options: {
       logger: LoggerService;
       probe: ManifestProbe;
+      /** Reads the runtime links back from the `bruno` plugin. Optional: a host
+       *  that wires the processor without it gets descriptor-declared links
+       *  only, which is what this processor did before runtime links existed. */
+      runtimeLinks?: RuntimeLinkReader;
     }
   ) {}
 
   getProcessorName(): string {
     return 'BrunoKindProcessor';
+  }
+
+  /**
+   * The API refs linked to this collection at runtime — sorted, deduped, and
+   * ready to become the annotation's value.
+   *
+   * Reads the WHOLE link table and filters here rather than asking the route
+   * for one collection's links, because the reader coalesces concurrent calls:
+   * a processing sweep of fifty collections costs a handful of requests this
+   * way and fifty of them the other. See `runtimeLinks.ts` for why there is no
+   * time-based cache on top of that.
+   *
+   * Never throws. Every failure mode ends in a list — the cached one, or an
+   * empty one — because a throw out of `preProcessEntity` makes the run
+   * `ok: false`, which skips `updateProcessedEntity` and abandons stitching:
+   * the entity would 404 outright rather than merely lose a relation.
+   */
+  private async runtimeRefsFor(entityRef: string): Promise<string[]> {
+    const reader = this.options.runtimeLinks;
+    if (!reader) {
+      return [];
+    }
+
+    let links: RuntimeLink[];
+    try {
+      links = await reader.list();
+      this.lastKnownLinks = links;
+      if (this.degraded) {
+        this.degraded = false;
+        this.options.logger.info(
+          'Runtime Bruno links are readable again; relations are being emitted '
+          + 'from the current link table.'
+        );
+      }
+    } catch (error) {
+      const cached = this.lastKnownLinks;
+      if (!this.degraded) {
+        this.degraded = true;
+        // Structured second argument, never string interpolation: the reader's
+        // error can echo the request it made, and interpolating it into the
+        // message would put the plugin bearer token in the log.
+        this.options.logger.warn(
+          cached === undefined
+            ? 'Could not read the runtime Bruno links and none are cached from '
+            + 'an earlier read in this process; Bruno entities processed now '
+            + 'carry only the links their descriptors declare. Runtime links '
+            + 'return on the next processing cycle that can read them.'
+            : 'Could not read the runtime Bruno links; emitting the last set '
+              + 'this process read successfully.',
+          error instanceof Error ? error : new Error(String(error))
+        );
+      }
+      if (cached === undefined) {
+        return [];
+      }
+      links = cached;
+    }
+
+    const refs = new Set<string>();
+    for (const link of links) {
+      if (link.collectionRef === entityRef) {
+        refs.add(link.apiRef);
+      }
+    }
+    // Sorted so the annotation is a pure function of the SET of links, not of
+    // the order a database happened to return the rows in — otherwise every
+    // cycle risks rewriting the entity for no change.
+    return [...refs].sort();
   }
 
   async validateEntityKind(entity: Entity): Promise<boolean> {
@@ -329,6 +477,10 @@ export class BrunoKindProcessor implements CatalogProcessor {
     }
 
     const origin = deriveOrigin(entity, location);
+    // Read BEFORE the probe, so a collection whose repository is unreachable
+    // keeps its runtime links: the degraded return below stamps them too, and a
+    // link is a fact about the catalog rather than about the repository.
+    const runtimeRefs = await this.runtimeRefsFor(stringifyEntityRef(entity));
 
     let manifest: CollectionSnapshot | undefined;
     try {
@@ -344,7 +496,7 @@ export class BrunoKindProcessor implements CatalogProcessor {
       );
       // Still stamped: a degraded entity is exactly the one an operator wants
       // to click through to source in order to diagnose.
-      return this.withDerivedAnnotations(entity, url, origin);
+      return this.withDerivedAnnotations(entity, url, origin, runtimeRefs);
     }
 
     if (!manifest) {
@@ -353,7 +505,7 @@ export class BrunoKindProcessor implements CatalogProcessor {
         + `opencollection.yml/.yaml found at ${url}; entity ingested without `
         + `collection metadata.`
       );
-      return this.withDerivedAnnotations(entity, url, origin);
+      return this.withDerivedAnnotations(entity, url, origin, runtimeRefs);
     }
 
     // Derived data, so no authored-value precedence applies: the processor owns
@@ -398,6 +550,16 @@ export class BrunoKindProcessor implements CatalogProcessor {
     } else {
       delete nextAnnotations[DEFINITION_OMITTED_ANNOTATION];
       delete nextAnnotations[DEFINITION_BYTES_ANNOTATION];
+    }
+    // Deleted rather than left alone when there are none, for the same reason
+    // as the two keys above: an entity that keeps a stale value here keeps
+    // emitting a relation for a link that has been removed. Deleting also
+    // discards any value an authored descriptor wrote — the processor owns this
+    // key, see the constant's docblock.
+    if (runtimeRefs.length > 0) {
+      nextAnnotations[RUNTIME_PART_OF_ANNOTATION] = runtimeRefs.join(',');
+    } else {
+      delete nextAnnotations[RUNTIME_PART_OF_ANNOTATION];
     }
 
     // Nothing to enrich: hand back the input untouched rather than allocating
@@ -459,7 +621,8 @@ export class BrunoKindProcessor implements CatalogProcessor {
   private withDerivedAnnotations(
     entity: Entity,
     url: string,
-    origin: BrunoOrigin
+    origin: BrunoOrigin,
+    runtimeRefs: string[]
   ): Entity {
     const annotations = entity.metadata.annotations ?? {};
 
@@ -473,24 +636,35 @@ export class BrunoKindProcessor implements CatalogProcessor {
       }
     }
 
+    const runtimeValue
+      = runtimeRefs.length > 0 ? runtimeRefs.join(',') : undefined;
+
     if (
       annotations[ORIGIN_ANNOTATION] === origin
       && sourceLocation === annotations[SOURCE_LOCATION_ANNOTATION]
+      && runtimeValue === annotations[RUNTIME_PART_OF_ANNOTATION]
     ) {
       return entity;
+    }
+
+    const nextAnnotations: Record<string, string> = {
+      ...annotations,
+      ...(sourceLocation && {
+        [SOURCE_LOCATION_ANNOTATION]: sourceLocation
+      }),
+      [ORIGIN_ANNOTATION]: origin
+    };
+    if (runtimeValue) {
+      nextAnnotations[RUNTIME_PART_OF_ANNOTATION] = runtimeValue;
+    } else {
+      delete nextAnnotations[RUNTIME_PART_OF_ANNOTATION];
     }
 
     return {
       ...entity,
       metadata: {
         ...entity.metadata,
-        annotations: {
-          ...annotations,
-          ...(sourceLocation && {
-            [SOURCE_LOCATION_ANNOTATION]: sourceLocation
-          }),
-          [ORIGIN_ANNOTATION]: origin
-        }
+        annotations: nextAnnotations
       }
     };
   }
@@ -546,7 +720,20 @@ export class BrunoKindProcessor implements CatalogProcessor {
       }
     }
 
-    for (const ref of new Set(spec.partOf ?? [])) {
+    // Both kinds of link, one loop. `spec.partOf` is what the descriptor (or
+    // the `bruno.collections[]` entry) declares; the annotation is what this
+    // instance was told at runtime, stamped by `preProcessEntity` a moment ago
+    // from the `bruno` plugin's link table. The relation they produce is
+    // identical — which is the point: every card that reads relations shows
+    // both without knowing there are two kinds — and the `Set` collapses the
+    // case where a descriptor later grows an entry a runtime link already
+    // covers.
+    const linkedRefs = new Set([
+      ...(spec.partOf ?? []),
+      ...readRuntimePartOf(entity)
+    ]);
+
+    for (const ref of linkedRefs) {
       let target: CompoundEntityRef;
       try {
         target = parseEntityRef(ref, {

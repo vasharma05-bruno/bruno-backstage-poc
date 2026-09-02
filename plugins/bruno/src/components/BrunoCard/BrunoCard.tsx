@@ -6,6 +6,7 @@ import Divider from '@material-ui/core/Divider';
 import IconButton from '@material-ui/core/IconButton';
 import Menu from '@material-ui/core/Menu';
 import MenuItem from '@material-ui/core/MenuItem';
+import Tooltip from '@material-ui/core/Tooltip';
 import Typography from '@material-ui/core/Typography';
 import Box from '@material-ui/core/Box';
 import MoreVertIcon from '@material-ui/icons/MoreVert';
@@ -20,7 +21,8 @@ import {
   useEntityRefLink,
   useRelatedEntities
 } from '@backstage/plugin-catalog-react';
-import { sourceUrl, version } from '../../lib/brunoEntity';
+import { linkSource, sourceUrl, version } from '../../lib/brunoEntity';
+import { useEntityRelationRefresh } from '../../lib/entityRefresh';
 import { BrunoInfoCard } from '../BrunoInfoCard';
 import { UnlinkDialog } from '../BrunoEntity';
 import { OpenInBrunoSnackbar, useOpenInBruno } from '../OpenInBruno';
@@ -138,13 +140,18 @@ function CollectionActions(props: {
  * Entity card for an API entity: the Bruno collections that document it.
  *
  * Reads the catalog RELATION (`hasPart` → `kind: Bruno`), which
- * `BrunoKindProcessor` emits as the mirror of each collection's `spec.partOf`.
- * Deliberately NOT gated on any `usebruno.com/*` annotation: the catalog stamps
- * those on its own processing schedule, minutes after an entity is registered,
- * so an annotation-gated card reads as empty exactly when a user has just wired
- * something up and is looking at it. It also no longer consults the runtime
- * connection store (`getConnection`/`getCollection`) — the collection is an
- * entity now, and everything the card shows travels on it.
+ * `BrunoKindProcessor` emits as the mirror of each collection's `partOf` —
+ * whether that `partOf` is a `spec.partOf` entry in source control or a runtime
+ * link in the `bruno` backend's own table. The relation is identical either
+ * way, which is why the table needs no branch: the only place the difference
+ * shows is the per-row chip, and the Unlink dialog, which has to remove them by
+ * completely different means.
+ *
+ * Deliberately NOT gated on any `usebruno.com/*` annotation for VISIBILITY: the
+ * catalog stamps those on its own processing schedule, minutes after an entity
+ * is registered, so an annotation-gated card reads as empty exactly when a user
+ * has just wired something up and is looking at it. (The runtime-link chip does
+ * read an annotation, but it decorates a row the relation already put there.)
  *
  * Built on core-components `Table` rather than `EntityRelationCard` for the same
  * reason `RelatedApisCard` is: the latter has no per-row action slot, and its
@@ -158,18 +165,23 @@ export function BrunoCard(): JSX.Element {
     type: RELATION_HAS_PART,
     kind: 'Bruno'
   });
+  // Re-reads THIS API entity after a runtime link change, which is what makes
+  // the relation above appear: `useRelatedEntities` derives its list from the
+  // relations on the entity object, so nothing moves until the entity is
+  // fetched again.
+  const refreshRelations = useEntityRelationRefresh();
 
   const apiRef = stringifyEntityRef(entity);
 
   const [linkOpen, setLinkOpen] = useState(false);
   const [unlinkTarget, setUnlinkTarget] = useState<Entity | undefined>();
   /**
-   * Open pull requests from this session, keyed by Bruno entity ref.
+   * Open unlink pull requests from this session, keyed by Bruno entity ref.
    *
-   * Session state on purpose. Persisting it would mean a side store of link
-   * state outside source control, which is exactly what the relation model
-   * exists to avoid — so after a reload the chip is gone and the pull request
-   * lives where it belongs, in the SCM host.
+   * Session state on purpose. Persisting it would mean a side store of
+   * pull-request state, and a pull request already lives somewhere better — the
+   * SCM host — so after a reload the chip is gone and the link is wherever the
+   * review left it.
    */
   const [unlinkPrs, setUnlinkPrs] = useState<Record<string, string>>({});
   /**
@@ -179,6 +191,21 @@ export function BrunoCard(): JSX.Element {
    * is no row to hang a chip on.
    */
   const [linkPrs, setLinkPrs] = useState<{ label: string; link: string }[]>([]);
+  /**
+   * Collections linked at RUNTIME in this session, by ref.
+   *
+   * Also session state, and for a different reason from the pull requests: this
+   * change has already happened and is seconds from being visible, so the chip
+   * is a progress indicator rather than a record. It is dropped as soon as the
+   * collection turns up in `entities` below, which is the event it exists to
+   * cover.
+   */
+  const [runtimeLinked, setRuntimeLinked] = useState<string[]>([]);
+  /** Refs whose runtime link was just removed — same idea, other direction. */
+  const [runtimeUnlinked, setRuntimeUnlinked] = useState<string[]>([]);
+
+  const listed = new Set((entities ?? []).map((e) => stringifyEntityRef(e)));
+  const pendingLinks = runtimeLinked.filter((ref) => !listed.has(ref));
 
   const columns: TableColumn<Entity>[] = [
     {
@@ -186,9 +213,40 @@ export function BrunoCard(): JSX.Element {
       field: 'metadata.name',
       render: (row) => {
         const ref = stringifyEntityRef(row);
+        // Which of the two places this link is recorded in. Worth a chip
+        // because it decides what Unlink will do — one click, or a pull
+        // request — and because a link that lives only in this instance is a
+        // thing an operator should be able to spot at a glance.
+        const source = linkSource(row, apiRef);
         return (
           <>
             <EntityRefLink entityRef={row} defaultKind="bruno" />
+            {(source === 'runtime' || source === 'both') && (
+              <Tooltip
+                title={
+                  source === 'both'
+                    ? 'Linked both in this Backstage instance and in the '
+                    + 'collection\'s spec.partOf. Removing the relation takes '
+                    + 'both.'
+                    : 'Linked in this Backstage instance only. Nothing in '
+                      + 'source control records this link.'
+                }
+              >
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  className={classes.chip}
+                  label={source === 'both' ? 'Runtime + descriptor' : 'Runtime link'}
+                />
+              </Tooltip>
+            )}
+            {runtimeUnlinked.includes(ref) && (
+              <Chip
+                size="small"
+                className={classes.chip}
+                label="Unlinking…"
+              />
+            )}
             {unlinkPrs[ref] && (
               <Chip
                 size="small"
@@ -254,8 +312,10 @@ export function BrunoCard(): JSX.Element {
       >
         No Bruno collection documents this API yet. Use{' '}
         <strong>Link collection</strong> above to attach one — that adds this
-        API to the collection&apos;s <code>spec.partOf</code>, which is what the
-        catalog turns into the relation shown here.
+        API to the collection&apos;s <code>partOf</code>, either by a pull
+        request against its <code>catalog-info.yaml</code> or as a link in this
+        Backstage instance, and the catalog turns either one into the relation
+        shown here.
       </Typography>
     );
   } else {
@@ -282,8 +342,16 @@ export function BrunoCard(): JSX.Element {
     >
       {body}
 
-      {linkPrs.length > 0 && (
+      {(linkPrs.length > 0 || pendingLinks.length > 0) && (
         <Box className={classes.prStrip}>
+          {pendingLinks.map((ref) => (
+            <Chip
+              key={ref}
+              size="small"
+              variant="outlined"
+              label={`Linking in this instance: ${ref}`}
+            />
+          ))}
           {linkPrs.map((pr) => (
             <Chip
               key={pr.link}
@@ -302,16 +370,23 @@ export function BrunoCard(): JSX.Element {
       {unlinkTarget && (
         <UnlinkDialog
           open
-          // The row's collection owns the descriptor being edited; this API is
-          // the reference removed from it.
+          // The row's collection owns the link being removed; this API is the
+          // reference taken out of its `partOf`.
           collection={unlinkTarget}
           apiRef={apiRef}
           onClose={() => setUnlinkTarget(undefined)}
-          onSubmitted={(link) =>
+          onPrOpened={(link) =>
             setUnlinkPrs((prs) => ({
               ...prs,
               [stringifyEntityRef(unlinkTarget)]: link
             }))}
+          onRuntimeUnlinked={(refreshRequested) => {
+            setRuntimeUnlinked((refs) => [
+              ...refs,
+              stringifyEntityRef(unlinkTarget)
+            ]);
+            refreshRelations(refreshRequested);
+          }}
         />
       )}
 
@@ -320,8 +395,15 @@ export function BrunoCard(): JSX.Element {
         onClose={() => setLinkOpen(false)}
         apiEntity={entity}
         linkedRefs={(entities ?? []).map((e) => stringifyEntityRef(e))}
-        onSubmitted={(collectionRef, link) =>
+        onPrOpened={(collectionRef, link) =>
           setLinkPrs((prs) => [...prs, { label: collectionRef, link }])}
+        onRuntimeLinked={(collectionRef, refreshRequested) => {
+          setRuntimeLinked((refs) => [...refs, collectionRef]);
+          // The dialog stays open on its confirmation screen, so the refresh
+          // has to be scheduled from here rather than on close: by the time the
+          // user dismisses it, the row is usually already in the table.
+          refreshRelations(refreshRequested);
+        }}
       />
     </BrunoInfoCard>
   );

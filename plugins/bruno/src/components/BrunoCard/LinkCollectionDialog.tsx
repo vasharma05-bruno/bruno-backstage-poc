@@ -18,11 +18,14 @@ import type { Entity } from '@backstage/catalog-model';
 import { brunoPageRouteRef } from '../../extensions';
 import {
   EntityPicker,
+  LinkMethodChoice,
   PartOfPreview,
   useDescriptorAdvice,
   useEntityOptions,
+  useLinkMethod,
   usePartOfPr,
-  usePartOfStyles
+  usePartOfStyles,
+  useRuntimeLink
 } from '../PartOfPr';
 import { descriptorLocation, sourceUrl, version } from '../../lib/brunoEntity';
 import { useBrandStyles } from '../../theme/brandStyles';
@@ -43,12 +46,18 @@ const useStyles = makeStyles((theme) => ({
 /**
  * "Link a collection": attaches an existing Bruno collection to this API entity.
  *
- * The link is written the same way the unlink is — as a pull request against the
- * COLLECTION's `catalog-info.yaml`, adding this API to its `spec.partOf`. That
- * asymmetry is deliberate and is forced by the model: `partOf` lives on the
- * Bruno entity, and the `hasPart` relation this card reads is derived from it by
- * `BrunoKindProcessor`. Editing the API's own descriptor would create nothing.
- * See `lib/unlinkPr.ts` for why a pull request rather than a write.
+ * A link is `partOf` on the COLLECTION, never on the API. That asymmetry is
+ * forced by the model: `partOf` lives on the Bruno entity, and the `hasPart`
+ * relation this card reads is derived from it by `BrunoKindProcessor`. Editing
+ * the API's own descriptor would create nothing.
+ *
+ * There are two places that `partOf` can be recorded, and the dialog offers
+ * both — see `LinkMethodChoice`. The pull request against the collection's
+ * `catalog-info.yaml` is the default wherever it can run; a runtime link is the
+ * only option for a collection with no descriptor to edit, and the fast one
+ * when a review is not what the user wants. This dialog used to end in those
+ * cases with the advice and a Close button; the advice is now the reason the
+ * pull-request option is unavailable rather than the end of the flow.
  *
  * Unlike its mirror `LinkApiDialog`, this dialog cannot say up front whether a
  * pull request is possible: each candidate collection brings its own descriptor,
@@ -57,14 +66,33 @@ const useStyles = makeStyles((theme) => ({
 export function LinkCollectionDialog(props: {
   open: boolean;
   onClose: () => void;
-  /** The API entity being linked TO. Its ref is what lands in `spec.partOf`. */
+  /** The API entity being linked TO. Its ref is what lands in `partOf`. */
   apiEntity: Entity;
   /** Refs of collections already linked, hidden from the picker. */
   linkedRefs: string[];
   /** Called with the collection's ref and the pull request URL once one is open. */
-  onSubmitted?: (collectionRef: string, link: string) => void;
+  onPrOpened?: (collectionRef: string, link: string) => void;
+  /**
+   * Called with the collection's ref once a runtime link is written.
+   *
+   * Separate from `onPrOpened` rather than one callback with an optional link,
+   * because the two mean opposite things to the card: a pull request is a
+   * promise that something MIGHT change after a review, while a runtime link
+   * has already happened and the relation is seconds away. The card shows a
+   * standing chip for the first and re-reads the entity for the second —
+   * which is what `refreshRequested` is for, since it says whether there will
+   * be anything to find.
+   */
+  onRuntimeLinked?: (collectionRef: string, refreshRequested: boolean) => void;
 }): JSX.Element {
-  const { open, onClose, apiEntity, linkedRefs, onSubmitted } = props;
+  const {
+    open,
+    onClose,
+    apiEntity,
+    linkedRefs,
+    onPrOpened,
+    onRuntimeLinked
+  } = props;
   const classes = useStyles();
   const partOfClasses = usePartOfStyles();
   const brandClasses = useBrandStyles();
@@ -84,19 +112,28 @@ export function LinkCollectionDialog(props: {
     direction: 'link',
     descriptorUrl: location.kind === 'url' ? location.target : undefined
   });
-  const { stage } = pr;
+  const runtime = useRuntimeLink();
   const advice = useDescriptorAdvice({
     location,
     apiRef,
-    direction: 'link',
-    className: partOfClasses.detail
+    direction: 'link'
   });
+  // `advice` is `undefined` exactly when a pull request can be opened, so it is
+  // the whole test — no second reading of the location, and no way for the two
+  // to disagree.
+  const { method, setMethod, reset: resetMethod } = useLinkMethod(!advice);
 
   const close = (): void => {
     pr.reset();
+    runtime.reset();
+    resetMethod();
     setSelected(null);
     onClose();
   };
+
+  /** True while either write is in flight, which is what blocks the dialog. */
+  const inFlight
+    = pr.stage.status === 'submitting' || runtime.stage.status === 'working';
 
   /** The "go and register one" escape hatch, in both the picker and the empty list. */
   const addCollectionButton = (
@@ -126,7 +163,8 @@ export function LinkCollectionDialog(props: {
   let body: JSX.Element;
   let actions: JSX.Element;
 
-  if (stage.status === 'submitted') {
+  if (pr.stage.status === 'submitted') {
+    const { link } = pr.stage;
     body = (
       <>
         <Typography variant="body2">
@@ -135,31 +173,66 @@ export function LinkCollectionDialog(props: {
           descriptor.
         </Typography>
         <Typography variant="body2" className={partOfClasses.detail}>
-          <Link to={stage.link}>{stage.link}</Link>
+          <Link to={link}>{link}</Link>
         </Typography>
       </>
     );
     actions = (
       <>
-        <CopyTextButton text={stage.link} tooltipText="Pull request link copied" />
+        <CopyTextButton text={link} tooltipText="Pull request link copied" />
         <Button onClick={close}>Close</Button>
       </>
     );
-  } else if (stage.status === 'error') {
+  } else if (runtime.stage.status === 'linked') {
+    const { refreshRequested } = runtime.stage;
+    body = (
+      <>
+        <Typography variant="body2">
+          Linked in this Backstage instance.{' '}
+          {refreshRequested
+            ? 'The collection appears in this card within a few seconds, as '
+            + 'soon as Backstage has finished re-reading it.'
+            : 'Backstage could not be asked to re-read the collection straight '
+              + 'away, so it appears in this card on the next catalog '
+              + 'processing cycle.'}
+        </Typography>
+        <Typography variant="body2" className={partOfClasses.detail}>
+          Nothing in source control changed. The link lives in this instance
+          only — <strong>Unlink</strong> on the collection&apos;s row removes it
+          again, and it is not carried by the collection&apos;s repository.
+        </Typography>
+      </>
+    );
+    actions = <Button onClick={close}>Close</Button>;
+  } else if (pr.stage.status === 'error' || runtime.stage.status === 'error') {
+    const message
+      = pr.stage.status === 'error'
+        ? pr.stage.message
+        : (runtime.stage as { message: string }).message;
     body = (
       <Typography variant="body2" color="error">
-        {stage.message}
+        {message}
       </Typography>
     );
     actions = (
       <>
-        <Button onClick={pr.reset}>Back</Button>
+        <Button
+          onClick={() => {
+            pr.reset();
+            runtime.reset();
+          }}
+        >
+          Back
+        </Button>
         <Button onClick={close}>Close</Button>
       </>
     );
-  } else if (stage.status === 'preview' || stage.status === 'submitting') {
-    const { plan } = stage;
-    const submitting = stage.status === 'submitting';
+  } else if (
+    pr.stage.status === 'preview'
+    || pr.stage.status === 'submitting'
+  ) {
+    const { plan } = pr.stage;
+    const submitting = pr.stage.status === 'submitting';
     body = <PartOfPreview plan={plan} />;
     actions = (
       <>
@@ -173,37 +246,27 @@ export function LinkCollectionDialog(props: {
           startIcon={submitting ? <CircularProgress size={16} /> : undefined}
           onClick={() =>
             pr.submit(plan, (link) =>
-              onSubmitted?.(stringifyEntityRef(selected as Entity), link))}
+              onPrOpened?.(stringifyEntityRef(selected as Entity), link))}
         >
           {submitting ? 'Opening pull request…' : 'Open pull request'}
         </Button>
       </>
     );
   } else {
-    // Choosing (or reading the descriptor after a choice).
-    const planning = stage.status === 'planning';
-    /**
-     * The two origins whose pull request button is WITHHELD rather than merely
-     * disabled: an `app-config.yaml` entry and a local file on the host's disk.
-     * There is no file for the button to edit, so offering it at all
-     * misdescribes the flow.
-     *
-     * `discovery` is the same shape and is deliberately NOT included: the copy
-     * for it is still an error paragraph beside a disabled button, and moving
-     * it over is a separate decision from this one.
-     */
-    const withheld
-      = location.kind === 'none'
-        && (location.reason === 'provider' || location.reason === 'file');
+    // Choosing (or reading the descriptor / writing the row after a choice).
+    const planning = pr.stage.status === 'planning';
+    const working = runtime.stage.status === 'working';
+    const busy = planning || working;
 
     body = (
       <>
         <Typography variant="body2">
           Linking adds <code>{apiRef}</code> to the collection&apos;s{' '}
-          <code>spec.partOf</code>. Catalog relations are generated from source
-          control, so this opens a pull request against the collection&apos;s{' '}
-          <code>catalog-info.yaml</code>; the collection appears here once it is
-          merged and Backstage re-reads the file.
+          <code>partOf</code>, which is what the catalog turns into the relation
+          shown on both entities. It can be recorded in the collection&apos;s{' '}
+          <code>catalog-info.yaml</code> — where it is reviewed and travels with
+          the repository — or in this Backstage instance, which is immediate and
+          the only option for a collection with no descriptor.
         </Typography>
         <Box className={partOfClasses.detail}>
           <EntityPicker
@@ -211,7 +274,7 @@ export function LinkCollectionDialog(props: {
             excluded={linkedRefs}
             value={selected}
             onChange={setSelected}
-            disabled={planning}
+            disabled={busy}
             name="bruno-collection"
             label="Bruno collection"
             placeholder="Search collections"
@@ -234,7 +297,13 @@ export function LinkCollectionDialog(props: {
                 </>
               )}
             </Typography>
-            {advice}
+            <LinkMethodChoice
+              method={method}
+              onChange={setMethod}
+              advice={advice}
+              disabled={busy}
+              target={<code>{apiRef}</code>}
+            />
           </Box>
         )}
 
@@ -247,30 +316,45 @@ export function LinkCollectionDialog(props: {
         </Box>
       </>
     );
-    actions = selected && withheld
-      ? <Button onClick={close}>Close</Button>
-      : (
-          <>
-            <Button onClick={close} disabled={planning}>
-              Cancel
-            </Button>
-            <Button
-              variant="contained"
-              className={brandClasses.accentButton}
-              disabled={planning || !selected || Boolean(advice)}
-              startIcon={planning ? <CircularProgress size={16} /> : undefined}
-              onClick={() =>
-                pr.prepare({
-                  apiRefs: [apiRef],
-                  collectionName:
-                    (selected as Entity).metadata.title
-                    ?? (selected as Entity).metadata.name
-                })}
-            >
-              {planning ? 'Reading descriptor…' : 'Prepare pull request'}
-            </Button>
-          </>
-        );
+    actions = (
+      <>
+        <Button onClick={close} disabled={busy}>
+          Cancel
+        </Button>
+        <Button
+          variant="contained"
+          className={brandClasses.accentButton}
+          disabled={busy || !selected}
+          startIcon={busy ? <CircularProgress size={16} /> : undefined}
+          onClick={() => {
+            const collection = selected as Entity;
+            if (method === 'pr') {
+              pr.prepare({
+                apiRefs: [apiRef],
+                collectionName:
+                  collection.metadata.title ?? collection.metadata.name
+              });
+              return;
+            }
+            const collectionRef = stringifyEntityRef(collection);
+            runtime.link({
+              collectionRef,
+              apiRefs: [apiRef],
+              onLinked: (refreshRequested) =>
+                onRuntimeLinked?.(collectionRef, refreshRequested)
+            });
+          }}
+        >
+          {planning
+            ? 'Reading descriptor…'
+            : working
+              ? 'Linking…'
+              : method === 'pr'
+                ? 'Prepare pull request'
+                : 'Link collection'}
+        </Button>
+      </>
+    );
   }
 
   return (
@@ -278,10 +362,10 @@ export function LinkCollectionDialog(props: {
       open={open}
       maxWidth="md"
       fullWidth
-      // A half-created branch is confusing, so the dialog is not dismissable
-      // while the pull request is being opened.
-      disableBackdropClick={stage.status === 'submitting'}
-      disableEscapeKeyDown={stage.status === 'submitting'}
+      // A half-created branch is confusing, and so is a half-written link, so
+      // the dialog is not dismissable while either is in flight.
+      disableBackdropClick={inFlight}
+      disableEscapeKeyDown={inFlight}
       onClose={close}
     >
       <DialogTitle>Link a Bruno collection</DialogTitle>
