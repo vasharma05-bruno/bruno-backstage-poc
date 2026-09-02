@@ -247,9 +247,11 @@ const ORIGINS: readonly string[] = [
  * YAML file, and the provider stamps a folder. That fallback is the rule the UI
  * used before the annotation existed; it is kept because an entity ingested by
  * an older backend, or one stitched in the window before its first processing
- * run, carries no origin and still has to be given advice. It cannot tell `ui`
- * from `descriptor` — they are the same file, which is exactly the ambiguity
- * the annotation was added to remove.
+ * run, carries no origin and still has to be given advice. It cannot return
+ * `ui` at all — a collection added from the Bruno dashboard is a row in the
+ * `bruno` backend's store with a folder location, so the fallback reads it as
+ * `config`, which is the same "no descriptor" answer with the wrong file named.
+ * That is exactly the ambiguity the annotation was added to remove.
  */
 export function collectionOrigin(entity: Entity): BrunoOrigin {
   const stamped = entity.metadata.annotations?.[BRUNO_ORIGIN_ANNOTATION];
@@ -277,7 +279,10 @@ export function collectionOrigin(entity: Entity): BrunoOrigin {
 /** Where the `catalog-info.yaml` describing this entity lives, if anywhere. */
 export type DescriptorLocation
   = | { kind: 'url'; target: string }
-    | { kind: 'none'; reason: 'provider' | 'discovery' | 'file' | 'absent' };
+    | {
+      kind: 'none';
+      reason: 'provider' | 'discovery' | 'ui' | 'file' | 'absent';
+    };
 
 /**
  * Resolves the descriptor file this entity was read from, if it has one.
@@ -294,7 +299,7 @@ export type DescriptorLocation
  * was a guess that misread any descriptor served from a URL not ending in
  * `.yaml` as provider-managed.
  *
- * The four "none" reasons are all real and all need different copy:
+ * The five "none" reasons are all real and all need different copy:
  *  - `provider` — the location is the collection folder stamped by
  *    `BrunoCollectionEntityProvider` for a `bruno.collections[]` entry. There is
  *    no file to edit; the operator edits `app-config.yaml`.
@@ -303,6 +308,11 @@ export type DescriptorLocation
  *    advice differs in kind, not in wording: there is no config entry to edit
  *    either, and the way to give the collection a `partOf` is to author a
  *    `catalog-info.yaml` in its own repository, which discovery then defers to.
+ *  - `ui` — added from the Bruno dashboard, so the SAME provider stamped the
+ *    collection folder, and what declares the entity is a row in the `bruno`
+ *    backend's store rather than a file anywhere. Kept apart from `provider`
+ *    because the row is not the operator's `app-config.yaml` and is not edited
+ *    the same way.
  *  - `file` — a `file:` location (this repo's `examples/bruno-entities.yaml`).
  *    The file is on the Backstage host's disk, not in an SCM we can open a pull
  *    request against.
@@ -320,9 +330,20 @@ export function descriptorLocation(entity: Entity): DescriptorLocation {
   if (origin === 'file') {
     return { kind: 'none', reason: 'file' };
   }
+  // A UI-added collection has no descriptor either, and this is the branch that
+  // used to be missing: `ui` was grouped with `descriptor` as "there is a file",
+  // which handed the link and unlink dialogs the COLLECTION FOLDER URL that
+  // `BrunoCollectionEntityProvider` stamps for it and let them offer a pull
+  // request against it. GitHub answers that read with a directory listing, so
+  // the flow died on "<path> is not a file" after the user had already granted
+  // a repo-write token. The collection's `spec.partOf` comes from the store row
+  // written when it was added; see `DescriptorAdvice` for what to do instead.
+  if (origin === 'ui') {
+    return { kind: 'none', reason: 'ui' };
+  }
 
-  // `descriptor`, `ui` and `unknown` all mean "there is a file", and for all
-  // three the location annotation is the only place its URL is recorded.
+  // `descriptor` and `unknown` both mean "there is a file", and for both the
+  // location annotation is the only place its URL is recorded.
   const location = entity.metadata.annotations?.[ANNOTATION_LOCATION];
   if (!location?.startsWith('url:')) {
     return { kind: 'none', reason: 'absent' };

@@ -235,7 +235,7 @@ export function RelatedApisCard(): JSX.Element {
 
   let body: JSX.Element;
   // Why this collection's `spec.partOf` cannot be edited from here, when it
-  // cannot — the same four cases the link and unlink dialogs explain, in the one
+  // cannot — the same five cases the link and unlink dialogs explain, in the one
   // place a reader looking at an empty card will actually be. It is no longer
   // the end of the road, so it is followed by the action that still works.
   const location = descriptorLocation(entity);

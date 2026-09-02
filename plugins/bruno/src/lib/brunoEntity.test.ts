@@ -1,6 +1,8 @@
 import type { Entity } from '@backstage/catalog-model';
 import {
+  BRUNO_ORIGIN_ANNOTATION,
   BRUNO_RUNTIME_PART_OF_ANNOTATION,
+  descriptorLocation,
   linkSource,
   runtimePartOfRefs
 } from './brunoEntity';
@@ -40,6 +42,81 @@ describe('runtimePartOfRefs', () => {
         collection({ runtime: 'api:default/a, api:default/b,,api:default/a' })
       )
     ).toEqual(['api:default/a', 'api:default/b']);
+  });
+});
+
+/**
+ * The entity as an ingester actually emits it: an origin and a
+ * `managed-by-location`, which together are the whole input to
+ * `descriptorLocation`.
+ */
+function located(origin: string | undefined, location: string): Entity {
+  return {
+    apiVersion: 'usebruno.com/v1alpha1',
+    kind: 'Bruno',
+    metadata: {
+      name: 'payments',
+      annotations: {
+        'backstage.io/managed-by-location': location,
+        ...(origin !== undefined && { [BRUNO_ORIGIN_ANNOTATION]: origin })
+      }
+    },
+    spec: { type: 'bruno-collection', url: 'https://github.com/acme/apis' }
+  } as Entity;
+}
+
+describe('descriptorLocation', () => {
+  const descriptor
+    = 'url:https://github.com/acme/apis/blob/main/catalog-info.yaml';
+  const folder = 'url:https://github.com/acme/apis/tree/main/payments';
+
+  it('names the descriptor for an authored catalog-info.yaml', () => {
+    expect(descriptorLocation(located('descriptor', descriptor))).toEqual({
+      kind: 'url',
+      target: 'https://github.com/acme/apis/blob/main/catalog-info.yaml'
+    });
+  });
+
+  it('has no descriptor for a collection added from the Bruno dashboard', () => {
+    // The regression this guards: `ui` was grouped with `descriptor`, so the
+    // link and unlink dialogs were handed the COLLECTION FOLDER the provider
+    // stamps for a store row and offered a pull request against it.
+    expect(descriptorLocation(located('ui', folder))).toEqual({
+      kind: 'none',
+      reason: 'ui'
+    });
+  });
+
+  it('has no descriptor for the provider, discovery or a file', () => {
+    expect(descriptorLocation(located('config', folder)))
+      .toEqual({ kind: 'none', reason: 'provider' });
+    expect(descriptorLocation(located('discovery', folder)))
+      .toEqual({ kind: 'none', reason: 'discovery' });
+    expect(descriptorLocation(located('file', 'file:/etc/bruno.yaml')))
+      .toEqual({ kind: 'none', reason: 'file' });
+  });
+
+  it('falls back to the location shape for an unstamped entity', () => {
+    // No origin at all — an older backend, or the window before the first
+    // processing run. A YAML location is a descriptor; a folder cannot be one,
+    // and reads as the provider's, which is the same "no descriptor" answer.
+    expect(descriptorLocation(located(undefined, descriptor))).toEqual({
+      kind: 'url',
+      target: 'https://github.com/acme/apis/blob/main/catalog-info.yaml'
+    });
+    expect(descriptorLocation(located(undefined, folder)))
+      .toEqual({ kind: 'none', reason: 'provider' });
+  });
+
+  it('reports an absent location rather than throwing', () => {
+    expect(
+      descriptorLocation({
+        apiVersion: 'usebruno.com/v1alpha1',
+        kind: 'Bruno',
+        metadata: { name: 'payments' },
+        spec: { type: 'bruno-collection', url: 'https://github.com/acme/apis' }
+      } as Entity)
+    ).toEqual({ kind: 'none', reason: 'absent' });
   });
 });
 

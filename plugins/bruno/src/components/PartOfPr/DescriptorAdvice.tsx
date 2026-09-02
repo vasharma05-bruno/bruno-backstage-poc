@@ -23,8 +23,9 @@ const WORDING: Record<
  * The advice depends on where the collection is DECLARED, not on where it
  * lives, and `descriptorLocation` carries a distinct reason for each case
  * precisely so the copy can differ: telling the operator of a
- * `bruno.collections[]` entry to edit a `catalog-info.yaml` sends them looking
- * for a file that does not exist.
+ * `bruno.collections[]` entry — or the user who added one from the Bruno
+ * dashboard — to edit a `catalog-info.yaml` sends them looking for a file that
+ * does not exist.
  *
  * A hook rather than a component because the answer is what the surrounding
  * dialog or card branches on, and it needs the SCM integrations to give it —
@@ -32,7 +33,7 @@ const WORDING: Record<
  * register that API and `useApi` throws at render time for a missing one.
  *
  * Holding it in one place is what keeps the link, unlink and empty-card copy
- * describing the same four situations the same way.
+ * describing the same five situations the same way.
  */
 export function useDescriptorAdvice(opts: {
   location: DescriptorLocation;
@@ -79,6 +80,26 @@ export function useDescriptorAdvice(opts: {
         <code>app-config.yaml</code>, so there is no descriptor to open a pull
         request against. {Verb} {ref} {preposition} that entry&apos;s{' '}
         <code>partOf</code> list and restart Backstage.
+      </InlineNotice>
+    );
+  }
+
+  if (location.reason === 'ui') {
+    // Added from the Bruno dashboard: the entity comes from a row in the
+    // `bruno` backend's store, and `BrunoCollectionEntityProvider` stamps the
+    // collection FOLDER as its location — so there is no more a descriptor here
+    // than there is for a `bruno.collections[]` entry, and this used to be read
+    // as one. The row is not editable in place, so what the dashboard can
+    // actually do is name the links again on a fresh add.
+    return (
+      <InlineNotice className={className}>
+        Added from the Bruno dashboard, so what declares this collection is a
+        record Backstage keeps rather than a <code>catalog-info.yaml</code> —
+        there is no descriptor to open a pull request against. Its{' '}
+        <code>spec.partOf</code> was fixed when the collection was added: to{' '}
+        {verb} {ref} {preposition} it, remove the collection from the dashboard
+        and add it again with the APIs you want under{' '}
+        <strong>Related APIs</strong>.
       </InlineNotice>
     );
   }

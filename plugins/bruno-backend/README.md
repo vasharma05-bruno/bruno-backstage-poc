@@ -328,21 +328,24 @@ would never land at all rather than merely losing one relation.
 `usebruno.com/origin` has five values, and it exists because the frontend used to
 guess by asking whether `managed-by-location` ended in `.yaml`. That guess is
 right for every case we ship and wrong for two we cannot rule out: a descriptor
-served from a URL with no YAML suffix, and a collection onboarded through the
-Bruno UI, which produces a descriptor indistinguishable from a hand-written one.
+served from a URL with no YAML suffix, and a collection added from the Bruno
+dashboard, whose folder location is indistinguishable from a
+`bruno.collections[]` entry's — the same "no descriptor" answer, but a different
+thing to edit.
 
 | Value | Written by | What has to be edited to change the collection |
 | --- | --- | --- |
 | `config` | the provider, for a `bruno.collections[]` entry | `app-config.yaml`; there is no descriptor file anywhere |
-| `ui` | the Bruno plugin, into the `catalog-info.yaml` it generates | that descriptor — and the dashboard's Remove action is offered |
+| `ui` | the provider, for a collection added from the dashboard's **Add collection** | the store row; like `config` there is no descriptor file anywhere, so no pull request can be opened against one. The dashboard's Remove action is offered |
 | `discovery` | the provider, for a collection swept out of a `bruno.discovery[]` organization | nothing local: it is re-derived from source control every tick. Authoring a `kind: Bruno` `catalog-info.yaml` in the repository takes the collection over, because discovery defers to one |
 | `file` | the processor, for a `catalog.locations` entry of `type: file` | the file on the Backstage host's disk; it is not in an SCM and cannot take a pull request |
 | `descriptor` | the processor, by default | the hand-authored `catalog-info.yaml` in source control |
 
 An existing value always wins (`deriveOrigin`), and that is what makes the scheme
-work with one annotation instead of three: the provider stamps `config` on the
-unprocessed entity, the UI writes `ui` into the descriptor it generates, and the
-processor only names the two cases nobody else can. It follows that an authored
+work with one annotation instead of three: the provider stamps `config`, `ui` and
+`discovery` on the unprocessed entity, and the processor only names the two cases
+nobody else can. The descriptor the dashboard can generate instead stamps nothing,
+because it is an ordinary authored descriptor. It follows that an authored
 descriptor can claim an origin it does not have — accepted, since the file is the
 operator's own and a wrong value costs nothing worse than misdirected advice in a
 dialog.

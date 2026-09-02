@@ -75,9 +75,9 @@ export function useLinkMethod(prPossible: boolean): {
  * `prPossible` flag of its own: `useDescriptorAdvice` returns `undefined`
  * exactly when a pull request can be opened, so its presence both disables that
  * option and explains why — in the same words the unlink dialog and the empty
- * card use, which is what keeps four situations from being described four ways.
+ * card use, which is what keeps five situations from being described five ways.
  *
- * Before this existed those four cases ENDED the flow: the dialog rendered the
+ * Before this existed those five cases ENDED the flow: the dialog rendered the
  * advice and a Close button. The advice is unchanged; what changed is that it
  * is now the reason one option is unavailable rather than the reason there is
  * nothing to do.

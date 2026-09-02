@@ -99,8 +99,13 @@ export const ORIGIN_ANNOTATION = 'usebruno.com/origin';
 /**
  * - `config` — a `bruno.collections[]` entry in `app-config.yaml`. Stamped by
  *   `BrunoCollectionEntityProvider`; there is no descriptor file anywhere.
- * - `ui` — onboarded through the Bruno plugin, which opened a pull request for
- *   the `catalog-info.yaml` and wrote this annotation into it.
+ * - `ui` — added from the Bruno dashboard, which stores the collection as a row
+ *   in this backend. Stamped by `BrunoCollectionEntityProvider`, which emits the
+ *   entity from that row and stamps the collection FOLDER as its location: like
+ *   `config` there is no descriptor file anywhere, and the row is what has to be
+ *   changed to change the collection. NOT the dashboard's other ending — the
+ *   pull request that authors a `catalog-info.yaml` registers nothing here, and
+ *   its descriptor is `descriptor`-origin (see `generateCatalogInfo.ts`).
  * - `discovery` — swept out of an organization named by `bruno.discovery[]`.
  *   Stamped by `BrunoCollectionEntityProvider`; like `config` there is no
  *   descriptor file anywhere, and unlike `config` there is no config entry to
@@ -135,7 +140,9 @@ const ORIGINS: readonly string[] = [
  * unprocessed entity, the UI writes `ui` into the descriptor it generates, and
  * this processor only has to name the two cases nobody else can — a descriptor
  * on disk versus one in source control, which the location's own type already
- * distinguishes.
+ * distinguishes. (The provider stamps `ui` too, for a collection added from the
+ * dashboard; the descriptor the dashboard can generate instead deliberately
+ * declares no origin at all, because it is an ordinary authored descriptor.)
  *
  * An authored `catalog-info.yaml` can therefore also claim an origin it does not
  * have. That is accepted: the descriptor is the operator's own file, and a wrong
