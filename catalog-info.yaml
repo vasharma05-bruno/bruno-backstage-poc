@@ -3,9 +3,16 @@ kind: Component
 metadata:
   name: usebruno
   description: An example of a Backstage application.
+  annotations:
+    # Where this app's own source lives. `source-location` is what
+    # `getEntitySourceLocation` prefers, so the About card's "View Source"
+    # link points at GitHub even though the descriptor below is ingested
+    # from disk via a `file:` location. Trailing slash: it names a folder.
+    backstage.io/source-location: url:https://github.com/vasharma05-bruno/bruno-backstage-poc/tree/main/
+    # Consumed by the GitHub plugins (actions, pull requests, insights) if
+    # they are ever installed; harmless otherwise.
+    github.com/project-slug: vasharma05-bruno/bruno-backstage-poc
   # Example for optional annotations
-  # annotations:
-  #   github.com/project-slug: backstage/backstage
   #   backstage.io/techdocs-ref: dir:.
 spec:
   type: website

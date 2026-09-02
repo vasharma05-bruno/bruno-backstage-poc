@@ -319,6 +319,16 @@ catalog:
     - type: url
       target: https://github.com/vasharma05-bruno/private-bruno-collection/blob/main/catalog-info.yaml
 
+    # This app's own catalog-info.yaml, so the catalog knows the repo it is
+    # served from. Read from disk rather than as a `type: url` GitHub target:
+    # a URL location would ingest whatever is on `main`, so the descriptor in
+    # a working tree (or on a branch) would be ignored by the very instance
+    # running it. The GitHub URL still reaches the UI through the entity's
+    # `backstage.io/source-location` annotation, which `getEntitySourceLocation`
+    # prefers over this location.
+    - type: file
+      target: ../../catalog-info.yaml
+
     # Local example data, file locations are relative to the backend process, typically `packages/backend`
     - type: file
       target: ../../examples/entities.yaml
