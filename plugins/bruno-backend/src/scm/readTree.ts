@@ -25,9 +25,16 @@ export interface ScmTreeRead {
  *
  * Passing `etag` turns the call into a revalidation: when the target's tree
  * identity still matches, the reader throws `NotModifiedError` BEFORE
- * downloading the tarball, so the round trip costs one metadata API call. That
- * error PROPAGATES to the caller — it is the cheap path, not a failure, and the
- * caller is expected to catch it and keep its cached copy.
+ * downloading the tarball. That error PROPAGATES to the caller — it is the cheap
+ * path, not a failure, and the caller is expected to catch it and keep its
+ * cached copy.
+ *
+ * Be precise about what "cheap" means here, because it is easy to over-read.
+ * This etag is a CLIENT-SIDE commit-sha compare, not an HTTP 304: the reader
+ * spends 1-2 API calls (2 on GitLab) resolving the sha before it can compare.
+ * It saves the DOWNLOAD and the parse, and no rate-limit quota at all. The
+ * quota-free check is `ScmProvider.checkTreeIdentity`, which `manifestProbe`
+ * runs in front of this.
  *
  * A `readTree` response is single-consumption: `files()` is called exactly once
  * here, and callers wanting a second view must read again.
@@ -39,10 +46,10 @@ export async function readTreeWithEtag(args: {
   etag?: string;
 }): Promise<ScmTreeRead> {
   const { reader, url, logger, etag } = args;
-  // A revalidation is the HOT path: with a 60s cache TTL it runs once per
-  // collection per minute forever, so it must not be an info line. A cold read
-  // is the rare, expensive one and stays at info — it is also what boot check 5
-  // counts to prove the cache is doing its job.
+  // A revalidation is still a warm path — reached whenever the probe's
+  // conditional request could not answer — so it must not be an info line. A
+  // cold read is the rare, expensive one and stays at info; it is also what
+  // boot check 5 counts to prove the cache is doing its job.
   if (etag) {
     logger.debug(`Revalidating Bruno collection tree (ETag): ${url}`);
   } else {

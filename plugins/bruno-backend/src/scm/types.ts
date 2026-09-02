@@ -1,3 +1,5 @@
+import type { TreeIdentity, TreeIdentityCheck } from './treeIdentity';
+
 /** A flat map of collection-relative file path -> file contents. */
 export type ScmFileTree = Map<string, string>;
 
@@ -38,8 +40,8 @@ export interface ParsedRepoUrl {
  * could only ever be filled by a token borrowed from an unrelated request.
  *
  * RETAINED DELIBERATELY, and only partly reached today. `manifestProbe` is the
- * one consumer, and it calls `normalizeUrl` and `assertConfigured` only. These
- * three have no caller on this branch:
+ * one consumer, and it calls `normalizeUrl`, `assertConfigured` and
+ * `checkTreeIdentity` only. These three have no caller on this branch:
  *
  *   composeCollectionUrl    multi-collection discovery — composes the stored
  *                           `spec.url` for each root found inside one repo
@@ -101,6 +103,27 @@ export interface ScmProvider {
    * all three public hosts self-default, not just github.com.
    */
   assertConfigured(url: string): void;
+
+  /**
+   * Cheaply answers whether the collection tree behind `url` still matches the
+   * one a cached snapshot was built from, using a CONDITIONAL HTTP request.
+   *
+   * OPTIONAL, and absent for GitLab and Bitbucket Cloud on purpose — see the
+   * header of `scm/treeIdentity.ts`. A provider without it, and any failure of
+   * one with it, falls through to `readTree` exactly as before.
+   *
+   * Must be TOTAL: report `unknown` rather than throwing. The caller treats
+   * this as an optimisation in front of a read it is willing to make anyway,
+   * and the read's error is the one with a URL and a credential behind it.
+   *
+   * `cached` is whatever this same method returned last time, or `undefined`
+   * the first time a tree is checked — in which case there is nothing to send
+   * an `If-None-Match` for and the only honest answer is `changed`.
+   */
+  checkTreeIdentity?(args: {
+    url: string;
+    cached?: TreeIdentity;
+  }): Promise<TreeIdentityCheck>;
 
   /**
    * Resolves the repo's default branch, using the host's integration credential.

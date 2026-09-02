@@ -43,7 +43,8 @@ The two are separate backend features with no wiring between them, which is why
 each builds its own `ManifestProbe` (`src/plugin.ts`, `src/module.ts`). Sharing
 one in process would be wrong on a multi-replica deployment anyway; the cost is
 one duplicated tree read the first time a scanned collection is then ingested,
-and every read after that is an ETag revalidation.
+and every check after that is a revalidation — see
+[Fetching and caching](#fetching-and-caching) for the two tiers.
 
 `catalog.rules` must also allow the `Bruno` kind for the locations that carry
 Bruno entities. `catalog.rules` only *permits* a kind, though — it does not
@@ -250,6 +251,12 @@ and flow through the identical processing loop as authored ones. Only *identity*
 differs: `metadata.name` cannot be supplied by a processor — the catalog freezes
 the entity ref before any processor runs and throws a `ConflictError` if one
 changes it — so it is derived here from the URL's last path segment.
+
+It makes **no SCM request**. `title`, `description` and `version` are left to the
+processor, which derives all three from its own probe; stamping them here as well
+meant a duplicate tree read per collection per tick for values that were being
+computed regardless. The visible cost is that a newly emitted collection shows
+its `metadata.name` until the first processing run, which follows within seconds.
 
 ### `spec`
 
@@ -519,20 +526,53 @@ would change.
 ## Fetching and caching
 
 [`src/service/manifestProbe.ts`](src/service/manifestProbe.ts) is the single
-fetch + detect + extract + generate seam behind `kind: Bruno`. The processor and
-the provider share one instance per feature, so two entities pointing at the same
-repository cost one `readTree` rather than one each per reprocess cycle. One tree
-read produces **both** the manifest metadata and the OpenCollection definition,
-cached as one entry.
+fetch + detect + extract + generate seam behind `kind: Bruno`. One tree read
+produces **both** the manifest metadata and the OpenCollection definition, cached
+as one entry, so two entities pointing at the same repository cost one `readTree`
+rather than one each per reprocess cycle.
+
+`BrunoKindProcessor` is the only consumer of this probe.
+`BrunoCollectionEntityProvider`'s **emission loop reads nothing** — its only SCM
+traffic is the discovery sweep, which is a repository listing per configured
+organization rather than a read per collection. The loop used to probe every
+collection on every tick to stamp `title`/`description`/`version`, duplicating
+what the processor derives from the same probe moments later. With a 60 s tick
+against a 60 s TTL every tick was a guaranteed cache miss, so that loop alone
+accounted for roughly two thirds of steady-state Git traffic and computed nothing
+new.
+
+Removing it gave up the no-manifest prune, in two cases that now land as a
+degraded entity instead: a `bruno.collections[]` entry pointing at the wrong
+folder (the processor logs the same diagnostic), and a discovered collection
+whose manifest moved between the sweep and the emit (self-healing — the sweep
+only proposes roots it found a manifest in, so the next tick drops it by set
+difference).
 
 The cache is not an optimisation. The catalog reprocesses every entity every
 100–150 s by default, so an uncached probe would hammer the SCM host. Past the
-TTL (`bruno.cacheTtlSeconds`, default 60) the read is an **ETag revalidation**,
-not a re-download: every reader in use resolves the commit sha first and throws
-`NotModifiedError` before fetching the tarball, so a stale-but-unchanged entry
-costs one metadata API call and skips parsing and generation entirely. A matching
-etag is also a stronger byte-stability guarantee than generator determinism
-alone.
+TTL (`bruno.cacheTtlSeconds`, default 60) there are **two revalidation tiers**,
+cheapest first:
+
+1. **A conditional HTTP request** — `ScmProvider.checkTreeIdentity`, implemented
+   for GitHub, replaying a stored `If-None-Match` against
+   `GET /repos/{owner}/{repo}/commits` scoped to the collection's own subpath.
+   Measured 2026-09-02 against `api.github.com`: **authenticated** 304s consume
+   no primary rate-limit quota (three in a row left `x-ratelimit-remaining` at
+   4834), so an unchanged collection on a host with an `integrations.github`
+   credential costs nothing per cycle. Unauthenticated 304s *do* decrement, so
+   the zero-quota win requires a configured token. GitLab and Bitbucket Cloud
+   have no implementation and skip to tier 2.
+2. **The reader's ETag.** Worth stating precisely, because this document
+   previously got it wrong: `readTree`'s etag is a *client-side commit-sha
+   compare*, not an HTTP 304. The reader spends 1–2 API calls (2 on GitLab)
+   resolving the sha and only then throws `NotModifiedError`. It saves the
+   tarball download and the parse — and no quota at all. That is precisely why
+   tier 1 exists.
+
+Either tier matching is also a stronger byte-stability guarantee than generator
+determinism alone. A provider without tier 1, and any failure of one with it,
+falls through to tier 2 exactly as before; nothing there can turn a readable
+collection into an unreadable one.
 
 `probe(url)` distinguishes three outcomes and callers must too: a snapshot, or
 `undefined` for "the tree read fine but held no `bruno.json` /
@@ -544,8 +584,8 @@ constructed inside the *catalog module* while the router lives in the `bruno`
 plugin — reaching it would be a shared in-process import across a plugin
 boundary, and silently wrong on any multi-replica deployment where the evict
 lands in a process that is not the one serving the next processing run. Sync
-converges within `bruno.cacheTtlSeconds` instead, which ETag revalidation makes
-cheap enough to keep short.
+converges within `bruno.cacheTtlSeconds` instead, which conditional-request
+revalidation makes cheap enough to keep short.
 
 ## Credential isolation
 

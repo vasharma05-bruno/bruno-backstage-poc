@@ -1,23 +1,31 @@
 /**
  * The single fetch + detect + extract + GENERATE seam behind `kind: Bruno`.
  *
- * Both the `BrunoKindProcessor` (authored `catalog-info.yaml` entities) and the
- * `BrunoCollectionEntityProvider` (`bruno.collections[]` entities) go through
- * one shared instance, so two entities pointing at the same repo share a single
- * `readTree` call. The cache is not an optimisation: the catalog reprocesses
+ * `BrunoKindProcessor` is the only background consumer: the catalog reprocesses
  * every entity every 100-150s by default, so an uncached probe would hammer the
- * SCM host.
+ * SCM host. (`BrunoCollectionEntityProvider` deliberately does NOT probe — its
+ * enrichment was a duplicate of the processor's, so it now reads nothing; see
+ * that class's header.)
  *
  * One tree read produces BOTH the manifest metadata and the collection's
  * OpenCollection definition, cached as one entry — splitting them into a cheap
- * and an expensive probe would cost a second read whenever the provider warmed a
- * manifest-only entry that the processor then had to upgrade.
+ * and an expensive probe would cost a second read whenever one warmed a
+ * manifest-only entry that the other then had to upgrade.
  *
- * Past the TTL the read is an ETag revalidation, not a re-download: every reader
- * we use resolves the commit sha first and throws `NotModifiedError` before
- * fetching the tarball, so a stale-but-unchanged entry costs one metadata API
- * call and skips parsing and generation entirely. A matching etag is also a
- * stronger byte-stability guarantee than generator determinism alone.
+ * PAST THE TTL, TWO REVALIDATION TIERS, cheapest first:
+ *
+ *  1. A conditional HTTP request via `ScmProvider.checkTreeIdentity`. An
+ *     authenticated GitHub 304 costs no rate-limit quota at all, so an unchanged
+ *     collection on a host with an `integrations.github` credential is free.
+ *     GitLab and Bitbucket Cloud have no implementation and skip to tier 2.
+ *  2. The reader's ETag. Worth being precise about, because the shape of this
+ *     module used to assume otherwise: it is a CLIENT-SIDE commit-sha compare,
+ *     not an HTTP 304 — the reader spends 1-2 API calls resolving the sha and
+ *     only then throws `NotModifiedError`. It saves the tarball download and
+ *     the parse; it saves no quota. Hence tier 1.
+ *
+ * Either tier matching is also a stronger byte-stability guarantee than
+ * generator determinism alone.
  *
  * Credential isolation: reads go through the injected `UrlReaderService` using
  * the host's `integrations.*` credentials only. There is deliberately NO
@@ -42,14 +50,16 @@ import {
   isOpenCollectionManifest,
   readTreeWithEtag
 } from '../scm';
+import type { TreeIdentity, TreeIdentityCheck } from '../scm/treeIdentity';
+import type { ScmProvider } from '../scm/types';
 import { buildDefinition, type DefinitionOptions } from './definitionBuilder';
 import { posixDirname } from '../posixPath';
 
 /**
- * Deliberately short. With ETag revalidation the marginal cost of a stale entry
- * is one metadata API call rather than a tarball download plus a full parse, and
- * this value is the upper bound on how long the PRD's Sync button takes to show
- * new content — a five-minute window makes it look broken.
+ * Deliberately short. It is the upper bound on how long the PRD's Sync button
+ * takes to show new content — a five-minute window makes it look broken — and
+ * the marginal cost of a stale entry is now a conditional request the host
+ * answers 304 to, which on an authenticated GitHub host is free.
  */
 const DEFAULT_TTL_MS = 60_000;
 const DEFAULT_FAILURE_TTL_MS = 60_000;
@@ -105,8 +115,8 @@ export interface ManifestProbe {
    * shared in-process import across a plugin boundary — and silently wrong on
    * any multi-replica deployment, where the evict lands in a process that is not
    * the one serving the next processing run. Sync instead converges within
-   * `bruno.cacheTtlSeconds`, which ETag revalidation makes cheap enough to keep
-   * short. Do not wire a cross-plugin import to reach this (BE-P2 §1 Q3); it
+   * `bruno.cacheTtlSeconds`, which conditional-request revalidation makes cheap
+   * enough to keep short. Do not wire a cross-plugin import to reach this (BE-P2 §1 Q3); it
    * stays as the correct seam for the day the cache becomes shared.
    */
   evict(url: string): void;
@@ -115,16 +125,31 @@ export interface ManifestProbe {
   normalize(url: string): string;
 }
 
-/** `etag` is the reader's identity for the tree the entry was built from; with
- *  it a stale entry can be revalidated instead of re-read. */
+/**
+ * Two identities per entry, for the two revalidation paths, cheapest first.
+ *
+ * `identity` is the provider's handle for a CONDITIONAL HTTP request. When the
+ * host answers 304 the entry is current and, on GitHub, the exchange cost no
+ * rate-limit quota at all.
+ *
+ * `etag` is the reader's own tree identity, which it compares CLIENT-SIDE after
+ * spending 1-2 API calls to resolve the commit sha. It saves the tarball
+ * download, not the quota — which is exactly why `identity` is tried first.
+ */
 type CacheEntry
   = | {
     kind: 'found';
     value: CollectionSnapshot;
     etag?: string;
+    identity?: TreeIdentity;
     fetchedAt: number;
   }
-  | { kind: 'absent'; etag?: string; fetchedAt: number }
+  | {
+    kind: 'absent';
+    etag?: string;
+    identity?: TreeIdentity;
+    fetchedAt: number;
+  }
   | { kind: 'error'; message: string; fetchedAt: number };
 
 export function createManifestProbe(options: {
@@ -202,6 +227,35 @@ export function createManifestProbe(options: {
     return e instanceof NotModifiedError || (e as Error)?.name === 'NotModifiedError';
   }
 
+  /**
+   * Runs the provider's conditional-request check, downgrading EVERY failure to
+   * "could not tell".
+   *
+   * Total by design. This is an optimisation in front of a read the caller is
+   * willing to make anyway, so a provider with no implementation (GitLab,
+   * Bitbucket Cloud), a host that answers oddly, and a network blip must all
+   * land on that read rather than failing the probe. The read's error is the one
+   * worth surfacing — it is the one that names the URL and the credential.
+   */
+  async function checkIdentity(
+    provider: ScmProvider,
+    url: string,
+    cached: TreeIdentity | undefined
+  ): Promise<TreeIdentityCheck | undefined> {
+    if (!provider.checkTreeIdentity) {
+      return undefined;
+    }
+    try {
+      return await provider.checkTreeIdentity({ url, cached });
+    } catch (e) {
+      logger.debug(
+        `Bruno collection tree identity check failed for ${url}; falling back `
+        + `to a full read: ${String((e as Error)?.message ?? e)}`
+      );
+      return undefined;
+    }
+  }
+
   async function probe(url: string): Promise<CollectionSnapshot | undefined> {
     const provider = providers.byUrl(url);
     const normalized = provider.normalizeUrl(url);
@@ -211,11 +265,14 @@ export function createManifestProbe(options: {
       return unwrap(cached);
     }
 
-    // A stale non-error entry is REVALIDATED rather than re-read: handing the
-    // reader the etag it gave us makes it resolve the commit sha and stop there
-    // when nothing moved, so the whole cycle is one metadata API call.
-    const previousEtag
-      = cached && cached.kind !== 'error' ? cached.etag : undefined;
+    // The only entry worth revalidating. An `error` entry has no tree behind it,
+    // so there is nothing to compare against and both cheap paths are unusable.
+    const reusable = cached && cached.kind !== 'error' ? cached : undefined;
+
+    // Hoisted out of the `try` because the `NotModifiedError` branch below has
+    // to store it too — see the comment there. It is the identity to persist
+    // with whatever this run produces.
+    let nextIdentity: TreeIdentity | undefined = reusable?.identity;
 
     let entry: CacheEntry;
     try {
@@ -223,11 +280,43 @@ export function createManifestProbe(options: {
       // entry produces the named diagnostic rather than a bare FetchUrlReader
       // failure further down.
       provider.assertConfigured(url);
+
+      // TIER 1 — a conditional HTTP request, and the whole reason for this
+      // ordering. An authenticated GitHub 304 costs no rate-limit quota, so a
+      // collection nobody has pushed to is free per cycle. Skipped when there
+      // is nothing cached: with no snapshot to keep, the check could only ever
+      // report `changed` and would be a pure extra call.
+      const check = reusable
+        ? await checkIdentity(provider, normalized, reusable.identity)
+        : undefined;
+
+      // `reusable` is implied by `check` being defined at all, but restating it
+      // is what lets the spread below narrow.
+      if (reusable && check?.status === 'unchanged') {
+        // Restart the TTL and hand back the SAME value instance — regenerating
+        // would produce an equal string, but skipping it avoids a whole-tree
+        // parse. `debug`, not `info`: this is the hot path, once per entity per
+        // TTL forever.
+        logger.debug(
+          `Bruno collection tree unchanged (conditional request): ${normalized}`
+        );
+        const revalidated: CacheEntry = { ...reusable, fetchedAt: Date.now() };
+        lruSet(normalized, revalidated);
+        return unwrap(revalidated);
+      }
+      if (check?.status === 'changed') {
+        nextIdentity = check.identity;
+      }
+
+      // TIER 2 — the reader's own etag. Reached when nothing is cached, when
+      // tier 1 said the tree moved, or when it could not tell. Handing back the
+      // etag it gave us still saves the TARBALL when only the repo's identity
+      // moved; it does not save the 1-2 calls spent reaching that verdict.
       const read = await readTreeWithEtag({
         reader,
         url: normalized,
         logger,
-        etag: previousEtag
+        etag: reusable?.etag
       });
       const manifest = detectManifest(read.files, normalized, logger);
       entry = manifest
@@ -235,19 +324,33 @@ export function createManifestProbe(options: {
             kind: 'found',
             value: toSnapshot(manifest, read.files, normalized),
             etag: read.etag,
+            identity: nextIdentity,
             fetchedAt: Date.now()
           }
-        // The etag is stored for the manifest-less case too, so a repo that is
-        // not a Bruno collection is revalidated just as cheaply.
-        : { kind: 'absent', etag: read.etag, fetchedAt: Date.now() };
+        // Both identities are stored for the manifest-less case too, so a repo
+        // that is not a Bruno collection is revalidated just as cheaply.
+        : {
+            kind: 'absent',
+            etag: read.etag,
+            identity: nextIdentity,
+            fetchedAt: Date.now()
+          };
     } catch (e) {
-      if (isNotModified(e) && cached && cached.kind !== 'error') {
-        // The tree is byte-for-byte what we already parsed. Restart the TTL and
-        // hand back the SAME value instance: regenerating would produce an equal
-        // string, but skipping it avoids a whole-tree parse on the hot path.
-        // `debug`, not `info` — this runs once per entity per TTL.
+      if (isNotModified(e) && reusable) {
+        // The tree is byte-for-byte what we already parsed.
         logger.debug(`Bruno collection tree unchanged (ETag): ${normalized}`);
-        const revalidated: CacheEntry = { ...cached, fetchedAt: Date.now() };
+        const revalidated: CacheEntry = {
+          ...reusable,
+          // Carried forward HERE TOO, and this is load-bearing rather than
+          // tidy. An entry with no stored identity — every entry on its first
+          // cycle — makes tier 1 answer `changed` for want of an
+          // `If-None-Match`, and it is this read that discovers nothing moved.
+          // Dropping the identity tier 1 just learned would replay the empty
+          // `If-None-Match` forever, so the free path would never be reached at
+          // all: the seeding call has to be paid once, not every cycle.
+          identity: nextIdentity,
+          fetchedAt: Date.now()
+        };
         lruSet(normalized, revalidated);
         return unwrap(revalidated);
       }

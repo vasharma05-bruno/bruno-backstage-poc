@@ -8,7 +8,70 @@ import {
   normalizePathStyleUrl,
   originPlusSegments
 } from './normalize';
+import { conditionalGetJson } from './treeIdentity';
 import type { ParsedRepoUrl, ScmProvider } from './types';
+
+/**
+ * Headers for a raw GitHub API call, carrying the same host credential the
+ * UrlReader uses — a PAT or a GitHub App installation token, whichever
+ * `integrations.github` configured — and nothing else.
+ *
+ * Falls back to ANONYMOUS when there is no credential for this repo, which is
+ * all a public repo needs and the honest failure for a private one: the caller
+ * downgrades a failure to "could not tell" and the subsequent `readTree`
+ * produces the error that actually names the problem. The credential is never
+ * logged.
+ */
+async function githubApiHeaders(
+  githubCredentials: GithubCredentialsProvider,
+  url: string
+): Promise<Record<string, string>> {
+  const base: Record<string, string> = {
+    'accept': 'application/vnd.github+json',
+    'x-github-api-version': '2022-11-28'
+  };
+  try {
+    const credentials = await githubCredentials.getCredentials({ url });
+    // `headers` is preferred over `token`: it is what the provider fills in for
+    // a GitHub App, and it already carries the right scheme for each type.
+    if (credentials.headers) {
+      return { ...base, ...credentials.headers };
+    }
+    if (credentials.token) {
+      return { ...base, authorization: `Bearer ${credentials.token}` };
+    }
+  } catch {
+    // No host credential for this repo (e.g. a GitHub App not installed there).
+  }
+  return base;
+}
+
+/**
+ * `parseRepoUrl` lifts its subpath out of `URL.pathname`, which is still
+ * percent-encoded (`collections/Orders%20API`); the API wants the decoded path
+ * and `searchParams` re-encodes it.
+ *
+ * Returns `''` on an undecodable path — a stray `%` that is not a valid escape.
+ * That drops the path scoping, which is SAFE: an unscoped identity tracks the
+ * whole repo, so it over-invalidates (a push anywhere costs one read) but can
+ * never under-invalidate.
+ */
+function decodeSubpath(subpath: string): string {
+  try {
+    return subpath.split('/').map(decodeURIComponent).join('/');
+  } catch {
+    return '';
+  }
+}
+
+/** The `sha` of the first entry of a `GET /commits` response. */
+function firstCommitSha(body: unknown): string | undefined {
+  if (!Array.isArray(body)) {
+    return undefined;
+  }
+  const sha = (body[0] as { sha?: unknown } | undefined)?.sha;
+  return typeof sha === 'string' && sha ? sha : undefined;
+}
 
 /** Parses `owner/repo` and an optional `/tree/<ref>/<subpath>` from a URL. */
 function parseRepoUrl(url: string): ParsedRepoUrl {
@@ -81,6 +144,76 @@ export function createGithubScmProvider(options: {
      * plugin accepts today. GHE without an entry fails at read time, as before.
      */
     assertConfigured() {},
+
+    /**
+     * A conditional `GET /repos/{owner}/{repo}/commits` — the free path.
+     *
+     * Two properties do the work. An AUTHENTICATED 304 costs no primary
+     * rate-limit quota (measured — see `treeIdentity.ts`), so replaying the
+     * stored `If-None-Match` is free for a collection nobody has pushed to; with
+     * no host credential it costs one anonymous call instead, which is still no
+     * worse than the read it replaces. And `path` scopes the answer to the
+     * collection's own subfolder, so a push elsewhere in a shared repo does not
+     * invalidate it — a sharper question than `readTree`'s etag can ask, since
+     * that compares the whole repo's commit sha.
+     *
+     * Scoping to `path` is sound because `readTree` is called on the collection
+     * URL: the reader strips the archive root AND the subpath, so nothing above
+     * the subpath can reach the parsed collection.
+     *
+     * `per_page=1` because only the newest commit matters. Without a cached
+     * etag this spends one call and can only answer `changed` — that is the
+     * once-per-cache-entry cost of seeding the identity, and the caller stores
+     * the result even when the follow-up read reports nothing moved, so it is
+     * paid once rather than every cycle.
+     */
+    async checkTreeIdentity({ url, cached }) {
+      const { owner, repo, ref, subpath } = parseRepoUrl(url);
+
+      // GitHub owner/repo names admit only `[A-Za-z0-9._-]`, so the segments
+      // `parseRepoUrl` lifted out of `URL.pathname` carry no escapes to undo.
+      const endpoint = new URL(
+        `${apiBaseUrlFor(url)}/repos/${owner}/${repo}/commits`
+      );
+      endpoint.searchParams.set('per_page', '1');
+      if (ref) {
+        endpoint.searchParams.set('sha', ref);
+      }
+      const scopedPath = decodeSubpath(subpath);
+      if (scopedPath) {
+        endpoint.searchParams.set('path', scopedPath);
+      }
+
+      const result = await conditionalGetJson({
+        url: endpoint.toString(),
+        headers: await githubApiHeaders(githubCredentials, url),
+        ifNoneMatch: cached?.httpEtag
+      });
+
+      if (result.kind === 'not-modified') {
+        return { status: 'unchanged' };
+      }
+      if (result.kind === 'failed') {
+        return { status: 'unknown' };
+      }
+
+      const commit = firstCommitSha(result.body);
+      if (!commit) {
+        // An empty array: no commit touches that path, so the subpath does not
+        // exist on this ref (or the repo is empty). Not our error to report —
+        // defer to `readTree`, which fails with a message naming the URL.
+        return { status: 'unknown' };
+      }
+      // Belt and braces for a host that rotates an etag without changing
+      // content: the sha is the fact, the etag is only the cheap way to ask.
+      if (cached?.commit === commit) {
+        return { status: 'unchanged' };
+      }
+      return {
+        status: 'changed',
+        identity: { httpEtag: result.httpEtag, commit }
+      };
+    },
 
     /**
      * Resolves the repo's default branch via Octokit, with the host credential —

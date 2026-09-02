@@ -18,7 +18,7 @@ import type {
 } from '../discovery';
 import { readBrunoCollections } from '../service/brunoConfig';
 import { sanitizeName } from '../service/entityName';
-import type { CollectionManifest, ManifestProbe } from '../service/manifestProbe';
+import type { ManifestProbe } from '../service/manifestProbe';
 import type { BrunoEntity } from '../types';
 import type {
   StoredCollection,
@@ -48,6 +48,21 @@ const LOCATION_TYPE = 'bruno-collection';
  * supplied by a processor (the catalog freezes the entity ref before any
  * processor runs), so it is derived here from the URL's last path segment.
  *
+ * THE EMISSION LOOP READS NOTHING. The only SCM traffic this provider causes is
+ * the discovery sweep above it, which is a repository listing per configured
+ * organization rather than a read per collection.
+ *
+ * The loop used to probe every collection on every tick to stamp
+ * `title`/`description`/`version` on the unprocessed entity — pure duplication:
+ * the processor re-derives those same three fields from the same probe a moment
+ * later, and its `keep(authored) ?? fetched` precedence means the value it lands
+ * is identical either way. With a 60s tick against a 60s cache TTL every tick
+ * was a guaranteed cache miss, so the loop alone accounted for roughly two
+ * thirds of the plugin's steady-state Git traffic, spent to compute values that
+ * were already being computed. `probe` survives here for `normalize`, which is
+ * pure URL parsing and touches no network. What the removal gave up is spelled
+ * out on `run()`.
+ *
  * The location annotation is a real `url:` ref rather than a synthetic
  * `bruno-provider:` one. That is what makes the About card's native Refresh
  * button appear, and it is safe because `readLocation` only dereferences
@@ -72,7 +87,11 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
     private readonly options: {
       config: Config;
       logger: LoggerService;
-      probe: ManifestProbe;
+      /** Narrowed to `normalize` on purpose: this provider derives entity
+       *  identity from a URL and must not read the SCM host to do it. Widening
+       *  this back to the full `ManifestProbe` is how the duplicated per-tick
+       *  tree read would come back. */
+      probe: Pick<ManifestProbe, 'normalize'>;
       taskRunner: SchedulerServiceTaskRunner;
       /** Injected rather than constructed here, so this class stays a pure
        *  function of its inputs and the degrade branch in `run()` is reachable
@@ -100,7 +119,8 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
   }
 
   /**
-   * Re-reads both sources, probes each manifest, and emits entities.
+   * Re-reads all three sources and emits one entity per collection. Only the
+   * sweep touches the SCM host; the loop itself reads nothing.
    *
    * Emission is a `full` mutation, which the catalog applies by SET DIFFERENCE:
    * anything this provider emitted before and does not emit now is deleted
@@ -119,12 +139,30 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
    *  - A PER-COLLECTION SKIP inside the loop below DOES remove that one
    *    collection's entity, and for a UI-created collection that is destructive
    *    in a way a configured one is not: the entity is the only handle the
-   *    dashboard has on the stored row. So the no-manifest skip emits a
-   *    metadata-less entity instead when the entry came from the UI, and the
-   *    `normalize` skip is unreachable for one. The single case left is a name
-   *    a `bruno.collections[]` entry claimed first, which cannot be resolved
-   *    here — the operator's file legitimately wins — and surfaces in the
-   *    dashboard's pending strip as a stalled row with a Remove control.
+   *    dashboard has on the stored row. Only two skips remain, and neither can
+   *    strand one: `normalize` is unreachable for a stored row (its URL went
+   *    through the same idempotent `normalize` at `POST /collections`), and a
+   *    name collision surfaces in the dashboard's pending strip as a stalled row
+   *    with a Remove control. The URL dedupe is a third omission but drops only
+   *    DISCOVERED entries, which strand nothing — the next sweep re-derives them.
+   *
+   * WHAT THE PROBE REMOVAL GAVE UP, stated plainly because it is a real change.
+   * The loop used to prune an entry whose folder held NO
+   * bruno.json/opencollection manifest; both remaining cases now land as a
+   * degraded entity instead:
+   *
+   *  - A `bruno.collections[]` entry pointing at the wrong folder.
+   *    `BrunoKindProcessor` logs the same diagnostic on its own probe, so the
+   *    operator is still told, and they additionally get a visible entity —
+   *    a louder signal than an absence, and exactly what an authored
+   *    `catalog-info.yaml` with the same mistake has always produced.
+   *  - A DISCOVERED collection whose manifest moved between the sweep and the
+   *    emit. Self-healing and needs no prune: the sweep only ever proposes a
+   *    root it found a manifest in, so the next tick stops proposing it and the
+   *    `full` mutation drops the entity by set difference.
+   *
+   * Restoring the prune means restoring a tree read per collection per tick —
+   * not worth it for a config typo or a one-tick race.
    */
   async run(): Promise<void> {
     if (!this.connection) {
@@ -272,12 +310,11 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
       // `run()` before `applyMutation`, leaving every other configured
       // collection unpublished on this tick and every tick after it.
       //
-      // This skip is NOT a way to orphan a UI-created row, which is why it does
-      // not branch on origin the way the no-manifest one below does: a stored
-      // row's URL was put through this same `normalize` by `POST /collections`
-      // before it was written, and `normalize` is idempotent, so a URL that
-      // normalized once cannot throw here. Only a hand-edited
-      // `app-config.yaml` reaches this branch.
+      // This skip is NOT a way to orphan a UI-created row, which is why it
+      // needs no branch on origin: a stored row's URL was put through this same
+      // `normalize` by `POST /collections` before it was written, and
+      // `normalize` is idempotent, so a URL that normalized once cannot throw
+      // here. Only a hand-edited `app-config.yaml` reaches this branch.
       let url: string;
       try {
         url = probe.normalize(entry.url);
@@ -291,8 +328,12 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
         continue;
       }
 
-      // Before the probe, so a collection that is both configured and
-      // discovered costs one tree read rather than two.
+      // Not about the probe any more, and worth restating since it used to be:
+      // this guard predates the probe's removal, where its job was to keep a
+      // collection that is both configured and discovered from costing two tree
+      // reads. The provider reads nothing now, so what it prevents is the
+      // EMISSION of a second entity for one URL under a repo-derived name that
+      // would shadow the operator's chosen one.
       const claimedUrlBy = claimedUrls.get(url);
       if (entry.origin === 'discovery' && claimedUrlBy !== undefined) {
         logger.debug(
@@ -301,63 +342,6 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
         );
         deduped += 1;
         continue;
-      }
-
-      let manifest: CollectionManifest | undefined;
-      let unreadable = false;
-      try {
-        manifest = await probe.probe(entry.url);
-      } catch (e) {
-        // Emitted anyway: this is a `full` mutation, so dropping the entity on
-        // a transient read failure would delete an already-published entity.
-        logger.error(
-          `Bruno collection ${url}: could not read it: ${
-            String((e as Error)?.message ?? e)
-          }; emitting without collection metadata.`
-        );
-        unreadable = true;
-      }
-
-      if (!unreadable && !manifest) {
-        // Authoritative: an unreachable URL surfaces as a throw above, so
-        // `undefined` really does mean "read fine, no manifest there".
-        //
-        // AND SKIPPING IT IS ONLY SAFE FOR A CONFIGURED ENTRY. A skip drops the
-        // collection from a `full` mutation, which deletes its entity — and for
-        // a UI-created collection the entity is the ONLY handle on the row that
-        // produced it. The dashboard's Remove control is gated on the ENTITY's
-        // `usebruno.com/origin: ui`, so deleting the entity is exactly what
-        // makes its `bruno_ui_collections` row permanent: nothing in the
-        // product can reach it afterwards, and the user is left with a
-        // collection they can neither see nor remove. A configured entry has no
-        // such problem — it is removed by editing `app-config.yaml`, so pruning
-        // its entity strands nothing, and the skip is the right signal that the
-        // operator's file points at a folder with no collection in it.
-        //
-        // A DISCOVERED entry skips for the same reason as a configured one, and
-        // hitting this branch at all means the manifest moved between the sweep
-        // and the probe — the sweep only proposes a root it found a manifest in.
-        // The next sweep will not propose it again.
-        if (entry.origin !== 'ui') {
-          logger.error(
-            `Bruno collection ${url}: no bruno.json or opencollection.yml/.yaml `
-            + `found; skipping.`
-          );
-          skipped += 1;
-          continue;
-        }
-        // Emitted anyway, without collection metadata, exactly as the
-        // unreadable case above does and for a stronger version of the same
-        // reason: a metadata-less entity is strictly better than a row nobody
-        // can delete. The manifest was there when `POST /collections` validated
-        // it, so this means it has since been moved or deleted in source
-        // control, and removing the collection is the only sensible response —
-        // which requires the entity to still exist.
-        logger.error(
-          `Bruno collection ${url}: no bruno.json or opencollection.yml/.yaml `
-          + `found any more; emitting without collection metadata so it stays `
-          + `removable from the Bruno dashboard.`
-        );
       }
 
       const name = entry.name ?? collectionNameFromUrl(url);
@@ -391,7 +375,6 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
           url,
           partOf: entry.partOf,
           owner: entry.owner,
-          manifest,
           origin: entry.origin
         })
       );
@@ -481,15 +464,26 @@ function disambiguationAdvice(
   );
 }
 
+/**
+ * The unprocessed entity for one collection — identity, provenance and the
+ * operator's own fields, and nothing that would require reading the SCM host.
+ *
+ * `title`, `description` and `version` are deliberately ABSENT: they come from
+ * the collection manifest, and `BrunoKindProcessor` fills all three in from its
+ * own probe on the first processing run. Stamping them here as well meant a
+ * duplicate tree read per collection per tick for a value the processor was
+ * computing regardless. The visible cost is that a newly emitted collection
+ * shows its `metadata.name` until that first run, which follows emission within
+ * seconds.
+ */
 function buildEntity(input: {
   name: string;
   url: string;
   partOf: string[];
   owner?: string;
-  manifest?: CollectionManifest;
   origin: BrunoOrigin;
 }): BrunoEntity {
-  const { name, url, partOf, owner, manifest, origin } = input;
+  const { name, url, partOf, owner, origin } = input;
   const location = `url:${url}`;
 
   return {
@@ -497,9 +491,6 @@ function buildEntity(input: {
     kind: 'Bruno',
     metadata: {
       name,
-      ...(manifest?.name && { title: manifest.name }),
-      ...(manifest?.description && { description: manifest.description }),
-      ...(manifest?.version && { version: manifest.version }),
       tags: ['bruno'],
       annotations: {
         'backstage.io/managed-by-location': location,

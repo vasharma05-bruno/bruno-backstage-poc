@@ -22,7 +22,8 @@ import { BrunoKindProcessor } from './processor/BrunoKindProcessor';
  *   entity per `bruno.collections[]` entry, per collection added from the
  *   Bruno UI (read service-to-service from `GET /api/bruno/collections`), and
  *   per collection swept out of the organizations in `bruno.discovery[]`, on a
- *   scheduled refresh (driven by `bruno.schedule`, default every 60s).
+ *   scheduled refresh (driven by `bruno.schedule`, default every 60s). Beyond
+ *   that sweep it makes no SCM request of its own.
  * - {@link BrunoKindProcessor} — teaches the catalog about `kind: Bruno` and
  *   enriches every such entity, whether it came from that provider or from an
  *   authored `catalog-info.yaml`.
@@ -59,7 +60,8 @@ export const brunoCatalogModule = createBackendModule({
 
         // Constructed once and shared, so two `kind: Bruno` entities pointing
         // at the same repo cost one tree read rather than one each per
-        // reprocess cycle.
+        // reprocess cycle. The processor is the only consumer that reads —
+        // the provider takes the same instance for `normalize` alone.
         const probe = createManifestProbe({
           config,
           reader,
