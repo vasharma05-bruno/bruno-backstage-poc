@@ -10,21 +10,16 @@ app:
     - page:catalog:
         config:
           path: /
-    # Both TechDocs entry points ship with NO filter, so they are offered on
-    # every entity page — including `kind: Bruno`, where they are dead weight: a
-    # collection's documentation is the OpenCollection document on
-    # `spec.definition`, rendered by the plugin's own `Bruno API Docs` tab, and a
-    # Bruno entity carries no `backstage.io/techdocs-ref` for TechDocs to read.
-    # Overriding each extension's `filter` from here — rather than disabling the
-    # extensions — keeps both everywhere else.
-    #
-    # The tab on the entity page:
+    # Both TechDocs entry points ship with no filter, so they show up on `kind:
+    # Bruno` pages too, where they are dead weight — a collection's docs are the
+    # OpenCollection document on `spec.definition`, and a Bruno entity carries no
+    # `backstage.io/techdocs-ref`. Filtering rather than disabling keeps TechDocs
+    # everywhere else.
     - entity-content:techdocs:
         config:
           filter:
             $not:
               kind: bruno
-    # And the `View TechDocs` icon link in the About card:
     - entity-icon-link:techdocs/read-docs:
         config:
           filter:
@@ -85,20 +80,15 @@ integrations:
     #   apiBaseUrl: https://ghe.example.net/api/v3
     #   token: ${GHE_TOKEN}
 
-  ### Multi-SCM: GitLab and Bitbucket Cloud service credentials.
-  ###
-  ### NOT required to read PUBLIC repos on gitlab.com / bitbucket.org —
-  ### @backstage/integration appends a default entry for all three public hosts,
-  ### so the plugin reads them anonymously with no config at all. These blocks
-  ### are the ONLY way a PRIVATE repo is readable: the plugin has no per-user read
-  ### path on any host, so a private repo with no `integrations` entry is
-  ### unreadable even for a user whose own account can see it. See
+  ### Multi-SCM service credentials. Public repos on gitlab.com /
+  ### bitbucket.org need no entry at all, but these blocks are the ONLY way a
+  ### PRIVATE repo is readable — the plugin has no per-user read path. See
   ### plugins/bruno-backend/README.md#credential-isolation.
   ###
-  ### Left commented on purpose: a partial entry is worse than none. Bitbucket
-  ### Cloud THROWS AT STARTUP for a `username` with no `token`/`appPassword`,
-  ### and silently drops a `token` with no `username` — an anonymous read that
-  ### looks like a permissions bug. Uncomment only with both halves set.
+  ### Never leave a partial entry: Bitbucket Cloud throws at startup for a
+  ### `username` with no `token`/`appPassword`, and a blank value is fatal too
+  ### (ConfigReader rejects empty strings, failing the whole backend). Comment a
+  ### block out rather than emptying its vars.
   # gitlab:
   #   - host: gitlab.com
   #     token: ${GITLAB_TOKEN}
@@ -108,18 +98,10 @@ integrations:
   #   #   baseUrl: https://gitlab.company.com
   #   #   token: ${GITLAB_SELF_HOSTED_TOKEN}
   ###
-  ### ACTIVE: without this entry a private Bitbucket repo 404s.
-  ### `clientId`/`clientSecret` use Bitbucket's client_credentials grant, i.e. the
-  ### reader authenticates AS THE OAUTH CONSUMER (the same consumer as
-  ### `auth.providers.bitbucket` may be reused). No `host` key here:
-  ### @backstage/integration hardcodes bitbucket.org for this integration type
-  ### and errors on unknown keys.
-  ###
-  ### A BLANK value is fatal, not ignored: ConfigReader rejects empty-string
-  ### ("got empty-string, wanted string"), and since every `core.urlReader`
-  ### consumer builds ScmIntegrations at init, that fails the whole backend —
-  ### techdocs, catalog, scaffolder and bruno all refuse to start. Comment this
-  ### block back out rather than leaving the vars empty.
+  ### ACTIVE: without this entry a private Bitbucket repo 404s. clientId/
+  ### clientSecret use the client_credentials grant, so the reader authenticates
+  ### as the OAuth consumer. No `host` key: bitbucket.org is hardcoded for this
+  ### integration type and unknown keys error.
   bitbucketCloud:
     - clientId: ${BITBUCKET_CLIENT_ID}
       clientSecret: ${BITBUCKET_CLIENT_SECRET}
@@ -127,7 +109,7 @@ integrations:
       # username: ${BITBUCKET_USERNAME}
       # token: ${BITBUCKET_TOKEN}
   ###
-  ### Bitbucket Server / Data Center is a DIFFERENT provider
+  ### Bitbucket Server / Data Center is a different provider
   ### (`integrations.bitbucketServer`) and has no adapter yet: its web URLs carry
   ### the ref in the query string, which the current normalization drops.
 
@@ -139,24 +121,21 @@ proxy:
   #     target: 'https://example.com'
   #     changeOrigin: true
 
-# Bruno for Backstage — collections ingested into the catalog as `kind: Bruno`
-# entities, and the docs the backend plugin serves for them at /api/bruno/*.
+# Bruno for Backstage — collections ingested as `kind: Bruno` entities, and the
+# docs the backend plugin serves for them at /api/bruno/*.
 #
 # NOTE: every key below must stay under this `bruno:` root key. Without it the
 # `schedule` block re-parses as `proxy.schedule` (silently — YAML is happy) and
 # the provider falls back to its defaults with zero collections.
 bruno:
-  # PRD §"Creating Bruno entities, other than catalog-info.yaml".
   # Each entry becomes a `kind: Bruno` entity emitted by
-  # BrunoCollectionEntityProvider. `metadata.name` is derived from the last
-  # path segment of `url`; title/version/description come from the
+  # BrunoCollectionEntityProvider. title/version/description come from the
   # collection's bruno.json or opencollection.yml/.yaml.
   collections:
     - type: url
       url: https://github.com/vasharma05-bruno/public-bruno-collection/tree/main/collection
-      # `name` override: the default is the URL's last path segment, which here
-      # is the generic "collection" (the folder inside the repo). Pinning it
-      # keeps the entity ref readable and stable if the folder is ever renamed.
+      # Overrides the default name — the URL's last segment, here the generic
+      # "collection" — so the entity ref stays readable and rename-proof.
       name: public-bruno-collection
       owner: guests
       # partOf: add API entity refs here to create the collection -> API
@@ -164,25 +143,22 @@ bruno:
       #   partOf:
       #     - api:default/some-api
   # Autodiscovery: organizations swept for bruno.json / opencollection.yml
-  # instead of collections being listed one by one above.
+  # instead of listing collections one by one above.
   #
-  # NOT `catalog.providers.github` with a different `catalogPath`. That provider
-  # emits a `kind: Location` of `type: url` pointing at whatever its glob
-  # matched, and the catalog then parses the target as an entity descriptor — a
-  # Bruno manifest has no apiVersion/kind, so every hit would land as a
-  # processing error rather than an entity. The sweep therefore lives in the
-  # Bruno catalog module and emits `kind: Bruno` entities directly; see
+  # Not `catalog.providers.github` with a different `catalogPath`: that provider
+  # emits a `kind: Location` and the catalog parses the target as a descriptor,
+  # so every Bruno manifest (no apiVersion/kind) would land as a processing
+  # error. The sweep therefore emits `kind: Bruno` entities directly; see
   # plugins/bruno-backend/src/discovery/githubDiscovery.ts.
   #
-  # Cost per tick: one repository listing per entry, plus one recursive tree
-  # call for each repository whose `pushed_at` moved since the last sweep. An
-  # organization nobody pushed to therefore costs its listing alone, which is
-  # what makes this safe to run on the 60s schedule below.
+  # Cost per tick: one repository listing per entry, plus one recursive tree call
+  # per repository whose `pushed_at` moved — which is what makes the 60s schedule
+  # below safe.
   #
-  # Left commented because a sweep needs a real organization: an entry naming
-  # one that does not exist (or that `integrations.github` cannot see) fails the
-  # whole refresh with GitHub's 404 rather than degrading, which is deliberate —
-  # emitting a short list would delete every discovered collection.
+  # Left commented because a sweep needs a real organization: naming one that
+  # does not exist (or that `integrations.github` cannot see) fails the whole
+  # refresh rather than degrading, which is deliberate — a short list would
+  # delete every discovered collection.
   # discovery:
   #   - organization: bruno-collections
   #     # host: github.com               # default; GHE needs an integrations entry
@@ -195,26 +171,22 @@ bruno:
   #     #                                # already has a kind: Bruno
   #     #                                # catalog-info.yaml to that descriptor
   #
-  # PRD §"Post ingestion" / §"Entity Sync". The generated OpenCollection YAML
-  # is stored inline on each Bruno entity's `spec.definition`, mirroring how a
-  # kind: API entity stores its OpenAPI document.
+  # The generated OpenCollection YAML is stored inline on each Bruno entity's
+  # `spec.definition`, as a kind: API entity stores its OpenAPI document.
   #
-  # The document is produced by the same pipeline as Bruno's own "Generate docs"
-  # (brunoToOpenCollection), so a collection documented from Backstage matches
-  # the one documented from Bruno. That pipeline withholds the values of
-  # environment variables flagged `secret` and exports everything else verbatim
-  # — including auth values, headers, bodies and scripts. A credential
-  # hardcoded in a .bru file therefore reaches the catalog, where any catalog
-  # reader can see it; keep secrets in secret environment variables (or as
-  # {{placeholders}}) and they stay out of the docs.
+  # It comes from the same pipeline as Bruno's own "Generate docs"
+  # (brunoToOpenCollection), which withholds the values of environment variables
+  # flagged `secret` and exports everything else verbatim — auth values, headers,
+  # bodies and scripts included. A credential hardcoded in a .bru file therefore
+  # reaches the catalog, visible to any catalog reader; keep secrets in secret
+  # environment variables or as {{placeholders}}.
   definition:
     maxBytes: 1048576
   # Also the upper bound on how long a Sync takes to show new content.
   cacheTtlSeconds: 60
-  # Also the latency of the Bruno dashboard's add and remove: a collection added
-  # from the UI is stored by the bruno backend plugin and only becomes a catalog
-  # entity on the next provider tick, and a removed one disappears on the tick
-  # after that. Both dialogs quote this number back to the user.
+  # Also the latency of the dashboard's add and remove: a collection added from
+  # the UI becomes a catalog entity on the next provider tick, and a removed one
+  # disappears on the tick after that. Both dialogs quote this number back.
   schedule:
     frequencySeconds: 60
     timeoutSeconds: 30
@@ -238,18 +210,17 @@ auth:
     guest: {}
     # User login providers for the auth test harness (docs/NEXT-STEPS.md §4).
     # NOTE: `integrations.github` (the ${GITHUB_TOKEN} service PAT above) is a
-    # SEPARATE thing from this user-login provider — different jobs.
+    # separate thing from this user-login provider — different jobs.
     github:
       development:
         clientId: ${AUTH_GITHUB_CLIENT_ID}
         clientSecret: ${AUTH_GITHUB_CLIENT_SECRET}
-        # `repo` is requested at sign-in because the PLUGIN'S PULL-REQUEST FLOWS
-        # need write access to the descriptor's repository (add
-        # `catalog-info.yaml`, edit `spec.partOf`). It is NOT used for reading
-        # collections — those go through `integrations.github` above, server-side.
-        # ScmAuth would also escalate to `repo` on demand at PR time; asking here
-        # instead keeps the consent out of the middle of the flow, where a popup
-        # blocker is most likely to bite.
+        # `repo` is requested at sign-in because the plugin's pull-request flows
+        # need write access to the descriptor's repository. It is not used for
+        # reading collections — those go through `integrations.github` above.
+        # ScmAuth would escalate to `repo` on demand at PR time; asking here
+        # keeps the consent out of the flow, where a popup blocker is most
+        # likely to bite.
         additionalScopes:
           - repo
         signIn:
@@ -269,10 +240,8 @@ auth:
         clientId: ${AUTH_GITLAB_CLIENT_ID}
         clientSecret: ${AUTH_GITLAB_CLIENT_SECRET}
         # Sign-in only. The plugin never asks for a GitLab user token: reads use
-        # `integrations.gitlab` server-side, and the pull-request flows are
-        # GitHub-only. `ScmAuth.forGitlab` is still registered in
-        # packages/app/src/modules/auth/scmAuth.ts, but nothing calls it, so no
-        # repository scope needs enabling on the OAuth application.
+        # `integrations.gitlab` server-side and the pull-request flows are
+        # GitHub-only, so no repository scope is needed on the OAuth app.
         # Self-hosted GitLab only — must match the instance base URL exactly:
         # audience: https://gitlab.company.com
         signIn:
@@ -285,10 +254,9 @@ auth:
       development:
         clientId: ${AUTH_BITBUCKET_CLIENT_ID}
         clientSecret: ${AUTH_BITBUCKET_CLIENT_SECRET}
-        # Sign-in only, as for GitLab above. ScmAuth's scope mapping is narrowed
-        # to `account` in scmAuth.ts — the plugin never uses a Bitbucket user
-        # token for anything: reads use the `integrations.bitbucketCloud` service
-        # credential above, and nothing here writes to Bitbucket.
+        # Sign-in only, as for GitLab above: reads use the
+        # `integrations.bitbucketCloud` service credential and nothing here
+        # writes to Bitbucket, so scmAuth.ts narrows the scopes to `account`.
         signIn:
           resolvers:
             - resolver: userIdMatchingUserEntityAnnotation
@@ -319,13 +287,11 @@ catalog:
     - type: url
       target: https://github.com/vasharma05-bruno/private-bruno-collection/blob/main/catalog-info.yaml
 
-    # This app's own catalog-info.yaml, so the catalog knows the repo it is
-    # served from. Read from disk rather than as a `type: url` GitHub target:
-    # a URL location would ingest whatever is on `main`, so the descriptor in
-    # a working tree (or on a branch) would be ignored by the very instance
-    # running it. The GitHub URL still reaches the UI through the entity's
-    # `backstage.io/source-location` annotation, which `getEntitySourceLocation`
-    # prefers over this location.
+    # This app's own catalog-info.yaml. Read from disk, not as a `type: url`
+    # GitHub target: a URL location would ingest whatever is on `main`, so the
+    # descriptor in a working tree or on a branch would be ignored by the very
+    # instance running it. The GitHub URL still reaches the UI through the
+    # entity's `backstage.io/source-location` annotation.
     - type: file
       target: ../../catalog-info.yaml
 
@@ -344,8 +310,8 @@ catalog:
       target: ../../examples/bruno-entity.yaml
 
     # Sample kind: Bruno entities, one per real collection in
-    # github.com/bruno-collections. Spans both collection formats (.bru and
-    # opencollection.yml) and both repo-root and subfolder layouts.
+    # github.com/bruno-collections — both collection formats and both
+    # repo-root and subfolder layouts.
     - type: file
       target: ../../examples/bruno-entities.yaml
 
@@ -360,7 +326,7 @@ catalog:
       target: ../../examples/org.yaml
       rules:
         - allow: [User, Group]
-    
+
     - type: url
       target: https://github.com/backstage/backstage/blob/master/packages/catalog-model/examples/apis/petstore-api.yaml
 
