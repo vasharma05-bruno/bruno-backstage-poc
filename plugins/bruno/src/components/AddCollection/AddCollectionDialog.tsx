@@ -99,7 +99,8 @@ function nameFromUrl(url: string): string {
 }
 
 /**
- * Modal 1 of the add-collection flow: describe the collection.
+ * Modal 1 of the add-collection flow: describe the collection, then choose how
+ * it gets into the catalog.
  *
  * The URL field is the gate. Nothing else in the dialog is worth filling in
  * until the backend has confirmed there is a Bruno manifest at that URL, because
@@ -111,13 +112,27 @@ function nameFromUrl(url: string): string {
  * right for an existing entity and wrong for a new one, so the check happens
  * here instead.
  *
- * Submitting CREATES the collection. It still is not the catalog that creates
- * it: the catalog has no "create entity" endpoint — entities come from a
- * Location that must already exist or from an EntityProvider — so the fields go
- * to the Bruno backend's own store and `BrunoCollectionEntityProvider`
- * materialises the entity from there on its next tick. That indirection is the
- * reason the collection appears within `bruno.schedule.frequencySeconds` rather
- * than instantly, and modal 2 is where that wait is explained.
+ * There is NO single submit. The two actions write to two different places, and
+ * which one the user wants is not something this dialog can infer:
+ *
+ *  - **Create pull request** (primary) generates the `catalog-info.yaml` and
+ *    hands it to modal 2. Nothing is registered — the descriptor is the
+ *    collection's only source of truth, and the catalog grows the entity once
+ *    that file is registered as a location.
+ *  - **Add collection** posts the fields to the Bruno backend's own store. The
+ *    catalog has no "create entity" endpoint — entities come from a Location
+ *    that must already exist or from an EntityProvider — so
+ *    `BrunoCollectionEntityProvider` materialises the entity from that row on
+ *    its next tick, which is why it appears within
+ *    `bruno.schedule.frequencySeconds` rather than instantly.
+ *
+ * Both are gated on the SAME {@link canSubmit}, because both produce a
+ * `kind: Bruno` entity from the same four fields and a URL with no manifest
+ * behind it is no more acceptable in a descriptor than in a stored row.
+ *
+ * Only one of them can fail, and only one of them keeps the dialog open. That
+ * asymmetry is the whole reason they are two props rather than one `onSubmit`
+ * with a discriminator — see {@link AddCollectionDialog}'s `onAdd`.
  */
 export function AddCollectionDialog(props: {
   open: boolean;
@@ -129,16 +144,25 @@ export function AddCollectionDialog(props: {
    */
   initialPartOf?: string;
   /**
-   * Creates the collection, resolving `true` when it was created.
+   * Registers the collection, resolving `true` when it was created.
    *
    * The boolean is what decides whether the form empties itself — see
    * {@link reset}. It is a promise because the create is a round trip the user
    * has to be held through; the dialog stays open and inert for its duration
    * rather than closing optimistically.
    */
-  onSubmit: (input: BrunoEntityInput) => Promise<boolean>;
+  onAdd: (input: BrunoEntityInput) => Promise<boolean>;
+  /**
+   * Hands the form off to modal 2 as a `catalog-info.yaml`.
+   *
+   * Synchronous, and that is not an oversight: this path performs no backend
+   * call, so there is nothing to await, nothing to reject, and no reason to hold
+   * the dialog inert. Giving it the same `Promise<boolean>` shape as
+   * {@link onAdd} would invent a failure mode the caller cannot produce.
+   */
+  onCreatePullRequest: (input: BrunoEntityInput) => void;
   /** Whether a create is in flight, which locks the dialog's actions. */
-  submitting?: boolean;
+  adding?: boolean;
   /** The last create failure, shown under the actions. */
   error?: string;
 }): JSX.Element {
@@ -146,8 +170,9 @@ export function AddCollectionDialog(props: {
     open,
     onClose,
     initialPartOf,
-    onSubmit,
-    submitting = false,
+    onAdd,
+    onCreatePullRequest,
+    adding = false,
     error
   } = props;
   const classes = useStyles();
@@ -316,8 +341,16 @@ export function AddCollectionDialog(props: {
   const nameError = name ? validateEntityName(name) : undefined;
   const canSubmit = probe.status === 'found' && !!name && !nameError;
 
+  /** The four fields, as both endings want them. */
+  const collect = (): BrunoEntityInput => ({
+    name,
+    url: url.trim(),
+    partOf: selectedApis.map((e) => stringifyEntityRef(e)),
+    owner: owner ? stringifyEntityRef(owner) : undefined
+  });
+
   /**
-   * Submits, and clears the form ONLY if the collection was created.
+   * Registers the collection, and clears the form ONLY if that succeeded.
    *
    * `reset()` used to sit on the unconditional path here, which was correct
    * while submitting could not fail. Now it can, and the failure that dominates
@@ -327,19 +360,29 @@ export function AddCollectionDialog(props: {
    * wrong. The awaited boolean is the minimal signal that distinguishes the two
    * cases; it needs no extra state.
    */
-  const submit = async (): Promise<void> => {
+  const add = async (): Promise<void> => {
     if (!canSubmit) {
       return;
     }
-    const created = await onSubmit({
-      name,
-      url: url.trim(),
-      partOf: selectedApis.map((e) => stringifyEntityRef(e)),
-      owner: owner ? stringifyEntityRef(owner) : undefined
-    });
-    if (created) {
+    if (await onAdd(collect())) {
       reset();
     }
+  };
+
+  /**
+   * Hands off to modal 2, and always clears the form.
+   *
+   * Unconditional, unlike {@link add}: the hand-off cannot fail, so there is no
+   * state in which keeping the answers on screen would help. Modal 2 opens as
+   * this dialog closes, and it holds everything it needs — the descriptor was
+   * serialised from these fields before they were dropped.
+   */
+  const createPullRequest = (): void => {
+    if (!canSubmit) {
+      return;
+    }
+    onCreatePullRequest(collect());
+    reset();
   };
 
   /** The one-line verdict under the URL field. */
@@ -402,20 +445,22 @@ export function AddCollectionDialog(props: {
       fullWidth
       // Dismissing mid-create would empty the form (`close` resets) while the
       // create it started is still running, so the user would lose the fields
-      // and then be handed modal 2 for a collection they can no longer see the
-      // inputs of. Same reasoning as modal 2's guard around the pull request.
-      disableBackdropClick={submitting}
-      disableEscapeKeyDown={submitting}
+      // and then have no idea whether the collection was registered. Same
+      // reasoning as modal 2's guard around the pull request.
+      disableBackdropClick={adding}
+      disableEscapeKeyDown={adding}
       onClose={close}
     >
       <DialogTitle>Add a Bruno collection</DialogTitle>
       <DialogContent>
         <Typography variant="body2">
-          Point Backstage at a collection in source control. Submitting
-          registers it in the catalog. The next step shows the equivalent{' '}
-          <code>catalog-info.yaml</code>, which you can download or open as a
-          pull request if you also want the descriptor in your repository — both
-          are optional.
+          Point Backstage at a collection in source control, then choose how it
+          gets into the catalog. <strong>Create pull request</strong> generates
+          the <code>catalog-info.yaml</code> for your repository, which becomes
+          the collection&apos;s source of truth.{' '}
+          <strong>Add collection</strong> registers it with Backstage directly,
+          leaving your repository untouched. Pick one — doing both would give two
+          sources the same entity name.
         </Typography>
 
         <Box className={classes.field}>
@@ -536,18 +581,42 @@ export function AddCollectionDialog(props: {
           </Typography>
         )}
       </DialogContent>
+      {/*
+        Two endings, ordered so the primary one is rightmost — where Material-UI
+        right-aligns `DialogActions` and where Backstage's own dialogs put the
+        action they expect to be taken.
+
+        `Add collection` is outlined rather than contained: both are real
+        endings, so neither may look disabled, but a second filled button
+        competing with the first reads as two primaries and makes the choice
+        harder than it is.
+
+        Both are disabled while a create is in flight, including the pull-request
+        one. It performs no request of its own and would work, but it would hand
+        modal 2 a descriptor for a collection that is simultaneously being
+        registered — the exact two-sources collision the copy above tells the
+        user to avoid.
+      */}
       <DialogActions>
-        <Button onClick={close} disabled={submitting}>
+        <Button onClick={close} disabled={adding}>
           Cancel
+        </Button>
+        <Button
+          variant="outlined"
+          className={brandClasses.accentOutlinedButton}
+          disabled={!canSubmit || adding}
+          startIcon={adding ? <CircularProgress size={16} /> : undefined}
+          onClick={() => void add()}
+        >
+          {adding ? 'Adding…' : 'Add collection'}
         </Button>
         <Button
           variant="contained"
           className={brandClasses.accentButton}
-          disabled={!canSubmit || submitting}
-          startIcon={submitting ? <CircularProgress size={16} /> : undefined}
-          onClick={() => void submit()}
+          disabled={!canSubmit || adding}
+          onClick={createPullRequest}
         >
-          {submitting ? 'Adding…' : 'Add collection'}
+          Create pull request
         </Button>
       </DialogActions>
     </Dialog>

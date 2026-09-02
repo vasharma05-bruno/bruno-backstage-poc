@@ -25,11 +25,15 @@ import {
   fetchApiRef,
   useApiHolder
 } from '@backstage/core-plugin-api';
+import { useRouteRef } from '@backstage/frontend-plugin-api';
 import { scmAuthApiRef, scmIntegrationsApiRef } from '@backstage/integration-react';
-import { EntityRefLink, catalogApiRef } from '@backstage/plugin-catalog-react';
-import { CatalogImportClient, catalogImportApiRef } from '@backstage/plugin-catalog-import';
+import { catalogApiRef } from '@backstage/plugin-catalog-react';
+import {
+  CatalogImportClient,
+  catalogImportApiRef,
+  catalogImportPlugin
+} from '@backstage/plugin-catalog-import';
 import type { CatalogImportApi } from '@backstage/plugin-catalog-import';
-import { landingTimeoutSeconds } from '../../lib/landingWindow';
 import { repoRootFromCollectionUrl } from '../../lib/scmUrl';
 import { useBrandStyles } from '../../theme/brandStyles';
 
@@ -50,11 +54,6 @@ const useStyles = makeStyles((theme) => ({
     '& > li': {
       marginBottom: theme.spacing(0.5)
     }
-  },
-  landing: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: theme.spacing(1)
   }
 }));
 
@@ -65,30 +64,6 @@ type Stage
     | { status: 'submitted'; link: string }
     | { status: 'error'; message: string };
 
-/**
- * Whether the entity the create registered has reached the catalog yet.
- *
- * A SECOND union rather than more members on {@link Stage}, because the two run
- * concurrently: the collection lands on the provider's schedule, and the user
- * may well be editing a pull request title while it does. Folding them together
- * would make every pull-request state also assert something about the catalog.
- */
-type Landing
-  = | { status: 'waiting' }
-    | { status: 'landed' }
-    | { status: 'timed-out' };
-
-/**
- * How often the catalog is asked whether the entity has appeared.
- *
- * The entity does not arrive any sooner for being asked about, so this is
- * bounding the "it is there and we have not noticed" gap, not the wait itself.
- * The provider tick is `refreshSeconds` (60 s by default) and lands at an
- * arbitrary point in that window, so 3 s costs about twenty cheap reads across
- * a whole flow and makes the success feel immediate when it comes.
- */
-const LANDING_POLL_MS = 3000;
-
 /** The two SCM types `catalogImportApi.submitPullRequest` can actually write to. */
 const PR_CAPABLE_TYPES = ['github', 'azure'];
 
@@ -96,14 +71,26 @@ const PR_CAPABLE_TYPES = ['github', 'azure'];
  * Resolves a {@link CatalogImportApi}, constructing one if the app has not
  * registered the plugin that provides it.
  *
- * This app is one of those: `packages/app/src/App.tsx` installs the catalog,
- * auth, nav and Bruno features, but not `@backstage/plugin-catalog-import`, so
- * `catalogImportApiRef` is unregistered and `useApi` would THROW at render time
- * rather than return undefined. Building the default client ourselves from APIs
- * the app does register keeps the pull-request path working without forcing the
- * whole import wizard (and its `/catalog-import` page) into the app — and it is
- * the same class the ref would have resolved to, so every limitation documented
- * below applies identically either way.
+ * THIS app is not one of those, and it is worth being precise about why, because
+ * the obvious reading of `packages/app/src/App.tsx` says otherwise: its
+ * `createApp({ features: [...] })` list does not mention
+ * `@backstage/plugin-catalog-import`. Registration does not go through that list
+ * at all. `app.packages: all` (app-config.yaml) turns on the CLI's package
+ * detection, which scans `packages/app/package.json` dependencies for any
+ * package whose `backstage.role` is `frontend-plugin` and whose `exports` carry
+ * `./alpha` (`cli-module-build/dist/lib/bundler/packageDetection.cjs.js:56-62`),
+ * emits `window['__@backstage/discovered__']`, and `createApp` registers each
+ * default export from it (`frontend-defaults/dist/discovery.esm.js`).
+ * `plugin-catalog-import` matches on every count and is a dependency of the app,
+ * so both its API and its `/catalog-import` page ARE live here.
+ *
+ * The fallback stays anyway, and not as dead weight: `app.packages` may be unset
+ * or carry an `exclude`, and a host app embedding this plugin is under no
+ * obligation to depend on `plugin-catalog-import` at all. In those apps
+ * `catalogImportApiRef` really is unregistered and `useApi` would THROW at render
+ * time rather than return undefined. The constructed client is the same class the
+ * ref resolves to, so every limitation documented below applies identically
+ * either way.
  *
  * `useApiHolder` throughout, never `useApi`: each of these can legitimately be
  * absent in a host app, and one missing SCM API must disable a button rather
@@ -172,23 +159,33 @@ function downloadText(filename: string, text: string): void {
 }
 
 /**
- * Modal 2 of the add-collection flow: your collection is registered, here is
- * its descriptor, and here is how to get that into your repository too.
+ * Modal 2 of the add-collection flow: here is the descriptor for the collection
+ * you described, and here is how to get it into your repository.
  *
- * Nothing on this screen is required. The collection already exists as a stored
- * row by the time this opens, so Close is a complete, successful ending — the
- * download and the pull request are for users who also want the descriptor
- * committed. That is why the landing notice at the top is the headline and the
- * YAML below it is framed as optional.
+ * Everything on this screen is required in a way it was not before. This dialog
+ * used to open on a collection that had ALREADY been registered, which made it
+ * pure garnish — Close was a complete, successful ending and the descriptor was
+ * an extra for users who also wanted it committed. That is no longer true: the
+ * pull-request path registers nothing, so the file this dialog produces is the
+ * collection's only route into the catalog. Closing without downloading it or
+ * opening a pull request leaves nothing behind at all, and the copy says so
+ * rather than letting the user infer it.
  *
- * Two exits on purpose, and the second one is the constrained one. Downloading
- * always works and always produces the right file in the right place, because
- * the user puts it there. The pull request is a convenience with several hard
- * limits baked into `plugin-catalog-import` — and one more that this flow
- * creates, since the collection is already registered — every one of which is
- * stated on screen BEFORE the button rather than discovered as a failure after
- * it; see the limits list below. That asymmetry is why Download is the plain, always
- * enabled action and the pull request is the one that can be disabled.
+ * There is deliberately no catalog poll and no entity link. The entity does not
+ * exist yet and cannot be made to: it appears when the merged `catalog-info.yaml`
+ * is registered as a catalog location, which is neither this dialog's doing nor
+ * on any schedule it could wait out. Watching for it would spin for the whole
+ * landing window and then report a timeout for something that was never coming
+ * — which is exactly the "nothing has gone wrong that re-submitting would fix"
+ * message the old timeout state existed to avoid, arrived at the wrong way.
+ *
+ * Two exits, and the second one is the constrained one. Downloading always works
+ * and always produces the right file in the right place, because the user puts
+ * it there. The pull request is a convenience with several hard limits baked into
+ * `plugin-catalog-import`, every one of which is stated on screen BEFORE the
+ * button rather than discovered as a failure after it; see the limits list
+ * below. That asymmetry is why Download is the plain, always enabled action and
+ * the pull request is the one that can be disabled.
  *
  * The preview deliberately does NOT use `PreviewCatalogInfoComponent`, despite
  * that being the obvious component for the job: it re-serialises the entity with
@@ -208,34 +205,37 @@ export function GeneratedYamlDialog(props: {
   yaml: string;
   /** The entity's name, for the pull request's default title. */
   name: string;
-  /** Ref of the entity the create registered, for the landing poll and link. */
-  entityRef: string;
-  /**
-   * The provider's refresh interval, as reported by the create. Quoted on
-   * screen, so the wait the user is told about is the one actually configured.
-   */
-  refreshSeconds: number;
 }): JSX.Element {
-  const {
-    open,
-    onClose,
-    collectionUrl,
-    yaml,
-    name,
-    entityRef,
-    refreshSeconds
-  } = props;
+  const { open, onClose, collectionUrl, yaml, name } = props;
   const classes = useStyles();
   const brandClasses = useBrandStyles();
   const catalogImportApi = useCatalogImportApi();
   const apis = useApiHolder();
   const configApi = apis.get(configApiRef);
-  const catalogApi = apis.get(catalogApiRef);
   const scmAuth = apis.get(scmAuthApiRef);
   const scmIntegrations = apis.get(scmIntegrationsApiRef);
 
+  /**
+   * Path of the catalog's own "Register an existing component" page, which is
+   * where the step AFTER this dialog happens: it calls `catalogApi.addLocation`
+   * for a `catalog-info.yaml` URL, which is the only thing that turns the merged
+   * file into an entity.
+   *
+   * Resolved through `useRouteRef` rather than hardcoded as `/catalog-import`,
+   * because the path is overridable from `app-config.yaml` (`app.extensions`,
+   * exactly as this app already remounts `page:catalog` at `/`), and a link to
+   * the default path in an app that moved it is a 404 that looks like our bug.
+   *
+   * The ref comes off the OLD-system plugin export because the new-system
+   * `/alpha` entry point does not re-export it, and they are the same object:
+   * `alpha.esm.js` imports `rootRouteRef` from `plugin.esm.js` and declares it as
+   * `routes.importPage`. `useRouteRef` returns undefined when the page is not
+   * mounted — a host app that excluded the package — which is what the prose
+   * fallback below is for.
+   */
+  const importRoute = useRouteRef(catalogImportPlugin.routes.importPage);
+
   const [stage, setStage] = useState<Stage>({ status: 'review' });
-  const [landing, setLanding] = useState<Landing>({ status: 'waiting' });
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
 
@@ -295,80 +295,8 @@ export function GeneratedYamlDialog(props: {
     };
   }, [catalogFilename, catalogImportApi, name, open]);
 
-  /**
-   * Watches for the entity to appear in the catalog.
-   *
-   * The wait is real and unavoidable: the create wrote a row to the Bruno
-   * backend's store, and `BrunoCollectionEntityProvider` turns that into a
-   * catalog entity on its own schedule. So this dialog opens on a collection
-   * that is registered but not yet queryable, and the honest thing is to watch
-   * rather than to assert.
-   *
-   * Fires ONCE IMMEDIATELY before starting the interval, because a provider tick
-   * can easily land between the create returning and this rendering — without
-   * the leading call that user would watch a spinner for three seconds for
-   * nothing.
-   *
-   * A THROWN error is treated as another "not yet" and the poll continues. The
-   * two realistic throws here are a token refresh and a backend restart, both
-   * transient, and ending the wait on one would report a timeout for a
-   * collection that lands four seconds later. A resolved `undefined` is the same
-   * "not yet": `getEntityByRef` answers a missing ref with `undefined` rather
-   * than by rejecting, so the two paths are genuinely the same fact.
-   *
-   * `catalogApi` is read from the holder rather than with `useApi` for the same
-   * reason the import client is: a host app need not register it, and a missing
-   * catalog must cost the poll, not the dialog.
-   */
-  useEffect(() => {
-    if (!open || !catalogApi) {
-      return undefined;
-    }
-
-    let cancelled = false;
-    const deadline = Date.now() + landingTimeoutSeconds(refreshSeconds) * 1000;
-
-    const settle = (next: Landing): void => {
-      setLanding(next);
-      clearInterval(timer);
-    };
-
-    const poll = (): void => {
-      catalogApi
-        .getEntityByRef(entityRef)
-        .then((entity) => {
-          if (cancelled) {
-            return;
-          }
-          if (entity) {
-            settle({ status: 'landed' });
-          } else if (Date.now() >= deadline) {
-            settle({ status: 'timed-out' });
-          }
-        })
-        .catch(() => {
-          if (!cancelled && Date.now() >= deadline) {
-            settle({ status: 'timed-out' });
-          }
-        });
-    };
-
-    // Scheduled BEFORE the first call, so `timer` can be a `const` that the
-    // `settle` closure above closes over without a temporal-dead-zone hazard.
-    // Ordering costs nothing: `poll` settles on a promise, so the immediate
-    // call cannot reach `settle` until after this statement has run either way.
-    const timer = setInterval(poll, LANDING_POLL_MS);
-    poll();
-
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [catalogApi, entityRef, open, refreshSeconds]);
-
   const close = (): void => {
     setStage({ status: 'review' });
-    setLanding({ status: 'waiting' });
     onClose();
   };
 
@@ -419,18 +347,41 @@ export function GeneratedYamlDialog(props: {
   };
 
   /**
+   * How to register the merged file, named once and used in both stages.
+   *
+   * Two renderings of the same instruction rather than one, because the useful
+   * sentence depends on whether the app actually has the page. With it, the step
+   * is a link and the user can finish the job; without it, the honest answer is
+   * the operator-level one (a `catalog.locations` entry, or a discovery provider)
+   * and pointing at a route that is not mounted would be worse than saying so.
+   */
+  const registerStep = importRoute
+    ? (
+        <>
+          register it on the{' '}
+          <Link to={importRoute()}>Register an existing component</Link> page
+        </>
+      )
+    : (
+        <>
+          register it as a catalog location — a <code>catalog.locations</code>{' '}
+          entry, or a discovery provider that scans the repository
+        </>
+      );
+
+  /**
    * Everything `catalogImportApi.submitPullRequest` will do that the user would
-   * otherwise only find out about afterwards, plus the one thing THIS flow
-   * causes. Stated up front, with the one that is checkable checked
+   * otherwise only find out about afterwards, plus the one thing THIS path
+   * requires of them. Stated up front, with the one that is checkable checked
    * (`prSupported`) and the button pre-disabled.
    *
-   * The last item is the new one and it is not a limitation of the import API:
-   * the collection is already registered by the time this dialog opens, so a
-   * merged descriptor that is later registered as a location is a SECOND claim
-   * on the same entity name. It is warn-before-the-click rather than
-   * detect-and-repair on purpose — the recovery is one delete from the
-   * dashboard, and silently removing a user's collection because they opened a
-   * pull request would be a far worse surprise than the conflict it avoids.
+   * The last item replaces the entity-name conflict this list used to warn
+   * about. That warning existed because the collection was already registered
+   * when the dialog opened, making a merged descriptor a second claim on one
+   * name; this path registers nothing, so the conflict is gone and the opposite
+   * risk takes its place — a merged file that nobody registers as a location
+   * produces no entity at all, and the user has no way to tell that from a
+   * catalog that is merely slow.
    *
    * Two `WarningPanel` details matter here. `defaultExpanded`, because it is an
    * Accordion whose body starts collapsed — an unexpanded warning is not a
@@ -466,69 +417,13 @@ export function GeneratedYamlDialog(props: {
         reject it here.
       </li>
       <li>
-        This collection is already registered from the Bruno UI. If you merge
-        this pull request and then also register the file as a catalog location,
-        two sources will claim the entity name <code>{name}</code>. Backstage
-        keeps whichever source claimed it first — the one you just created — and
-        logs a conflict for the other, so the descriptor will appear to do
-        nothing. Delete this collection from the Bruno dashboard first if you
-        want the descriptor to own it.
+        Merging the pull request does not by itself put <code>{name}</code> in
+        the catalog — Backstage does not read a file it has not been pointed at.
+        Once the pull request is merged, {registerStep}. Use{' '}
+        <strong>Add collection</strong> on the previous screen instead if you
+        want the collection registered without touching your repository.
       </li>
     </ul>
-  );
-
-  /**
-   * Whether the entity has reached the catalog, in the user's terms.
-   *
-   * Rendered above everything else in both stages, because it is the only thing
-   * on screen that is about the collection rather than about the descriptor —
-   * and because the user can be mid-pull-request when it lands.
-   *
-   * None of the three states claims more than is known. `waiting` says the
-   * collection is added (it is — the row is stored) and that the CATALOG has not
-   * caught up, without offering a link that would 404. `timed-out` is
-   * deliberately not written as a failure: nothing has gone wrong that
-   * re-submitting would fix, and telling the user otherwise would produce a
-   * second collection under a second name.
-   */
-  const landingNotice = (
-    <>
-      {landing.status === 'waiting' && (
-        <>
-          <Typography variant="body2" className={classes.landing}>
-            <CircularProgress size={16} />
-            <strong>{name} has been added.</strong>
-          </Typography>
-          <Typography variant="body2" color="textSecondary">
-            Backstage re-reads its collection list every {refreshSeconds}{' '}
-            seconds, so the entity appears in the catalog shortly; this message
-            becomes a link when it does. You can close this window — the
-            collection is registered either way.
-          </Typography>
-        </>
-      )}
-      {landing.status === 'landed' && (
-        <Typography variant="body2" className={classes.landing}>
-          <strong>{name} is in the catalog.</strong>
-          <EntityRefLink entityRef={entityRef} defaultKind="Bruno" />
-        </Typography>
-      )}
-      {landing.status === 'timed-out' && (
-        <>
-          <Typography variant="body2">
-            <strong>
-              {name} is registered but has not appeared in the catalog yet.
-            </strong>
-          </Typography>
-          <Typography variant="body2" color="textSecondary">
-            That usually means the collection could not be re-read from source
-            control on the last refresh — check the backend log for{' '}
-            <code>BrunoCollectionEntityProvider</code>. It will appear on a later
-            refresh; nothing needs to be re-submitted.
-          </Typography>
-        </>
-      )}
-    </>
   );
 
   let content: JSX.Element;
@@ -537,17 +432,20 @@ export function GeneratedYamlDialog(props: {
   if (stage.status === 'submitted') {
     content = (
       <>
-        {landingNotice}
+        <Typography variant="body2">
+          <strong>Pull request opened.</strong>
+        </Typography>
         {/*
-          Deliberately not "the collection appears in the catalog once it is
-          merged" any more: it is already registered, and the pull request only
-          decides whether the descriptor also lives in the repository. Saying
-          otherwise here would contradict the notice directly above.
+          Both steps named, in order, because the second one is the one users
+          will not expect: merging the file is not registering it. Saying only
+          "merge it and the collection appears" is the mistake this copy exists
+          to avoid — it would leave someone waiting on a catalog that was never
+          asked to read the file.
         */}
         <Typography variant="body2" className={classes.section}>
-          Pull request opened. Merging it puts{' '}
-          <code>{catalogFilename}</code> in the repository; your collection is
-          registered either way.
+          Merging it adds <code>{catalogFilename}</code> to the repository. Then{' '}
+          {registerStep} — <code>{name}</code> appears in the catalog at that
+          point, not before.
         </Typography>
         <Typography variant="body2" className={classes.section}>
           <Link to={stage.link}>{stage.link}</Link>
@@ -567,13 +465,25 @@ export function GeneratedYamlDialog(props: {
     const submitting = stage.status === 'submitting';
     content = (
       <>
-        {landingNotice}
-
-        <Typography variant="body2" className={classes.section}>
-          Your collection is registered. This is the equivalent{' '}
-          <code>catalog-info.yaml</code> — you only need it if you also want the
-          descriptor committed to your repository. Downloading it and opening a
-          pull request are both optional.
+        <Typography variant="body2">
+          This is the <code>catalog-info.yaml</code> for{' '}
+          <code>{name}</code>. Commit it to your repository — by pull request
+          below, or by downloading it and adding it yourself — then{' '}
+          {registerStep}. That descriptor is what puts the collection in the
+          catalog and stays its source of truth.
+        </Typography>
+        {/*
+          Said plainly, because the previous version of this dialog opened on an
+          already-registered collection and trained the opposite expectation:
+          closing here really does discard the collection.
+        */}
+        <Typography
+          variant="body2"
+          color="textSecondary"
+          className={classes.section}
+        >
+          Nothing has been registered yet. Closing this window without
+          downloading the file or opening a pull request discards it.
         </Typography>
 
         <Box className={classes.section}>
@@ -676,7 +586,7 @@ export function GeneratedYamlDialog(props: {
       disableEscapeKeyDown={stage.status === 'submitting'}
       onClose={close}
     >
-      <DialogTitle>{name} added</DialogTitle>
+      <DialogTitle>Add {name} by pull request</DialogTitle>
       <DialogContent>{content}</DialogContent>
       <DialogActions>{actions}</DialogActions>
     </Dialog>

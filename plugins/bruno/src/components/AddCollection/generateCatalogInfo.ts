@@ -1,6 +1,5 @@
 import { stringify } from 'yaml';
 import type { Entity } from '@backstage/catalog-model';
-import { BRUNO_ORIGIN_ANNOTATION } from '../../lib/brunoEntity';
 import { tryNormaliseApiRef } from '../../lib/apiRef';
 
 /**
@@ -109,6 +108,20 @@ export function validateEntityName(name: string): string | undefined {
  *
  * `spec.definition`, `spec.requestCount` and `spec.environments` are likewise
  * absent: the processor owns them outright and overwrites any authored value.
+ *
+ * NO `usebruno.com/origin` either, and that omission is load-bearing. The
+ * descriptor path registers nothing in the Bruno backend's store — it produces a
+ * file and a pull request, and the entity exists only once that file is
+ * registered as a catalog location. So the collection this describes is
+ * `descriptor`-origin, which is exactly what `deriveOrigin` defaults to for a
+ * `url` location, and stamping it here would only be a second, hand-written copy
+ * of a value the processor computes correctly.
+ *
+ * Stamping `ui` — which this did while submitting the form registered the
+ * collection — is now actively wrong: `usebruno.com/origin: ui` is what the
+ * dashboard gates its Remove action on (`BrunoPage.tsx`), and Remove calls
+ * `DELETE /collections/:name` against a store row that this path never wrote.
+ * The user would be offered a delete button that answers 404.
  */
 export function buildBrunoEntity(input: BrunoEntityInput): Entity {
   const partOf = input.partOf
@@ -119,17 +132,7 @@ export function buildBrunoEntity(input: BrunoEntityInput): Entity {
     apiVersion: BRUNO_API_VERSION,
     kind: 'Bruno',
     metadata: {
-      name: input.name,
-      annotations: {
-        // Records that THIS plugin generated the descriptor, which nothing else
-        // can tell afterwards: a `catalog-info.yaml` we wrote is byte-for-byte
-        // indistinguishable from a hand-written one, so without the stamp the
-        // UI cannot say "added in Backstage" or tailor its editing advice. The
-        // processor preserves an origin that is already present rather than
-        // overwriting it (`deriveOrigin`), which is exactly why writing it into
-        // the file works: the value survives every reprocess cycle.
-        [BRUNO_ORIGIN_ANNOTATION]: 'ui'
-      }
+      name: input.name
     },
     spec: {
       type: BRUNO_COLLECTION_TYPE,

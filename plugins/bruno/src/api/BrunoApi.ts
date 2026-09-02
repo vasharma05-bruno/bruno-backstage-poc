@@ -75,11 +75,18 @@ export interface CreatedCollection {
    */
   url: string;
   /**
-   * The provider's refresh interval, so the dialog can quote the real number
-   * instead of hardcoding the 60 s default. It is configurable
-   * (`bruno.schedule.frequencySeconds`), and a wrong figure on screen is worse
-   * than no figure — a user told "a minute" on a ten-minute schedule concludes
-   * the create failed.
+   * The provider's refresh interval — how long this collection has to wait
+   * before it is an entity. Configurable (`bruno.schedule.frequencySeconds`),
+   * and a wrong figure on screen is worse than no figure: a user told "a
+   * minute" on a ten-minute schedule concludes the create failed.
+   *
+   * No add-collection screen reads it any more. The flow closes on a successful
+   * create and the wait is reported by the dashboard's pending strip, which
+   * reads its own interval off {@link StoredCollections} — the same number, from
+   * the response that also carries the rows it is describing. Kept here because
+   * it describes the route's 201 body, which still sends it, and because a
+   * caller that DOES want to say "about a minute" at create time should read it
+   * rather than hardcode one.
    */
   refreshSeconds: number;
 }
@@ -213,7 +220,9 @@ export interface BrunoApi {
    * Resolving does NOT mean the entity exists — it means the backend has stored
    * the row that will produce it. The gap is `refreshSeconds` on the returned
    * value, and the caller is responsible for saying so rather than showing a
-   * catalog link that 404s.
+   * catalog link that 404s. The add-collection flow discharges that by handing
+   * the gap to the dashboard's pending strip, which is built on
+   * {@link listCollections} for exactly this purpose.
    *
    * REJECTS with the backend's own message for the cases the user can act on,
    * and the duplicate-name one is the important one: the name is permanent, the
