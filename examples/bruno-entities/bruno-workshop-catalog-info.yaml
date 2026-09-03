@@ -1,0 +1,12 @@
+apiVersion: usebruno.com/v1alpha1
+kind: Bruno
+metadata:
+  name: api-testing-practices-collection
+spec:
+  type: bruno-collection
+  owner: guests
+  # A `.bru` collection at the REPOSITORY ROOT — the case where the collection
+  # folder and the repo are the same thing.
+  url: https://github.com/vasharma05-bruno/bruno-collections/tree/main/Webinar-Best-Practices-Feb-2026-BRU
+  partOf:
+    - api:default/api-testing-practices

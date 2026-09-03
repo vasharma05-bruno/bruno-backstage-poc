@@ -1,0 +1,13 @@
+apiVersion: usebruno.com/v1alpha1
+kind: Bruno
+metadata:
+  name: openapi-orders-api-collection
+spec:
+  type: bruno-collection
+  owner: guests
+  # OpenCollection format, and a URL-encoded path segment — worth keeping in the
+  # sample set because the space in "Orders API" exercises URL normalization.
+  url: https://github.com/vasharma05-bruno/bruno-collections/tree/main/openapi-sync-ws/collections/Orders%20API
+  partOf:
+    - api:default/orders-api
+    - api:default/scim-provisioning-api

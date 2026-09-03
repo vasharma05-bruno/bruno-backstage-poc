@@ -1,0 +1,11 @@
+apiVersion: usebruno.com/v1alpha1
+kind: Bruno
+metadata:
+  name: scim-provisioning-collection
+spec:
+  type: bruno-collection
+  owner: guests
+  # A `.bru` collection in a subfolder of its repo.
+  url: https://github.com/vasharma05-bruno/bruno-collections/tree/main/bruno-scim-api-collection/scim-collection
+  partOf:
+    - api:default/scim-provisioning-api

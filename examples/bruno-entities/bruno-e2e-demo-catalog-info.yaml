@@ -1,0 +1,13 @@
+apiVersion: usebruno.com/v1alpha1
+kind: Bruno
+metadata:
+  name: bruno-demo-collection
+spec:
+  type: bruno-collection
+  owner: guests
+  # The largest of the sample collections (29 requests) and the one with
+  # environments, so it is the useful one for eyeballing the Environments card
+  # and the generated definition's size.
+  url: https://github.com/vasharma05-bruno/bruno-collections/tree/main/bruno-demo-day-ws/collections/Bruno%20E2E%20Demo
+  partOf:
+    - api:default/bruno-e2e-demo-api

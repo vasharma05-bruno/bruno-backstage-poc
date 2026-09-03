@@ -133,10 +133,10 @@ bruno:
   # collection's bruno.json or opencollection.yml/.yaml.
   collections:
     - type: url
-      url: https://github.com/vasharma05-bruno/public-bruno-collection/tree/main/collection
+      url: https://github.com/vasharma05-bruno/bruno-collections/tree/main/bruno-testbench
       # Overrides the default name — the URL's last segment, here the generic
       # "collection" — so the entity ref stays readable and rename-proof.
-      name: public-bruno-collection
+      name: bruno-testbench-collection
       owner: guests
       # partOf: add API entity refs here to create the collection -> API
       # relation that the Bruno Card on an API page reads, e.g.
@@ -284,8 +284,6 @@ catalog:
   rules:
     - allow: [Component, System, API, Resource, Location, Bruno]
   locations:
-    - type: url
-      target: https://github.com/vasharma05-bruno/private-bruno-collection/blob/main/catalog-info.yaml
 
     # This app's own catalog-info.yaml. Read from disk, not as a `type: url`
     # GitHub target: a URL location would ingest whatever is on `main`, so the
@@ -304,16 +302,20 @@ catalog:
     # from the collection itself. Regenerate with:
     #   node scripts/bruno-catalog/generate.mjs
     - type: file
+      target: ../../examples/bruno-entities/scim-api-catalog-info.yaml
+      
+    - type: file
+      target: ../../examples/bruno-entities/bruno-e2e-demo-catalog-info.yaml
+      
+    - type: file
+      target: ../../examples/bruno-entities/orders-api-catalog-info.yaml
+          
+    - type: file
+      target: ../../examples/bruno-entities/bruno-workshop-catalog-info.yaml
+
+    - type: file
       target: ../../examples/bruno-collections.yaml
-
-    - type: file
-      target: ../../examples/bruno-entity.yaml
-
-    # Sample kind: Bruno entities, one per real collection in
-    # github.com/bruno-collections — both collection formats and both
-    # repo-root and subfolder layouts.
-    - type: file
-      target: ../../examples/bruno-entities.yaml
+      
 
     # Local example template
     - type: file
@@ -329,6 +331,9 @@ catalog:
 
     - type: url
       target: https://github.com/backstage/backstage/blob/master/packages/catalog-model/examples/apis/petstore-api.yaml
+
+    - type: url
+      target: https://github.com/vasharma05-bruno/bruno-collections/blob/main/github-rest-api-collection/catalog-info.yaml
 
     ## Uncomment these lines to add more example data
     # - type: url
