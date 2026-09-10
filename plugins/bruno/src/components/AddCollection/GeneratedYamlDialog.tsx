@@ -213,8 +213,20 @@ export function GeneratedYamlDialog(props: {
   yaml: string;
   /** The entity's name, for the pull request's default title. */
   name: string;
+  /**
+   * The entity's `metadata.title`, when the form supplied one — preferred over
+   * {@link name} in the pull request's default title.
+   *
+   * The pull request is read by someone who does not necessarily know this
+   * repository has been added to Backstage, so the subject line should say what
+   * the collection is CALLED, not what it is keyed on. The name is the fallback
+   * because a title is optional, and it is the same string the descriptor
+   * carries either way.
+   */
+  title?: string;
 }): JSX.Element {
-  const { open, onClose, collectionUrl, yaml, name } = props;
+  const { open, onClose, collectionUrl, yaml, name, title: entityTitle }
+    = props;
   const classes = useStyles();
   const brandClasses = useBrandStyles();
   const catalogImportApi = useCatalogImportApi();
@@ -321,7 +333,7 @@ export function GeneratedYamlDialog(props: {
     }
     let cancelled = false;
     const fallback = {
-      title: `Add ${prPath} for Bruno collection ${name}`,
+      title: `Add ${prPath} for Bruno collection ${entityTitle ?? name}`,
       body:
         'This pull request adds a **Backstage entity metadata file** for a '
         + 'Bruno collection, so that the collection appears in the software '
@@ -343,7 +355,7 @@ export function GeneratedYamlDialog(props: {
     return () => {
       cancelled = true;
     };
-  }, [catalogImportApi, name, open, prPath]);
+  }, [catalogImportApi, entityTitle, name, open, prPath]);
 
   const close = (): void => {
     setStage({ status: 'review' });

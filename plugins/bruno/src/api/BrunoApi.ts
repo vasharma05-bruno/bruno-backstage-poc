@@ -45,7 +45,7 @@ export type ProbeResult
 /**
  * What {@link BrunoApi.createCollection} needs to register a collection.
  *
- * The same four fields `BrunoEntityInput` collects for the descriptor, because
+ * The same five fields `BrunoEntityInput` collects for the descriptor, because
  * the two describe the same collection — one as a stored row, one as YAML. They
  * are separate types rather than one shared type because the descriptor's shape
  * is fixed by the catalog's entity envelope and this one is fixed by the
@@ -55,6 +55,16 @@ export type ProbeResult
 export interface CreateCollectionInput {
   /** `metadata.name` of the entity to create. Must be unique in the instance. */
   name: string;
+  /**
+   * `metadata.title` — the display name for the entity the provider will build.
+   *
+   * Optional, and absence is a real instruction rather than a missing value: a
+   * row with no title produces an entity with no authored `metadata.title`, and
+   * `BrunoKindProcessor` then derives it from the collection manifest on every
+   * cycle. Sending `''` would author an empty title, so the dialog collapses a
+   * blank field to `undefined` before it gets here.
+   */
+  title?: string;
   /** The collection folder in source control. Normalized by the backend. */
   url: string;
   /** Entity references for `spec.partOf`. */
@@ -66,6 +76,17 @@ export interface CreateCollectionInput {
 /** What the backend recorded, once a collection has been registered. */
 export interface CreatedCollection {
   name: string;
+  /**
+   * The title the backend STORED — trimmed, and absent when the field was left
+   * blank.
+   *
+   * Declared rather than dropped for the same reason {@link refreshSeconds}
+   * below is: it describes the route's 201 body, which does send it. No screen
+   * reads it today — the flow closes on a successful create and the collection
+   * is next seen as a catalog entity — but a caller that wants to name what it
+   * just created should read it here rather than re-trim what it sent.
+   */
+  title?: string;
   namespace: string;
   /** Ref of the entity that WILL exist, once the provider has run. */
   entityRef: string;
@@ -108,6 +129,15 @@ export interface CreatedCollection {
 export interface StoredCollectionSummary {
   /** `metadata.name` of the entity this row will produce. */
   name: string;
+  /**
+   * `metadata.title` for that entity, when one was chosen.
+   *
+   * Genuinely optional, unlike the deliberately-absent `createdBy` above: the
+   * add-collection dialog lets the field be cleared, and a row with no title is
+   * one whose display name is left to the collection manifest. A caller
+   * rendering this has to fall back to {@link name} for that case.
+   */
+  title?: string;
   /** The normalized collection folder in source control. */
   url: string;
   /** Entity references destined for `spec.partOf`. */

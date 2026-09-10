@@ -35,6 +35,19 @@ import { escapeHtml, generateOcDocsHtml } from './generateOcDocsHtml';
 const ENTITY_NAME_PATTERN = /^[a-zA-Z0-9]([-_.a-zA-Z0-9]*[a-zA-Z0-9])?$/;
 const MAX_ENTITY_NAME_LENGTH = 63;
 
+/**
+ * `metadata.title`'s length cap on a stored collection.
+ *
+ * The entity envelope bounds `title` not at all, so this is ours: it is
+ * `MAX_LABEL_LENGTH` from `manifestProbe.ts`, the length a title FETCHED from a
+ * collection manifest is clamped to. The two paths write the same field, and a
+ * cap that let an authored title outgrow a fetched one would be arbitrary in
+ * the one direction that matters. Mirrored by `MAX_TITLE_LENGTH` in
+ * `plugins/bruno/src/components/AddCollection/generateCatalogInfo.ts`, so the
+ * dialog reports the limit as a field error instead of a 400.
+ */
+const MAX_TITLE_LENGTH = 255;
+
 export interface RouterOptions {
   logger: LoggerService;
   config: Config;
@@ -261,6 +274,7 @@ export async function createRouter(
     const body = (req.body ?? {}) as {
       url?: unknown;
       name?: unknown;
+      title?: unknown;
       owner?: unknown;
       partOf?: unknown;
     };
@@ -280,6 +294,20 @@ export async function createRouter(
         + 'dots, starting and ending with a letter or digit.'
       );
     }
+    // Trimmed, and a blank one is UNDEFINED rather than an error: the dialog
+    // lets the title field be cleared, and clearing it is how a creator says
+    // "take the display name from the collection manifest" — the row keeps a
+    // NULL and `BrunoKindProcessor` derives the title on every cycle. Length is
+    // capped for the same reason `manifestProbe` clamps a fetched label: this
+    // value ends up in `metadata.title` on a catalog entity, and a fetched one
+    // could never be longer than this.
+    const rawTitle = typeof body.title === 'string' ? body.title.trim() : '';
+    if (rawTitle.length > MAX_TITLE_LENGTH) {
+      throw new InputError(
+        `A title is at most ${MAX_TITLE_LENGTH} characters.`
+      );
+    }
+    const title = rawTitle || undefined;
     const owner
       = typeof body.owner === 'string' && body.owner ? body.owner : undefined;
     const partOf
@@ -367,14 +395,19 @@ export async function createRouter(
 
     await uiCollections.insert({
       name,
+      title,
       url: normalized,
       owner,
       partOf,
       createdBy
     });
 
+    // `title` is echoed so the caller can show what was STORED rather than what
+    // it sent — trimmed, and absent when it was blank — which is the same
+    // reason the normalized `url` comes back.
     res.status(201).json({
       name,
+      ...(title && { title }),
       namespace: 'default',
       entityRef: `bruno:default/${name}`,
       url: normalized,

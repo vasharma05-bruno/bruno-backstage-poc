@@ -135,7 +135,7 @@ in [`src/plugin.ts`](src/plugin.ts).
 | --- | --- | --- |
 | `GET /health` | unauthenticated | `{ status: 'ok' }` — a liveness probe with no data. |
 | `POST /collections/probe` | `user` | `{ found: true, format, manifestPath, name?, version?, description? }`, or `{ found: false, reason: 'no-manifest' }` (200), or `{ found: false, reason: 'unreadable', message }` (400). |
-| `POST /collections` | `user` | `201` with `{ name, namespace, entityRef, url, refreshSeconds }`. |
+| `POST /collections` | `user` | Body `{ url, name, title?, owner?, partOf? }`. `201` with `{ name, title?, namespace, entityRef, url, refreshSeconds }`. A blank `title` is stored as NULL, not as `''` — see below. |
 | `GET /collections` | `user` \| `service` | `{ collections, refreshSeconds }`. A **user** principal gets rows with `createdBy` omitted. |
 | `DELETE /collections/:name` | `user` | `{ deleted: true, name, refreshSeconds }`, or `404` when no stored row exists. |
 | `GET /links` | `service` | `{ links }` — every runtime link in the instance, for `BrunoKindProcessor`. |
@@ -294,11 +294,20 @@ differs: `metadata.name` cannot be supplied by a processor — the catalog freez
 the entity ref before any processor runs and throws a `ConflictError` if one
 changes it — so it is derived here from the URL's last path segment.
 
-It makes **no SCM request**. `title`, `description` and `version` are left to the
-processor, which derives all three from its own probe; stamping them here as well
+It makes **no SCM request**. `description` and `version` are left to the
+processor, which derives both from its own probe; stamping them here as well
 meant a duplicate tree read per collection per tick for values that were being
 computed regardless. The visible cost is that a newly emitted collection shows
 its `metadata.name` until the first processing run, which follows within seconds.
+
+`metadata.title` is the one exception, and it costs no read: a UI-created row can
+carry an **authored** title, chosen in the add-collection dialog and stored in
+`bruno_ui_collections.title`, so it is the operator's own field in the way
+`owner` and `partOf` are. It is stamped when the row has one and omitted when it
+does not — which leaves the processor's `keep(authored) ?? manifest.name` to
+derive it, exactly as for an authored descriptor with no `title:`. Configured and
+discovered collections never have one: config has no `title:` key and a sweep has
+nothing to read one from, so for those the manifest is the only answer.
 
 ### `spec`
 
@@ -384,16 +393,26 @@ materialises the stored rows into `kind: Bruno` entities on its next scheduled
 tick, exactly as it already does for `bruno.collections[]` entries.
 
 **Table `bruno_ui_collections`** (`src/store/uiCollectionStore.ts`), created on
-first boot, no formal migrations:
+first boot, no formal migrations — but with one add-column-if-missing, for
+`title`, which was added after rows existed:
 
 | column       | notes                                                        |
 | ------------ | ------------------------------------------------------------ |
 | `name`       | `metadata.name` of the Bruno entity. Primary key.            |
+| `title`      | Optional `metadata.title`. NULL means "no authored title".   |
 | `url`        | The normalized collection folder URL.                        |
 | `owner`      | Optional `spec.owner`.                                       |
 | `part_of`    | `spec.partOf`, as a JSON array in a `text` column.           |
 | `created_by` | Entity ref of the user who added it. Recorded, not enforced. |
 | `created_at` | ISO timestamp.                                               |
+
+`title` is nullable and never defaulted to `''`, because the two are different
+instructions: NULL means the entity is emitted with no `metadata.title` at all,
+which is what leaves `BrunoKindProcessor` deriving the display name from the
+collection manifest on every cycle, while `''` would be an authored title that
+displays as nothing. The route trims the field and collapses a blank one to
+NULL, and caps it at 255 characters — `MAX_LABEL_LENGTH` in `manifestProbe.ts`,
+the length a title *fetched* from a manifest is clamped to.
 
 `part_of` is `text` holding JSON rather than a `json` column, because `text` is
 the only column type whose read-back value is byte-identical on better-sqlite3
@@ -666,8 +685,8 @@ rather than one each per reprocess cycle.
 `BrunoCollectionEntityProvider`'s **emission loop reads nothing** — its only SCM
 traffic is the discovery sweep, which is a repository listing per configured
 organization rather than a read per collection. The loop used to probe every
-collection on every tick to stamp `title`/`description`/`version`, duplicating
-what the processor derives from the same probe moments later. With a 60 s tick
+collection on every tick to stamp the *fetched* `title`/`description`/`version`,
+duplicating what the processor derives from the same probe moments later. With a 60 s tick
 against a 60 s TTL every tick was a guaranteed cache miss, so that loop alone
 accounted for roughly two thirds of steady-state Git traffic and computed nothing
 new.

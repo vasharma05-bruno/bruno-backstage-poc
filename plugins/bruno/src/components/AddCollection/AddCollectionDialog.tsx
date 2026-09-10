@@ -24,7 +24,11 @@ import type { ProbeFound } from '../../api';
 import { validateScmRepoUrl } from '../../lib/scmProviders';
 import { useBrandStyles } from '../../theme/brandStyles';
 import type { BrunoEntityInput } from './generateCatalogInfo';
-import { sanitizeEntityName, validateEntityName } from './generateCatalogInfo';
+import {
+  sanitizeEntityName,
+  validateEntityName,
+  validateEntityTitle
+} from './generateCatalogInfo';
 
 const useStyles = makeStyles((theme) => ({
   field: {
@@ -127,7 +131,7 @@ function nameFromUrl(url: string): string {
  *    `bruno.schedule.frequencySeconds` rather than instantly.
  *
  * Both are gated on the SAME {@link canSubmit}, because both produce a
- * `kind: Bruno` entity from the same four fields and a URL with no manifest
+ * `kind: Bruno` entity from the same five fields and a URL with no manifest
  * behind it is no more acceptable in a descriptor than in a stored row.
  *
  * Only one of them can fail, and only one of them keeps the dialog open. That
@@ -190,6 +194,17 @@ export function AddCollectionDialog(props: {
    * user had already typed every time they went back and adjusted the URL.
    */
   const [nameEdited, setNameEdited] = useState(false);
+  const [title, setTitle] = useState('');
+  /**
+   * Whether the user has edited the title themselves.
+   *
+   * Tracked SEPARATELY from `nameEdited` even though both fields are seeded
+   * from the same manifest value: the two are edited for different reasons —
+   * the name to dodge a collision, the title to read better — and a shared flag
+   * would freeze whichever one the user had not touched at whatever the first
+   * probe put there.
+   */
+  const [titleEdited, setTitleEdited] = useState(false);
   const [apis, setApis] = useState<Options>({ status: 'loading' });
   const [selectedApis, setSelectedApis] = useState<Entity[]>([]);
   const [groups, setGroups] = useState<Options>({ status: 'loading' });
@@ -248,18 +263,39 @@ export function AddCollectionDialog(props: {
   }, [brunoApi, url]);
 
   /**
-   * Prefills the name from the manifest, until the user takes it over.
+   * Prefills the name and the title from the manifest, until the user takes
+   * either over.
    *
    * Runs off the probe rather than inside its `then` so that going back to an
-   * already-probed URL refills the field the same way the first probe did.
+   * already-probed URL refills the fields the same way the first probe did.
+   *
+   * One effect for both, because both answer the same question — what is this
+   * collection called? — and the manifest name is the answer to it. What they
+   * do with that answer differs: the name is slugged to fit
+   * `ENTITY_NAME_PATTERN`, while the title takes it VERBATIM, which is the
+   * whole point of having a title at all (`My Collection (v2)` survives as
+   * itself rather than as `my-collection-v2`).
+   *
+   * The title has no URL fallback, unlike the name. A nameless manifest leaves
+   * it EMPTY on purpose: the last path segment is a folder, percent-encoding
+   * and all, and stamping `Orders%20API` into the descriptor as a human title
+   * would be worse than the empty field — which is not a gap but the opt-out,
+   * handing the field to `BrunoKindProcessor` to fill from the manifest
+   * whenever the collection grows a name.
    */
   useEffect(() => {
-    if (nameEdited || probe.status !== 'found') {
+    if (probe.status !== 'found') {
       return;
     }
-    const raw = probe.manifest.name ?? nameFromUrl(url.trim());
-    setName(raw ? sanitizeEntityName(raw) : '');
-  }, [nameEdited, probe, url]);
+    const manifestName = probe.manifest.name;
+    if (!nameEdited) {
+      const raw = manifestName ?? nameFromUrl(url.trim());
+      setName(raw ? sanitizeEntityName(raw) : '');
+    }
+    if (!titleEdited) {
+      setTitle(manifestName ?? '');
+    }
+  }, [nameEdited, probe, titleEdited, url]);
 
   /** Loads both pickers' options, once per opening. */
   useEffect(() => {
@@ -329,6 +365,8 @@ export function AddCollectionDialog(props: {
     setProbe({ status: 'empty' });
     setName('');
     setNameEdited(false);
+    setTitle('');
+    setTitleEdited(false);
     setSelectedApis([]);
     setOwner(null);
   };
@@ -339,11 +377,21 @@ export function AddCollectionDialog(props: {
   };
 
   const nameError = name ? validateEntityName(name) : undefined;
-  const canSubmit = probe.status === 'found' && !!name && !nameError;
+  const titleError = validateEntityTitle(title);
+  // An empty title is legal — see `collect` — so it is `titleError`, not
+  // `title`, that gates the two endings.
+  const canSubmit
+    = probe.status === 'found' && !!name && !nameError && !titleError;
 
-  /** The four fields, as both endings want them. */
+  /** The five fields, as both endings want them. */
   const collect = (): BrunoEntityInput => ({
     name,
+    // Blank collapses to `undefined` rather than travelling as `''`, in both
+    // endings: the descriptor drops the `metadata.title` key entirely and the
+    // stored row keeps a NULL, which is what lets the processor go on deriving
+    // the title from the collection manifest. A `''` would be an authored value
+    // that displays as nothing.
+    title: title.trim() || undefined,
     url: url.trim(),
     partOf: selectedApis.map((e) => stringifyEntityRef(e)),
     owner: owner ? stringifyEntityRef(owner) : undefined
@@ -521,6 +569,42 @@ export function AddCollectionDialog(props: {
             Required, and permanent. The catalog freezes an entity&apos;s
             reference before any processor runs, so this cannot be derived from
             the collection later — renaming it means registering a new entity.
+          </Typography>
+        </Box>
+
+        <Box className={classes.field}>
+          <TextField
+            fullWidth
+            variant="outlined"
+            label="Display title"
+            placeholder="The name to show for this collection"
+            value={title}
+            error={!!titleError}
+            helperText={titleError}
+            disabled={probe.status !== 'found'}
+            onChange={(event) => {
+              setTitleEdited(true);
+              setTitle(event.target.value);
+            }}
+          />
+          <Typography
+            variant="body2"
+            color="textSecondary"
+            className={classes.hint}
+          >
+            {/*
+              Two sentences, and the second one is the important one: it is the
+              only place the user is told that filling this in takes the display
+              name OVER from the collection manifest. Both endings behave this
+              way — an authored `metadata.title` wins over the fetched one, and
+              so does a stored one — so the sentence is true whichever button
+              they press.
+            */}
+            What the catalog shows for this collection, in place of the entity
+            name. Prefilled from the collection manifest; leave it empty to keep
+            following the manifest, so renaming the collection in{' '}
+            <code>bruno.json</code> or <code>opencollection.yaml</code> renames
+            it here too.
           </Typography>
         </Box>
 

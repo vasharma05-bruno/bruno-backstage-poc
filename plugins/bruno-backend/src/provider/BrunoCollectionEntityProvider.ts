@@ -59,7 +59,9 @@ const LOCATION_TYPE = 'bruno-collection';
  * is identical either way. With a 60s tick against a 60s cache TTL every tick
  * was a guaranteed cache miss, so the loop alone accounted for roughly two
  * thirds of the plugin's steady-state Git traffic, spent to compute values that
- * were already being computed. `probe` survives here for `normalize`, which is
+ * were already being computed. What that removed was the FETCHED title: the
+ * AUTHORED one a UI-created row now carries is stamped here, reads nothing, and
+ * is the `keep(authored)` side of the same precedence rule. `probe` survives here for `normalize`, which is
  * pure URL parsing and touches no network. What the removal gave up is spelled
  * out on `run()`.
  *
@@ -285,6 +287,11 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
       ...stored.map((row) => ({
         url: row.url,
         name: row.name,
+        // The ONLY source that carries one. A configured entry has no `title:`
+        // key and a sweep has nothing to read one from, so for those two the
+        // manifest is the only answer and the processor is the only thing that
+        // can supply it.
+        title: row.title,
         partOf: row.partOf,
         owner: row.owner,
         origin: 'ui' as const
@@ -372,6 +379,7 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
       entities.push(
         buildEntity({
           name,
+          title: entry.title,
           url,
           partOf: entry.partOf,
           owner: entry.owner,
@@ -410,6 +418,8 @@ type SourceOrigin = 'config' | 'ui' | 'discovery';
 type SourceEntry = {
   url: string;
   name?: string;
+  /** An authored `metadata.title`. Only a UI-created row has one. */
+  title?: string;
   partOf: string[];
   owner?: string;
   origin: SourceOrigin;
@@ -468,22 +478,31 @@ function disambiguationAdvice(
  * The unprocessed entity for one collection — identity, provenance and the
  * operator's own fields, and nothing that would require reading the SCM host.
  *
- * `title`, `description` and `version` are deliberately ABSENT: they come from
- * the collection manifest, and `BrunoKindProcessor` fills all three in from its
- * own probe on the first processing run. Stamping them here as well meant a
+ * `description` and `version` are deliberately ABSENT: they come from the
+ * collection manifest, and `BrunoKindProcessor` fills both in from its own
+ * probe on the first processing run. Stamping them here as well meant a
  * duplicate tree read per collection per tick for a value the processor was
  * computing regardless. The visible cost is that a newly emitted collection
  * shows its `metadata.name` until that first run, which follows emission within
  * seconds.
+ *
+ * `title` is the exception, and costs NO read: it is not fetched but AUTHORED,
+ * carried on the stored row by whoever added the collection from the dashboard,
+ * so it is the operator's own field in exactly the way `owner` and `partOf`
+ * are. The probe removal that took `description` and `version` out of here does
+ * not apply to it. When the row has none the key is omitted, which leaves the
+ * processor's `keep(authored) ?? manifest.name` to derive it — the same
+ * arrangement an authored `catalog-info.yaml` with no `title:` gets.
  */
 function buildEntity(input: {
   name: string;
+  title?: string;
   url: string;
   partOf: string[];
   owner?: string;
   origin: BrunoOrigin;
 }): BrunoEntity {
-  const { name, url, partOf, owner, origin } = input;
+  const { name, title, url, partOf, owner, origin } = input;
   const location = `url:${url}`;
 
   return {
@@ -491,6 +510,12 @@ function buildEntity(input: {
     kind: 'Bruno',
     metadata: {
       name,
+      // Emitted BEFORE the tags and annotations, and present or absent rather
+      // than present-and-empty, so that a row with no title produces an entity
+      // byte-identical to the one it produced before this column existed —
+      // which is what keeps `resultHash` stable across the upgrade instead of
+      // rewriting every UI-created entity once.
+      ...(title && { title }),
       tags: ['bruno'],
       annotations: {
         'backstage.io/managed-by-location': location,

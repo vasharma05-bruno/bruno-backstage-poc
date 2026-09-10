@@ -267,9 +267,18 @@ that produced it.
 **Modal 1 — the form** (`AddCollectionDialog.tsx`). The URL field debounces 600 ms
 and then asks the backend to probe it; a probe is a `readTree` of a whole
 repository on a cache miss, and a pasted URL arrives in one event anyway. A found
-manifest fills in a suggested `metadata.name` (sanitized — `My Collection (v2)`
-becomes `my-collection-v2`; the original survives as `metadata.title`, which is
-what cards display). Owner and "part of" are `CatalogAutocomplete` pickers over a
+manifest seeds two fields from its own name: `metadata.name`, sanitized (`My
+Collection (v2)` becomes `my-collection-v2`), and **Display title**, which takes
+it verbatim — the whole point of having both. The title is editable and may be
+cleared, and clearing it is the opt-out rather than a gap: with no
+`metadata.title` on the entity, `BrunoKindProcessor` derives one from the
+collection manifest on every processing cycle, so renaming the collection in
+`bruno.json` renames it in Backstage too. Fill it in and it wins over the
+manifest from then on — on both endings, since an authored title and a stored
+one are the same `keep(authored)` side of that rule. A manifest with no name of
+its own leaves the field empty rather than falling back to the URL's last path
+segment, which is a folder (`Orders%20API`) and not a name. Owner and "part of"
+are `CatalogAutocomplete` pickers over a
 four-field projection of the catalog, because an unprojected `getEntities` over
 every API and Group would pull their specs, relations and OpenAPI definitions
 across the wire to render a dropdown of names. The name is validated here rather
@@ -279,7 +288,7 @@ processor runs — it is the one field that has to be right at authoring time.
 **Modal 1 has no single submit.** The two actions write to two different places,
 and which one the user wants is not something the dialog can infer. Both are
 gated on the same check — a probed URL with a manifest behind it, and a legal
-name — because both produce a `kind: Bruno` entity from the same four fields.
+name — because both produce a `kind: Bruno` entity from the same five fields.
 
 | Action | What it writes | Where the entity comes from |
 | --- | --- | --- |

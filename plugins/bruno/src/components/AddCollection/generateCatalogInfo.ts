@@ -37,10 +37,31 @@ const BRUNO_COLLECTION_TYPE = 'bruno-collection';
 const ENTITY_NAME_PATTERN = /^[a-zA-Z0-9]([-_.a-zA-Z0-9]*[a-zA-Z0-9])?$/;
 const MAX_ENTITY_NAME_LENGTH = 63;
 
+/**
+ * `metadata.title`'s length cap.
+ *
+ * Not a platform limit — the entity envelope schema puts no bound on `title` at
+ * all. It mirrors `MAX_LABEL_LENGTH` in
+ * plugins/bruno-backend/src/service/manifestProbe.ts, which is what the backend
+ * clamps a manifest's own name to before it ever reaches an entity. Allowing a
+ * longer authored title than a fetched one could produce would mean the field's
+ * default (the manifest name) and the field's limit disagreed.
+ */
+const MAX_TITLE_LENGTH = 255;
+
 /** Everything the flow collects before it can write a descriptor. */
 export interface BrunoEntityInput {
   /** `metadata.name`. Required — see {@link buildBrunoEntity}. */
   name: string;
+  /**
+   * `metadata.title` — the human name every card and header actually shows.
+   *
+   * Optional, and the emptiness is meaningful rather than sloppy: an absent
+   * title is what hands the field back to `BrunoKindProcessor`, which fills it
+   * from the collection manifest on every processing cycle. See
+   * {@link buildBrunoEntity} for what authoring one gives up.
+   */
+  title?: string;
   /** `spec.url` — the collection folder in source control. */
   url: string;
   /** Entity references for `spec.partOf`. */
@@ -96,15 +117,49 @@ export function validateEntityName(name: string): string | undefined {
 }
 
 /**
+ * Validates a `metadata.title` the user typed, returning an error string or
+ * `undefined`.
+ *
+ * Far weaker than {@link validateEntityName}, and deliberately: `title` is free
+ * prose in the entity envelope, it is not part of the entity reference, and —
+ * unlike the name — it can be changed later by editing one line of the
+ * descriptor. Length is the only thing worth checking, and only because a title
+ * long enough to break the layout of every card is easier to catch here than to
+ * notice on the dashboard afterwards.
+ *
+ * An EMPTY title is not an error. It is the opt-out: see
+ * {@link buildBrunoEntity}.
+ */
+export function validateEntityTitle(title: string): string | undefined {
+  if (title.length > MAX_TITLE_LENGTH) {
+    return `Titles are at most ${MAX_TITLE_LENGTH} characters.`;
+  }
+  return undefined;
+}
+
+/**
  * The `kind: Bruno` entity for a collection the user just described.
  *
- * Note what is deliberately NOT written, even though the probe gives us all
- * three: `metadata.title`, `metadata.description` and `metadata.version`.
- * `BrunoKindProcessor` treats AUTHORED values for those as winning over the
- * fetched manifest, so stamping today's manifest values into the descriptor
- * would freeze them forever — rename the collection in `bruno.json` and
- * Backstage would keep showing the old name, with no way to tell why. Leaving
- * them out is what keeps them live.
+ * `metadata.title` is written when the form supplied one, and what that COSTS
+ * has to be stated plainly, because it is the reason this used to be omitted.
+ * `BrunoKindProcessor` resolves the field as `keep(authored) ?? manifest.name`,
+ * so an authored title wins over the manifest from then on: rename the
+ * collection in `bruno.json` and Backstage keeps showing the title in this file
+ * until somebody edits it. That is now the intended trade — a descriptor is a
+ * file people are meant to edit, the pull request puts the value in front of a
+ * reviewer, and a catalog entity whose display name cannot be chosen is a worse
+ * answer than one whose display name has to be maintained. The dialog seeds the
+ * field FROM the manifest name, so the common case is a descriptor that agrees
+ * with the collection on the day it is opened.
+ *
+ * Clearing the field is the way back: with no `title` key the processor fills it
+ * from the manifest on every cycle, exactly as it did before this flow could
+ * write one.
+ *
+ * `metadata.description` and `metadata.version` are still deliberately NOT
+ * written, even though the probe gives us both, and for the reason the title
+ * used to be omitted too — nobody asked to choose those, so freezing them buys
+ * nothing and costs a value that would otherwise track the collection.
  *
  * `spec.definition`, `spec.requestCount` and `spec.environments` are likewise
  * absent: the processor owns them outright and overwrites any authored value.
@@ -128,11 +183,19 @@ export function buildBrunoEntity(input: BrunoEntityInput): Entity {
     .map(tryNormaliseApiRef)
     .filter((ref): ref is string => ref !== undefined);
 
+  // Trimmed, and dropped entirely when nothing is left. A `title: ''` key would
+  // be the worst of both: authored enough to survive into the file, and empty
+  // enough that `keep` treats it as absent — so the descriptor would carry a
+  // field the catalog ignores, and a reader diffing the file against the
+  // dashboard would have no way to explain the difference.
+  const title = input.title?.trim();
+
   return {
     apiVersion: BRUNO_API_VERSION,
     kind: 'Bruno',
     metadata: {
-      name: input.name
+      name: input.name,
+      ...(title ? { title } : {})
     },
     spec: {
       type: BRUNO_COLLECTION_TYPE,
@@ -151,6 +214,13 @@ export function buildBrunoEntity(input: BrunoEntityInput): Entity {
  * merge it. `lineWidth: 0` disables `yaml`'s line folding, which would otherwise
  * wrap a long collection URL across two lines — legal YAML, but it reads like a
  * mistake in a diff.
+ *
+ * The note about the omitted fields BRANCHES on whether a title was authored,
+ * rather than describing both cases in one paragraph. The reviewer is being
+ * asked what this file does, and the answer genuinely differs: with a `title:`
+ * key the file is the display name's source of truth and the manifest no longer
+ * is, and a header that hedged about a key which may or may not be a few lines
+ * below would leave them to work out which file they are reading.
  */
 export function toCatalogInfoYaml(entity: Entity): string {
   const header = [
@@ -159,9 +229,24 @@ export function toCatalogInfoYaml(entity: Entity): string {
     '# Generated by the Bruno plugin for Backstage. Edit it freely — the',
     '# plugin never rewrites this file; it only opens pull requests against it.',
     '#',
-    '# `metadata.title`, `metadata.description` and `metadata.version` are',
-    '# deliberately omitted so they stay in sync with the collection manifest.',
-    '# Set one here and it wins over the manifest from then on.',
+    // Each branch is a WHOLE paragraph rather than two openings sharing a
+    // tail: the shared version saved two lines and cost a ragged one-clause
+    // line in the middle of a comment block a reviewer is meant to read.
+    ...(entity.metadata.title
+      ? [
+          '# `metadata.title` below is what Backstage displays for this',
+          '# collection, and it WINS over the name in the collection manifest',
+          '# from now on. Delete the line to go back to following the manifest.',
+          '#',
+          '# `metadata.description` and `metadata.version` are deliberately',
+          '# omitted so they stay in sync with the manifest. Set either here',
+          '# and it wins the same way.'
+        ]
+      : [
+          '# `metadata.title`, `metadata.description` and `metadata.version` are',
+          '# deliberately omitted so they stay in sync with the collection',
+          '# manifest. Set one here and it wins over the manifest from then on.'
+        ]),
     ''
   ].join('\n');
   return `${header}\n${stringify(entity, { lineWidth: 0 })}`;

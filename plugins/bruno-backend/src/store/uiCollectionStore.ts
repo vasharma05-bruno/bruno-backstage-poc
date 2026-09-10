@@ -17,6 +17,16 @@ const TABLE = 'bruno_ui_collections';
 export interface UiCollectionRow {
   /** `metadata.name` of the Bruno entity. Primary key. */
   name: string;
+  /**
+   * `metadata.title` of the Bruno entity, when the creator chose one.
+   *
+   * NULL in the column means "no authored title", which is not the same as an
+   * empty one: `BrunoCollectionEntityProvider` omits the key from the emitted
+   * entity, and `BrunoKindProcessor` then fills it from the collection manifest
+   * on every processing cycle. An empty string would be an authored title that
+   * displays as nothing, so the route collapses blanks to NULL.
+   */
+  title?: string;
   /** The normalized collection folder URL. */
   url: string;
   owner?: string;
@@ -36,6 +46,7 @@ export interface UiCollectionStore {
 
 type RawRow = {
   name: string;
+  title: string | null;
   url: string;
   owner: string | null;
   part_of: string;
@@ -82,6 +93,10 @@ function parsePartOf(raw: unknown): string[] {
 function rowToModel(row: RawRow): UiCollectionRow {
   return {
     name: row.name,
+    // Truthiness, not a null check: the column can hold `''` on a row written
+    // before the route collapsed blanks, and an empty title has to read as
+    // absent here too or it would author one on the entity.
+    ...(row.title ? { title: row.title } : {}),
     url: row.url,
     ...(row.owner ? { owner: row.owner } : {}),
     partOf: parsePartOf(row.part_of),
@@ -94,9 +109,17 @@ function rowToModel(row: RawRow): UiCollectionRow {
  * The store behind `POST`/`GET`/`DELETE /api/bruno/collections`.
  *
  * Create-table-if-not-exists rather than a formal migration, matching the store
- * this plugin used to carry: the table has one shape, has never had another,
- * and a POC that has to be re-pointed at a fresh database on every schema
- * change is a worse trade than the knex migration machinery.
+ * this plugin used to carry, and a POC that has to be re-pointed at a fresh
+ * database on every schema change is a worse trade than the knex migration
+ * machinery.
+ *
+ * The table now has a SECOND shape — `title` was added after rows existed — so
+ * the create is followed by an add-column-if-missing, which is the same idea
+ * one column down. It is idempotent, it is the only widening this table has
+ * had, and the alternative on a POC without migrations is a backend that
+ * answers 500 to every create against a database that predates the column. A
+ * third widening is the point at which this should become a real migration
+ * rather than a third stanza.
  */
 export async function createUiCollectionStore(
   database: DatabaseService
@@ -107,6 +130,11 @@ export async function createUiCollectionStore(
     try {
       await client.schema.createTable(TABLE, (table) => {
         table.text('name').primary();
+        // Nullable, and never `notNullable().defaultTo('')`: the difference
+        // between NULL and `''` is the difference between "follow the
+        // collection manifest" and "display nothing", and a default would
+        // silently pick the wrong one of those for every row.
+        table.text('title');
         table.text('url').notNullable();
         table.text('owner');
         table.text('part_of').notNullable();
@@ -117,6 +145,24 @@ export async function createUiCollectionStore(
       // Tolerate a concurrent creator (e.g. a second backend replica) that won
       // the race; only rethrow if the table genuinely still does not exist.
       if (!(await client.schema.hasTable(TABLE))) {
+        throw error;
+      }
+    }
+  }
+
+  // Widens a table created before `title` existed. Runs on every startup, and
+  // when the column is already there — every startup after the first — it costs
+  // one information-schema query and nothing else. The same concurrent-writer
+  // tolerance as the create above, and for the same reason: two backend
+  // replicas start together, and whichever loses the race must not take the
+  // plugin down with it.
+  if (!(await client.schema.hasColumn(TABLE, 'title'))) {
+    try {
+      await client.schema.alterTable(TABLE, (table) => {
+        table.text('title');
+      });
+    } catch (error) {
+      if (!(await client.schema.hasColumn(TABLE, 'title'))) {
         throw error;
       }
     }
@@ -134,6 +180,10 @@ export async function createUiCollectionStore(
       try {
         await client(TABLE).insert({
           name: row.name,
+          // `?? null` rather than omitting the key, so the INSERT names every
+          // column on both dialects and a row written here is shaped like one
+          // written by any other path.
+          title: row.title ?? null,
           url: row.url,
           owner: row.owner ?? null,
           part_of: JSON.stringify(row.partOf ?? []),

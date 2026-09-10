@@ -129,6 +129,13 @@ export function AddCollectionAction(): JSX.Element {
       try {
         await brunoApi.createCollection({
           name: input.name,
+          // Field by field rather than spreading `input`, so the two shapes stay
+          // independent — see `CreateCollectionInput`. `title` is passed through
+          // as the dialog left it, `undefined` included: that is what makes the
+          // stored row's title NULL and hands the display name back to the
+          // collection manifest, exactly as omitting the key from the
+          // descriptor does on the other ending.
+          title: input.title,
           url: input.url,
           partOf: input.partOf,
           owner: input.owner
@@ -207,6 +214,7 @@ export function AddCollectionAction(): JSX.Element {
           open
           collectionUrl={flow.input.url}
           name={flow.input.name}
+          title={flow.input.title}
           yaml={flow.yaml}
           onClose={() => setFlow({ status: 'closed' })}
         />

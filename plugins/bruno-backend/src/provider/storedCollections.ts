@@ -10,6 +10,9 @@ import type { AuthService, DiscoveryService } from '@backstage/backend-plugin-ap
  */
 export interface StoredCollection {
   name: string;
+  /** `metadata.title` the creator chose, absent when they left it to the
+   *  collection manifest. */
+  title?: string;
   url: string;
   owner?: string;
   partOf: string[];
@@ -108,6 +111,13 @@ export function createStoredCollectionReader(options: {
         }
         rows.push({
           name: row.name,
+          // Not one of the two fields a row is dropped for missing: a title is
+          // legitimately absent, and it is the only field here whose absence is
+          // an instruction rather than a defect — the provider omits the key and
+          // the processor derives the title from the manifest instead.
+          ...(typeof row.title === 'string' && row.title
+            ? { title: row.title }
+            : {}),
           url: row.url,
           ...(typeof row.owner === 'string' && row.owner
             ? { owner: row.owner }
