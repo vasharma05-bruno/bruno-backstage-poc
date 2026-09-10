@@ -45,6 +45,81 @@ function gitlabProjectSegments(segments: string[]): string[] {
 }
 
 /**
+ * The segment each provider puts between the project and the ref when it is
+ * showing something inside the repository. `src` is Bitbucket's; the rest are
+ * GitHub's and GitLab's.
+ */
+const VIEW_SEGMENTS = ['tree', 'blob', 'raw', 'src'];
+
+/**
+ * The in-repo folder a collection URL points at, or `''` when it points at the
+ * repository itself:
+ *
+ *   GitHub     https://host/<owner>/<repo>/tree/<ref>/<path>    -> <path>
+ *   Bitbucket  https://host/<workspace>/<repo>/src/<ref>/<path> -> <path>
+ *   GitLab     https://host/<group…>/<repo>/-/tree/<ref>/<path> -> <path>
+ *
+ * The exact complement of {@link repoRootFromCollectionUrl}, and split the same
+ * way for the same reason: GitLab's namespace is arbitrary-depth, so its path
+ * begins after the `/-/<view>/<ref>` run rather than at a fixed offset.
+ *
+ * This is what decides where a generated `catalog-info.yaml` belongs. A
+ * collection in `github-rest-api-collection/` wants its descriptor beside it,
+ * not at the repository root — one root descriptor per repository is a ceiling
+ * of one collection per repository, and a repository holding several would be
+ * able to describe only the first.
+ *
+ * Segments are percent-decoded, because that is the form the SCM APIs take
+ * paths in: a folder with a space in its name arrives as `my%20collection` in
+ * the browser URL the user pasted, and has to be committed to as
+ * `my collection`.
+ *
+ * Total: never throws. Anything it cannot read as a path inside a repository
+ * comes back as `''`, which every caller treats as the repository root.
+ */
+export function collectionPathFromUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const segments = u.pathname
+      .split('/')
+      .filter(Boolean)
+      .map((segment) => decodeURIComponent(segment));
+
+    if (scmProviderFromUrl(url)?.id === 'gitlab') {
+      // `<namespace…>/<repo>/-/<view>/<ref>/<path…>`
+      const dash = segments.indexOf('-');
+      if (dash === -1 || !VIEW_SEGMENTS.includes(segments[dash + 1] ?? '')) {
+        return '';
+      }
+      return segments.slice(dash + 3).join('/');
+    }
+
+    // `<namespace>/<repo>/<view>/<ref>/<path…>`
+    if (segments.length < 5 || !VIEW_SEGMENTS.includes(segments[2])) {
+      return '';
+    }
+    return segments.slice(4).join('/');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Where a collection's descriptor belongs: `<collection folder>/<filename>`, or
+ * bare `<filename>` for a collection that is its whole repository.
+ *
+ * Repo-relative and never leading-slashed, which is the form both the GitHub
+ * contents API and a `catalog.locations` entry want.
+ */
+export function descriptorPathForCollection(
+  collectionUrl: string,
+  filename: string
+): string {
+  const folder = collectionPathFromUrl(collectionUrl);
+  return folder ? `${folder}/${filename}` : filename;
+}
+
+/**
  * Default longest a collection URL is rendered before its middle is elided.
  */
 const DEFAULT_MAX_URL_CHARS = 48;

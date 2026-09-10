@@ -34,7 +34,11 @@ import {
   catalogImportPlugin
 } from '@backstage/plugin-catalog-import';
 import type { CatalogImportApi } from '@backstage/plugin-catalog-import';
-import { repoRootFromCollectionUrl } from '../../lib/scmUrl';
+import {
+  descriptorPathForCollection,
+  repoRootFromCollectionUrl
+} from '../../lib/scmUrl';
+import { planDescriptorPr, submitDescriptorPr } from '../../lib/descriptorPr';
 import { useBrandStyles } from '../../theme/brandStyles';
 
 const useStyles = makeStyles((theme) => ({
@@ -64,7 +68,11 @@ type Stage
     | { status: 'submitted'; link: string }
     | { status: 'error'; message: string };
 
-/** The two SCM types `catalogImportApi.submitPullRequest` can actually write to. */
+/**
+ * The SCM types this dialog can open a pull request against: GitHub through
+ * `lib/descriptorPr.ts`, Azure DevOps through `catalogImportApi` — which is the
+ * only other provider that client can write to.
+ */
 const PR_CAPABLE_TYPES = ['github', 'azure'];
 
 /**
@@ -250,6 +258,15 @@ export function GeneratedYamlDialog(props: {
   const repoUrl = repoRootFromCollectionUrl(collectionUrl);
   const scmType = scmIntegrations?.byUrl(repoUrl)?.type;
   const prSupported = !!scmType && PR_CAPABLE_TYPES.includes(scmType);
+  /**
+   * Whether we can commit the descriptor where it belongs.
+   *
+   * GitHub goes through `lib/descriptorPr.ts`, which writes to an arbitrary
+   * path; everything else falls back to `catalogImportApi`, which can only
+   * write to the repository ROOT. That is the whole reason for the branch, and
+   * the limits panel says which one the user is about to get.
+   */
+  const pathAware = scmType === 'github';
   // Both are read from config exactly as `plugin-catalog-import` reads them,
   // so the warnings below name the real filename and branch for THIS app rather
   // than repeating the upstream defaults.
@@ -259,6 +276,39 @@ export function GeneratedYamlDialog(props: {
   const branchName
     = configApi?.getOptionalString('catalog.import.pullRequestBranchName')
       ?? 'backstage-integration';
+
+  /**
+   * Where the descriptor belongs: beside the collection, not at the repository
+   * root.
+   *
+   * This is the file's real home whatever the provider, so it is what the
+   * preview card is headed with and what a download is meant to become. The
+   * Azure fallback cannot reach it, and the limits panel says so rather than
+   * letting the card quietly promise a path the pull request will not use.
+   */
+  const descriptorPath = descriptorPathForCollection(
+    collectionUrl,
+    catalogFilename
+  );
+  /** Whether the collection is a folder in its repository rather than all of it. */
+  const inSubfolder = descriptorPath !== catalogFilename;
+  /**
+   * Where the pull request will ACTUALLY put the file — the same thing on the
+   * GitHub path, and the repository root on the Azure fallback. Named apart from
+   * `descriptorPath` so the copy below can state the difference instead of
+   * asserting one of the two and being wrong half the time.
+   */
+  const prPath = pathAware ? descriptorPath : catalogFilename;
+
+  /**
+   * The GitHub API to talk to, for a GitHub Enterprise host.
+   *
+   * Left undefined for github.com, where the integration config omits it and
+   * Octokit's own default is right. Passing something wrong here would send
+   * every call at the public API and 404 on a repository that exists.
+   */
+  const githubApiBaseUrl = scmIntegrations?.github.byUrl(repoUrl)?.config
+    .apiBaseUrl;
 
   /**
    * Seeds the editable title and body from the app's own wording, falling back
@@ -271,7 +321,7 @@ export function GeneratedYamlDialog(props: {
     }
     let cancelled = false;
     const fallback = {
-      title: `Add ${catalogFilename} for Bruno collection ${name}`,
+      title: `Add ${prPath} for Bruno collection ${name}`,
       body:
         'This pull request adds a **Backstage entity metadata file** for a '
         + 'Bruno collection, so that the collection appears in the software '
@@ -293,7 +343,7 @@ export function GeneratedYamlDialog(props: {
     return () => {
       cancelled = true;
     };
-  }, [catalogFilename, catalogImportApi, name, open]);
+  }, [catalogImportApi, name, open, prPath]);
 
   const close = (): void => {
     setStage({ status: 'review' });
@@ -303,17 +353,29 @@ export function GeneratedYamlDialog(props: {
   /**
    * Opens the pull request.
    *
-   * The credential call is deliberately hoisted OUT of `submitPullRequest` and
-   * made the FIRST await of the click handler. The client's own implementation
-   * validates the entity against the live catalog before it asks for
-   * credentials, and a browser blocks an OAuth popup opened after an
+   * The credential call is the FIRST await of the click handler on both paths,
+   * and on the Azure one it is deliberately hoisted OUT of `submitPullRequest`.
+   * That client validates the entity against the live catalog before it asks
+   * for credentials, and a browser blocks an OAuth popup opened after an
    * intervening await as unsolicited — so on a cold session the upstream order
    * silently fails to authenticate. Warming the session here means the client's
-   * own `getCredentials` resolves from cache. The token is never bound to a
-   * name, stored, or logged; only the session it establishes is used.
+   * own `getCredentials` resolves from cache. The token is held in a local for
+   * the length of the call and is never stored in state, logged, or put in a
+   * URL.
+   *
+   * Two paths, because only one of them can put the file in the right place:
+   *
+   *  - **GitHub** goes through `lib/descriptorPr.ts`, which commits to
+   *    `descriptorPath` — the collection's own folder — on a branch named per
+   *    attempt, and refuses rather than overwriting a descriptor that is
+   *    already there.
+   *  - **Azure DevOps** goes through `catalogImportApi`, which can only write
+   *    `catalogFilename` at the repository root on one fixed branch. Kept
+   *    rather than dropped: it is the only thing an Azure user has, and the
+   *    limits panel states exactly what it will do before they click.
    */
   const submit = (): void => {
-    if (!catalogImportApi || !scmAuth) {
+    if (!scmAuth || (!pathAware && !catalogImportApi)) {
       setStage({
         status: 'error',
         message:
@@ -326,11 +388,35 @@ export function GeneratedYamlDialog(props: {
     setStage({ status: 'submitting' });
     void (async () => {
       try {
-        await scmAuth.getCredentials({
+        const { token } = await scmAuth.getCredentials({
           url: repoUrl,
           additionalScope: { repoWrite: true }
         });
-        const { link } = await catalogImportApi.submitPullRequest({
+        if (pathAware) {
+          if (!token) {
+            throw new Error('The SCM provider returned no access token.');
+          }
+          const plan = await planDescriptorPr({
+            collectionUrl,
+            collectionName: name,
+            filename: catalogFilename,
+            content: yaml,
+            title,
+            body,
+            token,
+            apiBaseUrl: githubApiBaseUrl
+          });
+          const { link } = await submitDescriptorPr(
+            plan,
+            token,
+            githubApiBaseUrl
+          );
+          setStage({ status: 'submitted', link });
+          return;
+        }
+        const { link } = await (
+          catalogImportApi as CatalogImportApi
+        ).submitPullRequest({
           repositoryUrl: repoUrl,
           fileContent: yaml,
           title,
@@ -391,15 +477,29 @@ export function GeneratedYamlDialog(props: {
    */
   const limits = (
     <ul className={classes.limits}>
+      {prPath === descriptorPath
+        ? (
+            <li>
+              The pull request adds <code>{prPath}</code>
+              {inSubfolder
+                ? ' — beside the collection, so one repository can describe a collection per folder.'
+                : ', which is the repository root because this collection is the whole repository.'}
+            </li>
+          )
+        : (
+            <li>
+              The pull request adds <code>{prPath}</code> at the{' '}
+              <strong>repository root</strong>, not at{' '}
+              <code>{descriptorPath}</code> beside the collection — only the
+              GitHub path can commit to a collection folder. Download the file
+              instead if it needs to live there.
+            </li>
+          )}
       <li>
-        The pull request adds <code>{catalogFilename}</code> at the{' '}
-        <strong>repository root</strong>, not in the collection folder. Download
-        the file instead if it needs to live beside the collection.
-      </li>
-      <li>
-        If the repository already has a root <code>{catalogFilename}</code>, the
-        pull request will fail — the commit is created, never updated. Download
-        the file and merge it into the existing one by hand.
+        If <code>{prPath}</code> already exists, the pull request is refused
+        rather than overwriting it — this
+        flow only adds a new descriptor. Download the file and merge it into the
+        existing one by hand.
       </li>
       <li>
         Only GitHub and Azure DevOps are supported.
@@ -407,15 +507,26 @@ export function GeneratedYamlDialog(props: {
           ? ` This URL resolves to a ${scmType} integration.`
           : ' This URL matches no configured integration.'}
       </li>
-      <li>
-        Every import uses the branch <code>{branchName}</code>, so only one
-        import can be open against a repository at a time.
-      </li>
-      <li>
-        The entity is validated against the live catalog before the commit is
-        made, so a backend that does not know <code>kind: Bruno</code> will
-        reject it here.
-      </li>
+      {pathAware
+        ? (
+            <li>
+              The branch is named per pull request, so several collections in
+              one repository can be in flight at once.
+            </li>
+          )
+        : (
+            <>
+              <li>
+                Every import uses the branch <code>{branchName}</code>, so only
+                one import can be open against a repository at a time.
+              </li>
+              <li>
+                The entity is validated against the live catalog before the
+                commit is made, so a backend that does not know{' '}
+                <code>kind: Bruno</code> will reject it here.
+              </li>
+            </>
+          )}
       <li>
         Merging the pull request does not by itself put <code>{name}</code> in
         the catalog — Backstage does not read a file it has not been pointed at.
@@ -443,7 +554,7 @@ export function GeneratedYamlDialog(props: {
           asked to read the file.
         */}
         <Typography variant="body2" className={classes.section}>
-          Merging it adds <code>{catalogFilename}</code> to the repository. Then{' '}
+          Merging it adds <code>{prPath}</code> to the repository. Then{' '}
           {registerStep} — <code>{name}</code> appears in the catalog at that
           point, not before.
         </Typography>
@@ -493,7 +604,7 @@ export function GeneratedYamlDialog(props: {
               // default `h5`: this is a path, not a heading, and at h5 a repo
               // URL wraps onto three lines and dominates the dialog.
               titleTypographyProps={{ variant: 'subtitle2' }}
-              title={<code>{`${repoUrl.replace(/\/$/, '')}/${catalogFilename}`}</code>}
+              title={<code>{`${repoUrl.replace(/\/$/, '')}/${descriptorPath}`}</code>}
             />
             <CardContent className={classes.preview}>
               <CodeSnippet text={yaml} language="yaml" />
@@ -565,7 +676,11 @@ export function GeneratedYamlDialog(props: {
           // Disabled rather than hidden: the reason lives in the limits panel
           // directly above, and a button that vanishes on GitLab reads as a
           // rendering bug rather than as an unsupported provider.
-          disabled={submitting || !prSupported || !catalogImportApi}
+          // `catalogImportApi` only gates the Azure path; the GitHub one talks
+          // to the repository itself and needs nothing from that plugin.
+          disabled={
+            submitting || !prSupported || (!pathAware && !catalogImportApi)
+          }
           startIcon={submitting ? <CircularProgress size={16} /> : undefined}
           onClick={submit}
         >
