@@ -9,8 +9,8 @@
 apiVersion: backstage.io/v1alpha1
 kind: System
 metadata:
-  name: bruno-collections
-  title: Bruno Collections
+  name: demo-system
+  title: Demo System
   description: >-
     Production Bruno collections published at github.com/bruno-collections, each exposed as an API
     entity with an OpenAPI definition generated from the collection itself.
@@ -48,7 +48,7 @@ spec:
   type: openapi
   lifecycle: production
   owner: guests
-  system: bruno-collections
+  system: demo-system
   definition: |
     openapi: 3.0.3
     info:
@@ -196,7 +196,7 @@ spec:
   type: openapi
   lifecycle: production
   owner: guests
-  system: bruno-collections
+  system: demo-system
   definition: >
     openapi: 3.0.3
 
@@ -849,7 +849,7 @@ spec:
   type: openapi
   lifecycle: production
   owner: guests
-  system: bruno-collections
+  system: demo-system
   definition: >
     openapi: 3.0.3
 
@@ -1213,7 +1213,7 @@ spec:
   type: openapi
   lifecycle: production
   owner: guests
-  system: bruno-collections
+  system: demo-system
   definition: >
     openapi: 3.0.3
 
@@ -1723,7 +1723,7 @@ spec:
   type: openapi
   lifecycle: production
   owner: guests
-  system: bruno-collections
+  system: demo-system
   definition: |
     openapi: 3.0.3
     info:

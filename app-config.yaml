@@ -127,60 +127,16 @@ proxy:
 # NOTE: every key below must stay under this `bruno:` root key. Without it the
 # `schedule` block re-parses as `proxy.schedule` (silently — YAML is happy) and
 # the provider falls back to its defaults with zero collections.
+
 bruno:
-  # Each entry becomes a `kind: Bruno` entity emitted by
-  # BrunoCollectionEntityProvider. title/version/description come from the
-  # collection's bruno.json or opencollection.yml/.yaml.
   collections:
     - type: url
       url: https://github.com/vasharma05-bruno/bruno-collections/tree/main/bruno-testbench
-      # Overrides the default name — the URL's last segment, here the generic
-      # "collection" — so the entity ref stays readable and rename-proof.
       name: bruno-testbench-collection
       owner: guests
-      # partOf: add API entity refs here to create the collection -> API
-      # relation that the Bruno Card on an API page reads, e.g.
-      #   partOf:
-      #     - api:default/some-api
-  # Autodiscovery: organizations swept for bruno.json / opencollection.yml
-  # instead of listing collections one by one above.
-  #
-  # Not `catalog.providers.github` with a different `catalogPath`: that provider
-  # emits a `kind: Location` and the catalog parses the target as a descriptor,
-  # so every Bruno manifest (no apiVersion/kind) would land as a processing
-  # error. The sweep therefore emits `kind: Bruno` entities directly; see
-  # plugins/bruno-backend/src/discovery/githubDiscovery.ts.
-  #
-  # Cost per tick: one repository listing per entry, plus one recursive tree call
-  # per repository whose `pushed_at` moved — which is what makes the 60s schedule
-  # below safe.
-  #
-  # Left commented because a sweep needs a real organization: naming one that
-  # does not exist (or that `integrations.github` cannot see) fails the whole
-  # refresh rather than degrading, which is deliberate — a short list would
-  # delete every discovered collection.
-  # discovery:
-  #   - organization: bruno-collections
-  #     # host: github.com               # default; GHE needs an integrations entry
-  #     # repositoryPattern: '.*'        # ANCHORED regex over the repo name
-  #     # A sweep finds EVERY collection in a repo, test fixtures included —
-  #     # sweeping github.com/bruno-collections turns up three under tests/.
-  #     # excludePathPattern: '(tests|examples|fixtures)/.*'
-  #     owner: guests                    # nothing in a repo says who owns it
-  #     # deferToCatalogInfo: true       # default: leave a collection that
-  #     #                                # already has a kind: Bruno
-  #     #                                # catalog-info.yaml to that descriptor
-  #
-  # Lets the dashboard add a collection, and the link dialogs record a link,
-  # in THIS instance rather than in source control — the two flows that make
-  # the Bruno backend's own database authoritative for a catalog entity or a
-  # relation. Off when absent; on here because the POC demonstrates both.
-  #
-  # With it off the pull-request half of each flow still works: a collection
-  # is catalogued by a generated catalog-info.yaml, and a link by a pull
-  # request against one. See plugins/bruno-backend/README.md#runtime-writes.
+  
   allowRuntimeWrites: true
-  #
+
   # The generated OpenCollection YAML is stored inline on each Bruno entity's
   # `spec.definition`, as a kind: API entity stores its OpenAPI document.
   #
@@ -295,36 +251,29 @@ catalog:
     - allow: [Component, System, API, Resource, Location, Bruno]
   locations:
 
-    # This app's own catalog-info.yaml. Read from disk, not as a `type: url`
-    # GitHub target: a URL location would ingest whatever is on `main`, so the
-    # descriptor in a working tree or on a branch would be ignored by the very
-    # instance running it. The GitHub URL still reaches the UI through the
-    # entity's `backstage.io/source-location` annotation.
     - type: file
       target: ../../catalog-info.yaml
 
-    # Local example data, file locations are relative to the backend process, typically `packages/backend`
     - type: file
       target: ../../examples/entities.yaml
 
-    # Five production Bruno collections from github.com/bruno-collections, each
-    # an API entity whose spec.definition is an OpenAPI 3.0.3 document generated
-    # from the collection itself. Regenerate with:
-    #   node scripts/bruno-catalog/generate.mjs
-    - type: file
-      target: ../../examples/bruno-entities/scim-api-catalog-info.yaml
+    - type: url
+      target: https://github.com/vasharma05-bruno/bruno-collections/tree/main/bruno-scim-api-collection/scim-collection/catalog-info.yaml
       
-    - type: file
-      target: ../../examples/bruno-entities/bruno-e2e-demo-catalog-info.yaml
+    - type: url
+      target: https://github.com/vasharma05-bruno/bruno-collections/tree/main/bruno-demo-day-ws/collections/Bruno%20E2E%20Demo/catalog-info.yaml
       
-    - type: file
-      target: ../../examples/bruno-entities/orders-api-catalog-info.yaml
+    - type: url
+      target: https://github.com/vasharma05-bruno/bruno-collections/tree/main/openapi-sync-ws/collections/Orders%20API/catalog-info.yaml
           
-    - type: file
-      target: ../../examples/bruno-entities/bruno-workshop-catalog-info.yaml
+    - type: url
+      target: https://github.com/vasharma05-bruno/bruno-collections/tree/main/Webinar-Best-Practices-Feb-2026-BRU/catalog-info.yaml
+
+    - type: url
+      target: https://github.com/vasharma05-bruno/bruno-collections/blob/main/github-rest-api-collection/catalog-info.yaml
 
     - type: file
-      target: ../../examples/bruno-collections.yaml
+      target: ../../examples/APIs/demo-apis.yaml
       
 
     # Local example template
@@ -341,19 +290,6 @@ catalog:
 
     - type: url
       target: https://github.com/backstage/backstage/blob/master/packages/catalog-model/examples/apis/petstore-api.yaml
-
-    - type: url
-      target: https://github.com/vasharma05-bruno/bruno-collections/blob/main/github-rest-api-collection/catalog-info.yaml
-
-    ## Uncomment these lines to add more example data
-    # - type: url
-    #   target: https://github.com/backstage/backstage/blob/master/packages/catalog-model/examples/all.yaml
-
-    ## Uncomment these lines to add an example org
-    # - type: url
-    #   target: https://github.com/backstage/backstage/blob/master/packages/catalog-model/examples/acme-corp.yaml
-    #   rules:
-    #     - allow: [User, Group]
 
 kubernetes:
   # see https://backstage.io/docs/features/kubernetes/configuration for kubernetes configuration options

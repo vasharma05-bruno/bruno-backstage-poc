@@ -154,7 +154,6 @@ export function BrunoApiDocsContent(): JSX.Element {
 
   return (
     <>
-      <ContentHeader title={title} />
       {body}
     </>
   );
