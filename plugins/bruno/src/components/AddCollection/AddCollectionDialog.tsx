@@ -134,6 +134,11 @@ function nameFromUrl(url: string): string {
  * `kind: Bruno` entity from the same five fields and a URL with no manifest
  * behind it is no more acceptable in a descriptor than in a stored row.
  *
+ * The second of the two is CONDITIONAL on `bruno.allowRuntimeWrites`, which
+ * reaches this dialog as the presence or absence of `onAdd`. With it off there
+ * is one ending, the descriptor — which is the flow as it was before this
+ * plugin had a store at all, and still the recommended one.
+ *
  * Only one of them can fail, and only one of them keeps the dialog open. That
  * asymmetry is the whole reason they are two props rather than one `onSubmit`
  * with a discriminator — see {@link AddCollectionDialog}'s `onAdd`.
@@ -154,8 +159,16 @@ export function AddCollectionDialog(props: {
    * {@link reset}. It is a promise because the create is a round trip the user
    * has to be held through; the dialog stays open and inert for its duration
    * rather than closing optimistically.
+   *
+   * OPTIONAL, and its absence is the whole of this dialog's knowledge of
+   * `bruno.allowRuntimeWrites`. Omitted means the instance does not store
+   * collections of its own, so there is no second ending: the **Add
+   * collection** button is not rendered and the copy stops describing a choice.
+   * Expressed as a missing callback rather than as a boolean prop because the
+   * button's only job is to call it — a `canAdd={false}` alongside a live
+   * `onAdd` would be two facts that can disagree.
    */
-  onAdd: (input: BrunoEntityInput) => Promise<boolean>;
+  onAdd?: (input: BrunoEntityInput) => Promise<boolean>;
   /**
    * Hands the form off to modal 2 as a `catalog-info.yaml`.
    *
@@ -409,7 +422,7 @@ export function AddCollectionDialog(props: {
    * cases; it needs no extra state.
    */
   const add = async (): Promise<void> => {
-    if (!canSubmit) {
+    if (!canSubmit || !onAdd) {
       return;
     }
     if (await onAdd(collect())) {
@@ -501,14 +514,36 @@ export function AddCollectionDialog(props: {
     >
       <DialogTitle>Add a Bruno collection</DialogTitle>
       <DialogContent>
+        {/*
+          Two paragraphs rather than one with a conditional clause: with no
+          second ending there is no choice to frame, and the sentence that
+          warns against taking both is actively confusing when only one is on
+          screen.
+        */}
         <Typography variant="body2">
-          Point Backstage at a collection in source control, then choose how it
-          gets into the catalog. <strong>Create pull request</strong> generates
-          the <code>catalog-info.yaml</code> for your repository, which becomes
-          the collection&apos;s source of truth.{' '}
-          <strong>Add collection</strong> registers it with Backstage directly,
-          leaving your repository untouched. Pick one — doing both would give two
-          sources the same entity name.
+          {onAdd
+            ? (
+                <>
+                  Point Backstage at a collection in source control, then choose
+                  how it gets into the catalog.{' '}
+                  <strong>Create pull request</strong> generates the{' '}
+                  <code>catalog-info.yaml</code> for your repository, which
+                  becomes the collection&apos;s source of truth.{' '}
+                  <strong>Add collection</strong> registers it with Backstage
+                  directly, leaving your repository untouched. Pick one — doing
+                  both would give two sources the same entity name.
+                </>
+              )
+            : (
+                <>
+                  Point Backstage at a collection in source control.{' '}
+                  <strong>Create pull request</strong> generates the{' '}
+                  <code>catalog-info.yaml</code> for your repository, which
+                  becomes the collection&apos;s source of truth — this instance
+                  registers collections only from a descriptor, so the file is
+                  how the collection reaches the catalog.
+                </>
+              )}
         </Typography>
 
         <Box className={classes.field}>
@@ -673,7 +708,10 @@ export function AddCollectionDialog(props: {
         `Add collection` is outlined rather than contained: both are real
         endings, so neither may look disabled, but a second filled button
         competing with the first reads as two primaries and makes the choice
-        harder than it is.
+        harder than it is. It is absent entirely, rather than disabled, when
+        the instance does not store collections: a permanently greyed button
+        advertises a capability the operator switched off and reads as
+        something the user has failed to unlock.
 
         Both are disabled while a create is in flight, including the pull-request
         one. It performs no request of its own and would work, but it would hand
@@ -685,15 +723,17 @@ export function AddCollectionDialog(props: {
         <Button onClick={close} disabled={adding}>
           Cancel
         </Button>
-        <Button
-          variant="outlined"
-          className={brandClasses.accentOutlinedButton}
-          disabled={!canSubmit || adding}
-          startIcon={adding ? <CircularProgress size={16} /> : undefined}
-          onClick={() => void add()}
-        >
-          {adding ? 'Adding…' : 'Add collection'}
-        </Button>
+        {onAdd && (
+          <Button
+            variant="outlined"
+            className={brandClasses.accentOutlinedButton}
+            disabled={!canSubmit || adding}
+            startIcon={adding ? <CircularProgress size={16} /> : undefined}
+            onClick={() => void add()}
+          >
+            {adding ? 'Adding…' : 'Add collection'}
+          </Button>
+        )}
         <Button
           variant="contained"
           className={brandClasses.accentButton}

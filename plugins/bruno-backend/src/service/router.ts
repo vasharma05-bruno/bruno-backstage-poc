@@ -5,7 +5,12 @@ import type {
 import { MiddlewareFactory } from '@backstage/backend-defaults/rootHttpRouter';
 import type { Entity } from '@backstage/catalog-model';
 import type { Config } from '@backstage/config';
-import { ConflictError, InputError, NotFoundError } from '@backstage/errors';
+import {
+  ConflictError,
+  InputError,
+  NotAllowedError,
+  NotFoundError
+} from '@backstage/errors';
 import type { CatalogService } from '@backstage/plugin-catalog-node';
 import express from 'express';
 import Router from 'express-promise-router';
@@ -63,6 +68,10 @@ export interface RouterOptions {
    *  control. Read back service-to-service by `BrunoKindProcessor`, which turns
    *  the rows into the same relations `spec.partOf` produces. */
   runtimeLinks: RuntimeLinkStore;
+  /** `bruno.allowRuntimeWrites` — whether this instance may record a
+   *  collection or a link in its own database rather than only in source
+   *  control. Gates the two POST routes; see `requireRuntimeWrites`. */
+  allowRuntimeWrites: boolean;
   /** `bruno.schedule.frequencySeconds` — the provider's tick, and therefore how
    *  long a created collection takes to appear and a deleted one to vanish.
    *  Returned on the create and delete responses so the UI can quote the real
@@ -76,13 +85,15 @@ export interface RouterOptions {
  *   GET    /health                          -> { status: 'ok' }
  *   GET    /entities/:namespace/:name/docs  -> text/html (docs for a kind:Bruno entity)
  *   POST   /collections/probe               -> { found, ... } (does this URL hold a collection?)
- *   POST   /collections                     -> 201 (add a collection; auth: user)
+ *   POST   /collections                     -> 201 (add a collection; auth: user;
+ *                                              needs `bruno.allowRuntimeWrites`)
  *   GET    /collections                     -> { collections, refreshSeconds }
  *                                              (auth: user | service; a user's
  *                                              rows omit `createdBy`)
  *   DELETE /collections/:name               -> { deleted: true } (auth: user)
  *   GET    /links                           -> { links } (auth: service)
- *   POST   /links                           -> 201 (link at runtime; auth: user)
+ *   POST   /links                           -> 201 (link at runtime; auth: user;
+ *                                              needs `bruno.allowRuntimeWrites`)
  *                                              takes `apiRefs[]`, all or none
  *   DELETE /links?collection=&api=          -> { unlinked: true } (auth: user)
  *
@@ -104,6 +115,13 @@ export interface RouterOptions {
  * plugin is now the authoritative store for UI-created collections; the catalog
  * is downstream of it and always will be.
  *
+ * BOTH write models are gated on `bruno.allowRuntimeWrites`, which is off by
+ * default: they are the two places where this backend, rather than a reviewed
+ * file, becomes the source of truth for something the catalog shows, and that
+ * is one decision rather than two. The GET and DELETE routes are not gated —
+ * see `requireRuntimeWrites` for why a delete has to outlive the permission
+ * that created the row.
+ *
  * The `/links` three are the same argument applied to RELATIONS. A relation is
  * derived output — recomputed and rewritten on every stitch — so there is no
  * relation to insert or delete either, and the only durable place a link can
@@ -123,8 +141,38 @@ export async function createRouter(
     probe,
     uiCollections,
     runtimeLinks,
-    refreshSeconds
+    refreshSeconds,
+    allowRuntimeWrites
   } = options;
+
+  /**
+   * Refuses a write that would make this instance, rather than a file in a
+   * repository, the source of truth for what the catalog shows.
+   *
+   * Applied to the two POST routes and to neither DELETE. The asymmetry is the
+   * point: turning the key off cannot retract rows that already exist — the
+   * provider keeps materialising stored collections and the processor keeps
+   * emitting relations from stored links — so refusing the deletes would strand
+   * exactly the state the operator turned the key off to be rid of, with no way
+   * out but the database. A delete only ever removes something a create was
+   * once permitted to make.
+   *
+   * `NotAllowedError` is a 403 rather than a 404. The route exists and the
+   * caller is authenticated; what is missing is the operator's consent, and the
+   * message names the key so an admin reading a browser console knows which one
+   * to set. The browser should never see this at all — the same config value is
+   * `@visibility frontend`, so the UI hides both flows — which is why this is a
+   * backstop for direct API callers rather than the primary gate.
+   */
+  const requireRuntimeWrites = (what: string): void => {
+    if (!allowRuntimeWrites) {
+      throw new NotAllowedError(
+        `${what} in this Backstage instance is disabled. Set `
+        + '`bruno.allowRuntimeWrites: true` in app-config.yaml to allow it, or '
+        + 'record this in the collection\'s catalog-info.yaml instead.'
+      );
+    }
+  };
 
   /**
    * Marks a collection for immediate reprocessing, and says whether it worked.
@@ -269,6 +317,7 @@ export async function createRouter(
   // §"Standing constraints".
   router.post('/collections', async (req, res) => {
     const credentials = await httpAuth.credentials(req, { allow: ['user'] });
+    requireRuntimeWrites('Adding a collection');
     const createdBy = credentials.principal.userEntityRef;
 
     const body = (req.body ?? {}) as {
@@ -310,11 +359,14 @@ export async function createRouter(
     const title = rawTitle || undefined;
     const owner
       = typeof body.owner === 'string' && body.owner ? body.owner : undefined;
-    const partOf
-      = Array.isArray(body.partOf)
-        && body.partOf.every((v) => typeof v === 'string')
-        ? (body.partOf as string[])
-        : [];
+    // Normalised and CHECKED, exactly as `POST /links` does it. These land
+    // verbatim in the emitted entity's `spec.partOf`, where an unparseable
+    // entry is not an error the user ever sees: `BrunoKindProcessor` logs a
+    // warning and skips it on every cycle, so the collection appears with a
+    // relation silently missing. Normalising here also makes a row's refs the
+    // same strings a descriptor's would be, which is what lets `POST /links`
+    // recognise a link this flow already declared.
+    const partOf = readOptionalApiRefs(body.partOf);
 
     // Stored NORMALIZED, so the provider's `claimed` key and the entity's
     // `url:` location annotation are the same string a `bruno.collections[]`
@@ -352,6 +404,28 @@ export async function createRouter(
         `No bruno.json or opencollection.yml/.yaml found at ${normalized}. `
         + 'Point at the folder that holds the collection.'
       );
+    }
+
+    // One call for the whole selection, and a NotFoundError naming what is
+    // missing — the same treatment `POST /links` gives its refs, for the same
+    // reason: a ref that names nothing produces a relation pointing at nothing,
+    // and the user picked these from a list a moment ago, so a miss means the
+    // entity went away rather than that they typed it wrong.
+    if (partOf.length > 0) {
+      const apis = await catalog.getEntitiesByRefs(
+        { entityRefs: partOf },
+        { credentials }
+      );
+      const unknownRefs = partOf.filter((_ref, index) => !apis.items[index]);
+      if (unknownRefs.length > 0) {
+        throw new NotFoundError(
+          `${describeRefs(unknownRefs)} ${
+            unknownRefs.length === 1 ? 'does' : 'do'
+          } not exist in the catalog, so ${
+            unknownRefs.length === 1 ? 'it' : 'they'
+          } cannot be listed in this collection's \`partOf\`.`
+        );
+      }
     }
 
     // Two duplicate-name checks with one meaning. The first is another UI
@@ -472,6 +546,12 @@ export async function createRouter(
   // Removes a UI-created collection. The entity disappears from the catalog on
   // the provider's next tick, when the `full` mutation no longer names it.
   //
+  // NOT gated on `bruno.allowRuntimeWrites`, unlike the create above. Turning
+  // that key off leaves every row already stored still being materialised into
+  // an entity every tick, so this is the only way to retract one — refusing it
+  // would strand the exact state the operator turned the key off to be rid of.
+  // See `requireRuntimeWrites`.
+  //
   // A missing row is a 404 with an explanation rather than an idempotent
   // success, because the interesting case is not "already deleted" — it is a
   // collection that came from `app-config.yaml` or from a `catalog-info.yaml`
@@ -563,6 +643,7 @@ export async function createRouter(
   // docs/execution/UI-P6-plan.md §"Standing constraints".
   router.post('/links', async (req, res) => {
     const credentials = await httpAuth.credentials(req, { allow: ['user'] });
+    requireRuntimeWrites('Linking an API to a collection');
     const createdBy = credentials.principal.userEntityRef;
 
     const body = (req.body ?? {}) as {
@@ -655,6 +736,10 @@ export async function createRouter(
   // Removes a runtime link. The mirror of `POST /links`, and the only way to
   // remove one — a link this route did not write lives in a file, and the 404
   // below says so rather than reporting a success that changes nothing.
+  //
+  // Ungated for the same reason `DELETE /collections/:name` is: the processor
+  // keeps emitting relations from rows written while `bruno.allowRuntimeWrites`
+  // was on, so removing them has to stay possible after it goes off.
   //
   // The two refs travel as QUERY parameters rather than path segments. They are
   // entity refs, which contain `:` and `/`; percent-encoding those into a path
@@ -814,6 +899,31 @@ function readApiRef(raw: unknown): string {
 function readApiRefs(raw: unknown): string[] {
   if (!Array.isArray(raw) || raw.length === 0) {
     throw new InputError('At least one API entity reference is required.');
+  }
+  return [...new Set(raw.map(readApiRef))];
+}
+
+/**
+ * The API refs of a `POST /collections` body: optional, deduped, normalised.
+ *
+ * The counterpart of {@link readApiRefs}, and separate from it because the two
+ * bodies disagree about emptiness. A link with no API is meaningless, so an
+ * empty `apiRefs` is an InputError there; a collection that is part of nothing
+ * is the ordinary case, so an absent or empty `partOf` is simply no entries.
+ *
+ * What it does NOT do is tolerate a bad entry. Dropping one would register a
+ * collection missing a relation the user asked for and say nothing, and the
+ * refs come from a picker, so a value that will not parse means the caller is
+ * not the dialog.
+ */
+function readOptionalApiRefs(raw: unknown): string[] {
+  if (raw === undefined || raw === null) {
+    return [];
+  }
+  if (!Array.isArray(raw)) {
+    throw new InputError(
+      '`partOf` must be a list of API entity references.'
+    );
   }
   return [...new Set(raw.map(readApiRef))];
 }

@@ -89,17 +89,28 @@ export function useDescriptorAdvice(opts: {
     // `bruno` backend's store, and `BrunoCollectionEntityProvider` stamps the
     // collection FOLDER as its location — so there is no more a descriptor here
     // than there is for a `bruno.collections[]` entry, and this used to be read
-    // as one. The row is not editable in place, so what the dashboard can
-    // actually do is name the links again on a fresh add.
+    // as one.
+    //
+    // This used to end "remove the collection from the dashboard and add it
+    // again with the APIs you want", which was the only answer while a stored
+    // row's `partOf` was fixed at creation. It has not been since runtime links
+    // arrived, and the advice then sat directly above the radio button that
+    // does the job in one click — recommending that a user destroy and
+    // re-create an entity to avoid pressing the control beneath it. What the
+    // notice says now is only what is still true of the descriptor: there is
+    // none, and here is how to get one. Where the link can go INSTEAD is the
+    // job of the control that offers it (`LinkMethodChoice`, and the empty
+    // state in `RelatedApisCard`), which is also the only place that knows
+    // whether `bruno.allowRuntimeWrites` allows it.
     return (
       <InlineNotice className={className}>
         Added from the Bruno dashboard, so what declares this collection is a
         record Backstage keeps rather than a <code>catalog-info.yaml</code> —
-        there is no descriptor to open a pull request against. Its{' '}
-        <code>spec.partOf</code> was fixed when the collection was added: to{' '}
-        {verb} {ref} {preposition} it, remove the collection from the dashboard
-        and add it again with the APIs you want under{' '}
-        <strong>Related APIs</strong>.
+        there is no descriptor to open a pull request against. To manage{' '}
+        <code>spec.partOf</code> in source control instead, commit a{' '}
+        <code>catalog-info.yaml</code> declaring this collection, register it as
+        a catalog location, and remove the dashboard&apos;s copy — two sources
+        claiming one entity name leaves the second silently doing nothing.
       </InlineNotice>
     );
   }

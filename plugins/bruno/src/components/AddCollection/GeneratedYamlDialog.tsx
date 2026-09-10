@@ -38,6 +38,7 @@ import {
   descriptorPathForCollection,
   repoRootFromCollectionUrl
 } from '../../lib/scmUrl';
+import { useRuntimeWritesEnabled } from '../../lib/runtimeWrites';
 import { planDescriptorPr, submitDescriptorPr } from '../../lib/descriptorPr';
 import { useBrandStyles } from '../../theme/brandStyles';
 
@@ -234,6 +235,9 @@ export function GeneratedYamlDialog(props: {
   const configApi = apis.get(configApiRef);
   const scmAuth = apis.get(scmAuthApiRef);
   const scmIntegrations = apis.get(scmIntegrationsApiRef);
+  // Only so the limits panel does not point at an ending this instance does
+  // not offer; nothing on this screen is gated by it.
+  const runtimeAvailable = useRuntimeWritesEnabled();
 
   /**
    * Path of the catalog's own "Register an existing component" page, which is
@@ -542,9 +546,19 @@ export function GeneratedYamlDialog(props: {
       <li>
         Merging the pull request does not by itself put <code>{name}</code> in
         the catalog — Backstage does not read a file it has not been pointed at.
-        Once the pull request is merged, {registerStep}. Use{' '}
-        <strong>Add collection</strong> on the previous screen instead if you
-        want the collection registered without touching your repository.
+        Once the pull request is merged, {registerStep}.
+        {/*
+          The pointer back to the other ending only exists when that ending
+          does. With `bruno.allowRuntimeWrites` off, modal 1 has one button and
+          this sentence would send the reader back to look for a second one.
+        */}
+        {runtimeAvailable && (
+          <>
+            {' '}Use <strong>Add collection</strong> on the previous screen
+            instead if you want the collection registered without touching your
+            repository.
+          </>
+        )}
       </li>
     </ul>
   );

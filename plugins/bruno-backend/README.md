@@ -75,6 +75,9 @@ bruno:
       excludePathPattern: '(tests|examples)/.*'
       owner: guests
       deferToCatalogInfo: true
+  # Let the dashboard add collections, and link them to APIs, in THIS
+  # instance rather than in source control. Off when absent.
+  allowRuntimeWrites: true
   definition:
     maxBytes: 1048576
   cacheTtlSeconds: 60
@@ -100,6 +103,7 @@ Read by [`src/service/brunoConfig.ts`](src/service/brunoConfig.ts) and
 | `bruno.discovery[].excludePathPattern` | — | **Anchored** regex over a collection's repo-relative path (`''` at the repository root). Excludes collections a sweep finds but nobody publishes — test fixtures, examples. |
 | `bruno.discovery[].owner` | — | `spec.owner` for everything this entry finds. Nothing in a repository states who owns a collection, so without it discovered collections read as unowned. |
 | `bruno.discovery[].deferToCatalogInfo` | `true` | Leave a collection that already has a `kind: Bruno` `catalog-info.yaml` to that descriptor — see [Autodiscovery](#autodiscovery). |
+| `bruno.allowRuntimeWrites` | `false` | Whether the UI's **Add collection** and **Link in this Backstage instance** are available — i.e. whether this backend's own database may declare a catalog entity or a relation. Gates `POST /collections` and `POST /links` (403 when off), and is `@visibility frontend` so the browser hides both. The pull-request half of each flow is unaffected. See [Runtime writes](#runtime-writes). |
 | `bruno.cacheTtlSeconds` | 60 | How long a fetched collection stays cached before the probe revalidates it. Also the upper bound on how long a catalog Sync takes to show new content. |
 | `bruno.definition.maxBytes` | 1048576 | Hard cap on the YAML stored on an entity. Over the cap the definition is **omitted, never truncated**, and the entity is annotated. |
 | `bruno.schedule.frequencySeconds` | 60 | The provider's tick — and therefore the latency of both the dashboard's add and its remove. |
@@ -135,11 +139,11 @@ in [`src/plugin.ts`](src/plugin.ts).
 | --- | --- | --- |
 | `GET /health` | unauthenticated | `{ status: 'ok' }` — a liveness probe with no data. |
 | `POST /collections/probe` | `user` | `{ found: true, format, manifestPath, name?, version?, description? }`, or `{ found: false, reason: 'no-manifest' }` (200), or `{ found: false, reason: 'unreadable', message }` (400). |
-| `POST /collections` | `user` | Body `{ url, name, title?, owner?, partOf? }`. `201` with `{ name, title?, namespace, entityRef, url, refreshSeconds }`. A blank `title` is stored as NULL, not as `''` — see below. |
+| `POST /collections` | `user` | Body `{ url, name, title?, owner?, partOf? }`. `201` with `{ name, title?, namespace, entityRef, url, refreshSeconds }`. **403** unless `bruno.allowRuntimeWrites`. `partOf` refs are normalised and must exist in the catalog. A blank `title` is stored as NULL, not as `''` — see below. |
 | `GET /collections` | `user` \| `service` | `{ collections, refreshSeconds }`. A **user** principal gets rows with `createdBy` omitted. |
 | `DELETE /collections/:name` | `user` | `{ deleted: true, name, refreshSeconds }`, or `404` when no stored row exists. |
 | `GET /links` | `service` | `{ links }` — every runtime link in the instance, for `BrunoKindProcessor`. |
-| `POST /links` | `user` | Body `{ collectionRef, apiRefs }`. `201` with `{ linked: true, collectionRef, apiRefs, refreshRequested }` — all of the refs or none. |
+| `POST /links` | `user` | Body `{ collectionRef, apiRefs }`. `201` with `{ linked: true, collectionRef, apiRefs, refreshRequested }` — all of the refs or none. **403** unless `bruno.allowRuntimeWrites`. |
 | `DELETE /links?collection=&api=` | `user` | `{ unlinked: true, collectionRef, apiRefs, refreshRequested }`, or `404` when no such row exists. |
 | `GET /entities/:namespace/:name/docs` | `user-cookie` | `text/html` — the OpenCollection docs page for that entity. `?theme=light\|dark`. |
 
@@ -383,7 +387,42 @@ configured *and* discovered is expected. Those are dropped quietly by URL
 (before the probe runs, so they cost no tree read) and counted separately in the
 provider's summary line.
 
+## Runtime writes
+
+Two of this plugin's flows make its own database, rather than a reviewed file
+in a repository, the source of truth for something the catalog shows: adding a
+collection from the dashboard, and linking one to an API in this instance. Both
+are gated on a single key, `bruno.allowRuntimeWrites`, **off by default**.
+
+That is one key rather than two because it is one decision. An operator who
+does not want an entity to exist without a descriptor does not want a relation
+to either, and separate keys would only offer a state where a collection can be
+created but never linked.
+
+| | `allowRuntimeWrites: false` (default) | `allowRuntimeWrites: true` |
+| --- | --- | --- |
+| Add a collection | Dashboard offers **Create pull request** only. `POST /collections` → 403. | Both endings. |
+| Link an API | Link dialogs offer the pull request only; a collection with no editable descriptor cannot be linked from Backstage at all. `POST /links` → 403. | Both methods. |
+| Remove / unlink | Still work. | Still work. |
+| Everything else | Unchanged. | Unchanged. |
+
+**The deletes stay open on purpose.** Turning the key off does not retract rows
+that already exist — the provider keeps materialising stored collections and
+the processor keeps emitting relations from stored links, every cycle — so
+`DELETE /collections/:name` and `DELETE /links` have to outlive the permission
+that created the row. Refusing them would strand exactly the state the operator
+turned the key off to be rid of, with no way out but the database.
+
+The key is `@visibility frontend` (declared in
+[`plugins/bruno/config.d.ts`](../bruno/config.d.ts), because config schemas are
+collected from the *app's* dependency graph), so the browser hides both flows
+rather than rendering buttons that answer 403. The backend check is the
+enforcement; the frontend one is the courtesy.
+
 ## Adding a collection from the UI
+
+Available only with `bruno.allowRuntimeWrites` on — see
+[Runtime writes](#runtime-writes).
 
 The catalog has **no write model**. Entities come from a Location (a descriptor
 that must already exist) or from an EntityProvider — there is no
@@ -477,6 +516,12 @@ and travels with the repository. A runtime link is the second option, and the
 only one for a collection whose `partOf` cannot be edited by pull request at
 all: a `bruno.collections[]` entry, a discovered collection, a `file:` location,
 or a descriptor on a host other than GitHub.
+
+That second option exists only with `bruno.allowRuntimeWrites` on — see
+[Runtime writes](#runtime-writes). With it off those five cases have no route
+at all from inside Backstage, which is the honest consequence of requiring
+every link to live in a reviewed file, and the dialog says so rather than
+offering a button that 403s.
 
 **Table `bruno_runtime_links`** (`src/store/runtimeLinkStore.ts`), created on
 first boot, no formal migrations:

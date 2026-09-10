@@ -171,6 +171,16 @@ bruno:
   #     #                                # already has a kind: Bruno
   #     #                                # catalog-info.yaml to that descriptor
   #
+  # Lets the dashboard add a collection, and the link dialogs record a link,
+  # in THIS instance rather than in source control — the two flows that make
+  # the Bruno backend's own database authoritative for a catalog entity or a
+  # relation. Off when absent; on here because the POC demonstrates both.
+  #
+  # With it off the pull-request half of each flow still works: a collection
+  # is catalogued by a generated catalog-info.yaml, and a link by a pull
+  # request against one. See plugins/bruno-backend/README.md#runtime-writes.
+  allowRuntimeWrites: true
+  #
   # The generated OpenCollection YAML is stored inline on each Bruno entity's
   # `spec.definition`, as a kind: API entity stores its OpenAPI document.
   #

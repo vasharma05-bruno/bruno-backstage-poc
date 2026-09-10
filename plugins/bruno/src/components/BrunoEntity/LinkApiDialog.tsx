@@ -22,6 +22,7 @@ import {
   useRuntimeLink
 } from '../PartOfPr';
 import { descriptorLocation } from '../../lib/brunoEntity';
+import { useRuntimeWritesEnabled } from '../../lib/runtimeWrites';
 import { useBrandStyles } from '../../theme/brandStyles';
 
 /** `A`, `A and B`, `A, B and C` — a list a sentence can hold. */
@@ -93,7 +94,6 @@ export function LinkApiDialog(props: {
   const descriptorUrl = location.kind === 'url' ? location.target : undefined;
   const pr = usePartOfPr({ direction: 'link', descriptorUrl });
   const runtime = useRuntimeLink();
-  const options = useEntityOptions('API', open);
   const [selected, setSelected] = useState<Entity[]>([]);
 
   const collectionRef = stringifyEntityRef(collection);
@@ -104,9 +104,29 @@ export function LinkApiDialog(props: {
   // The collection is fixed here, so this is known before anything is picked —
   // and so it is stated without naming a reference, since there is none yet.
   const advice = useDescriptorAdvice({ location, direction: 'link' });
+  const runtimeAvailable = useRuntimeWritesEnabled();
   // `advice` is `undefined` exactly when a pull request can be opened, so it is
-  // the whole test — no second reading of the location.
-  const { method, setMethod, reset: resetMethod } = useLinkMethod(!advice);
+  // the whole test — no second reading of the location. `method` comes back
+  // undefined when neither way of recording the link is open, which is what
+  // turns this dialog back into the explanation-and-Close it used to be for a
+  // collection with no descriptor.
+  const { method, setMethod, reset: resetMethod } = useLinkMethod({
+    prPossible: !advice,
+    runtimePossible: runtimeAvailable
+  });
+  /**
+   * Whether this collection can be linked at all.
+   *
+   * Known before anything is picked, because the collection is fixed — which
+   * is what lets the dialog skip the picker AND the catalog sweep behind it
+   * rather than offering a selection with nowhere to send it. Its mirror on
+   * the API side cannot do this: there the descriptor arrives with the choice,
+   * so the picker has to stay.
+   */
+  const canLink = method !== undefined;
+  // AFTER `canLink`, and gated on it: this sweeps every API in the catalog to
+  // fill a picker the dead end does not render.
+  const options = useEntityOptions('API', open && canLink);
 
   const close = (): void => {
     pr.reset();
@@ -223,37 +243,52 @@ export function LinkApiDialog(props: {
         <Typography variant="body2">
           Linking adds the APIs you pick to this collection&apos;s{' '}
           <code>partOf</code>, which is what the catalog turns into the
-          relations shown on both entities. It can be recorded in this
-          collection&apos;s <code>catalog-info.yaml</code> — where it is
-          reviewed and travels with the repository — or in this Backstage
-          instance, which is immediate and the only option for a collection with
-          no descriptor.
+          relations shown on both entities.{' '}
+          {/*
+            Silent in the dead end. Both endings of this sentence are a claim
+            about THIS collection — the one fixed thing in this dialog — and
+            neither is true of one that can be linked no way at all; the
+            explanation there belongs to `LinkMethodChoice`, which has the
+            reason.
+          */}
+          {canLink
+            && (runtimeAvailable
+              ? 'It can be recorded in this collection\u2019s '
+              + 'catalog-info.yaml \u2014 where it is reviewed and travels '
+              + 'with the repository \u2014 or in this Backstage instance, '
+              + 'which is immediate and the only option for a collection with '
+              + 'no descriptor.'
+              : 'It is recorded in this collection\u2019s catalog-info.yaml, '
+                + 'by a pull request against the repository that holds it.')}
         </Typography>
         {descriptorUrl && (
           <Typography variant="body2" className={classes.detail}>
             Descriptor: <Link to={descriptorUrl}>{descriptorUrl}</Link>
           </Typography>
         )}
-        <Box className={classes.detail}>
-          <EntityPicker
-            options={options}
-            excluded={linkedRefs}
-            value={selected}
-            onChange={setSelected}
-            disabled={busy}
-            multiple
-            name="api-entities"
-            label="APIs"
-            placeholder={selected.length === 0 ? 'Search APIs' : ''}
-            emptyNone="No API entities are registered in this catalog yet."
-            emptyAll="Every registered API is already linked to this collection."
-            errorTitle="Could not load APIs"
-          />
-        </Box>
+        {canLink && (
+          <Box className={classes.detail}>
+            <EntityPicker
+              options={options}
+              excluded={linkedRefs}
+              value={selected}
+              onChange={setSelected}
+              disabled={busy}
+              multiple
+              name="api-entities"
+              label="APIs"
+              placeholder={selected.length === 0 ? 'Search APIs' : ''}
+              emptyNone="No API entities are registered in this catalog yet."
+              emptyAll="Every registered API is already linked to this collection."
+              errorTitle="Could not load APIs"
+            />
+          </Box>
+        )}
         <LinkMethodChoice
           method={method}
           onChange={setMethod}
           advice={advice}
+          runtimeAvailable={runtimeAvailable}
           disabled={busy}
           target={
             apiRefs.length > 0
@@ -272,39 +307,44 @@ export function LinkApiDialog(props: {
         />
       </>
     );
-    actions = (
-      <>
-        <Button onClick={close} disabled={busy}>
-          Cancel
-        </Button>
-        <Button
-          variant="contained"
-          className={brandClasses.accentButton}
-          disabled={busy || apiRefs.length === 0}
-          startIcon={busy ? <CircularProgress size={16} /> : undefined}
-          onClick={() => {
-            if (method === 'pr') {
-              pr.prepare({ apiRefs, collectionName });
-              return;
-            }
-            runtime.link({
-              collectionRef,
-              apiRefs,
-              onLinked: (refreshRequested) =>
-                onRuntimeLinked?.(selected, refreshRequested)
-            });
-          }}
-        >
-          {planning
-            ? 'Reading descriptor…'
-            : working
-              ? 'Linking…'
-              : method === 'pr'
-                ? 'Prepare pull request'
-                : 'Link APIs'}
-        </Button>
-      </>
-    );
+    actions = !canLink
+      ? <Button onClick={close}>Close</Button>
+      : (
+          <>
+            <Button onClick={close} disabled={busy}>
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              className={brandClasses.accentButton}
+              disabled={busy || apiRefs.length === 0}
+              startIcon={busy ? <CircularProgress size={16} /> : undefined}
+              onClick={() => {
+                if (method === 'pr') {
+                  pr.prepare({ apiRefs, collectionName });
+                  return;
+                }
+                if (method !== 'runtime') {
+                  return;
+                }
+                runtime.link({
+                  collectionRef,
+                  apiRefs,
+                  onLinked: (refreshRequested) =>
+                    onRuntimeLinked?.(selected, refreshRequested)
+                });
+              }}
+            >
+              {planning
+                ? 'Reading descriptor…'
+                : working
+                  ? 'Linking…'
+                  : method === 'runtime'
+                    ? 'Link APIs'
+                    : 'Prepare pull request'}
+            </Button>
+          </>
+        );
   }
 
   return (

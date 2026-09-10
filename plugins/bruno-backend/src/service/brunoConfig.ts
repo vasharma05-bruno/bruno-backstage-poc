@@ -157,6 +157,37 @@ export function readDefinitionOptions(
 }
 
 /**
+ * Whether this instance may record collections and links in the Bruno
+ * backend's own database, rather than only in source control.
+ *
+ * ONE key for two flows, because they are one decision. "Add collection" writes
+ * a row that `BrunoCollectionEntityProvider` materialises into an entity, and
+ * "Link in this Backstage instance" writes a row that `BrunoKindProcessor`
+ * turns into a relation; in both cases this backend — not a reviewed file in a
+ * repository — becomes the source of truth for something the catalog shows. An
+ * operator who does not want that does not want half of it, and two keys would
+ * only offer them a state where a collection can be created but never linked.
+ *
+ * Both flows have a source-control counterpart that this key does NOT touch:
+ * the add-collection dialog's "Create pull request" ending and the link
+ * dialogs' pull-request method write to a `catalog-info.yaml` and are always
+ * available. Turning this off narrows Backstage to those, it does not remove
+ * the ability to catalogue or link a collection.
+ *
+ * Default FALSE. The safe posture is the one where nothing but source control
+ * declares an entity, and a key that defaults to on is not a gate — it is a
+ * setting nobody knows they have. `@visibility frontend` in `config.d.ts` is
+ * what lets the browser hide the two flows rather than offer buttons that
+ * answer 403.
+ *
+ * DELETES are deliberately not gated on it — see the note on
+ * `DELETE /collections/:name` in `service/router.ts`.
+ */
+export function readAllowRuntimeWrites(config: Config): boolean {
+  return config.getOptionalBoolean('bruno.allowRuntimeWrites') ?? false;
+}
+
+/**
  * Reads `bruno.cacheTtlSeconds` as milliseconds. Undefined when unset, so the
  * probe keeps its own default rather than having one duplicated here.
  */

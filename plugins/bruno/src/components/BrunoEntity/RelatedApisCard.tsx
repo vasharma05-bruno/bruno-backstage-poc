@@ -27,6 +27,7 @@ import {
 import { BrunoInfoCard } from '../BrunoInfoCard';
 import { useDescriptorAdvice } from '../PartOfPr';
 import { descriptorLocation, linkSource } from '../../lib/brunoEntity';
+import { useRuntimeWritesEnabled } from '../../lib/runtimeWrites';
 import { useEntityRelationRefresh } from '../../lib/entityRefresh';
 import { LinkApiDialog } from './LinkApiDialog';
 import { UnlinkDialog } from './UnlinkDialog';
@@ -240,27 +241,37 @@ export function RelatedApisCard(): JSX.Element {
   // the end of the road, so it is followed by the action that still works.
   const location = descriptorLocation(entity);
   const advice = useDescriptorAdvice({ location, direction: 'link' });
+  // The follow-up sentence below is the whole reason this card reads the flag:
+  // with instance-local writes off, "Link APIs can still record it here"
+  // becomes an offer the dialog will not honour, and the advice above it is
+  // once again the end of the road rather than a detour sign.
+  const runtimeAvailable = useRuntimeWritesEnabled();
   const emptyHint = advice
     ? (
         <>
           {advice}
-          <Typography
-            variant="body2"
-            color="textSecondary"
-            component="span"
-          >
-            <strong>Link APIs</strong> above can still record the link in this
-            Backstage instance instead, which touches no file.
-          </Typography>
+          {runtimeAvailable && (
+            <Typography
+              variant="body2"
+              color="textSecondary"
+              component="span"
+            >
+              <strong>Link APIs</strong> above can still record the link in this
+              Backstage instance instead, which touches no file.
+            </Typography>
+          )}
         </>
       )
     : (
         <Typography variant="body2" color="textSecondary" component="span">
           Use <strong>Link APIs</strong> above to attach one or more — that adds
-          them to this collection&apos;s <code>partOf</code>, by a pull request
-          against its <code>catalog-info.yaml</code> or as a link in this
-          Backstage instance, and the catalog turns either one into the
-          relations shown here.
+          them to this collection&apos;s <code>partOf</code>,{' '}
+          {runtimeAvailable
+            ? 'by a pull request against its catalog-info.yaml or as a link in '
+            + 'this Backstage instance, and the catalog turns either one into '
+            + 'the relations shown here.'
+            : 'by a pull request against its catalog-info.yaml, and the catalog '
+              + 'turns that into the relations shown here.'}
         </Typography>
       );
 

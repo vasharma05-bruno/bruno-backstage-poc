@@ -32,6 +32,13 @@ auth:
   providers:
     guest: {}
 
+# app-config.yaml turns this on for the POC demo, and production layers on top
+# of it — so leaving it out here would INHERIT the demo's answer rather than
+# fall back to the safe default. Off means the catalog only ever learns about a
+# collection, or a link, from a reviewed file in source control.
+bruno:
+  allowRuntimeWrites: false
+
 catalog:
   # Overrides the default list locations from app-config.yaml as these contain example data.
   # See https://backstage.io/docs/features/software-catalog/#adding-components-to-the-catalog for more details

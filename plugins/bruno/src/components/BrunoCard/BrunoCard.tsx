@@ -23,6 +23,7 @@ import {
 } from '@backstage/plugin-catalog-react';
 import { linkSource, sourceUrl, version } from '../../lib/brunoEntity';
 import { useEntityRelationRefresh } from '../../lib/entityRefresh';
+import { useRuntimeWritesEnabled } from '../../lib/runtimeWrites';
 import { BrunoInfoCard } from '../BrunoInfoCard';
 import { UnlinkDialog } from '../BrunoEntity';
 import { OpenInBrunoSnackbar, useOpenInBruno } from '../OpenInBruno';
@@ -170,6 +171,9 @@ export function BrunoCard(): JSX.Element {
   // relations on the entity object, so nothing moves until the entity is
   // fetched again.
   const refreshRelations = useEntityRelationRefresh();
+  // Only so the empty state does not offer a second way to link that this
+  // instance does not have. The dialog gates itself.
+  const runtimeAvailable = useRuntimeWritesEnabled();
 
   const apiRef = stringifyEntityRef(entity);
 
@@ -312,10 +316,13 @@ export function BrunoCard(): JSX.Element {
       >
         No Bruno collection documents this API yet. Use{' '}
         <strong>Link collection</strong> above to attach one — that adds this
-        API to the collection&apos;s <code>partOf</code>, either by a pull
-        request against its <code>catalog-info.yaml</code> or as a link in this
-        Backstage instance, and the catalog turns either one into the relation
-        shown here.
+        API to the collection&apos;s <code>partOf</code>,{' '}
+        {runtimeAvailable
+          ? 'either by a pull request against its catalog-info.yaml or as a '
+          + 'link in this Backstage instance, and the catalog turns either '
+          + 'one into the relation shown here.'
+          : 'by a pull request against its catalog-info.yaml, and the catalog '
+            + 'turns that into the relation shown here.'}
       </Typography>
     );
   } else {

@@ -125,6 +125,33 @@ export interface Config {
       deferToCatalogInfo?: boolean;
     }>;
     /**
+     * Whether users may add a collection, or link one to an API, in THIS
+     * Backstage instance instead of in source control.
+     *
+     * Off by default. With it off, `POST /collections` and `POST /links`
+     * answer 403 and the browser hides both flows: a collection reaches the
+     * catalog only through a `catalog-info.yaml` (which the add-collection
+     * dialog will still generate and open a pull request for), and a link
+     * exists only as a `spec.partOf` entry in one. Nothing this backend stores
+     * declares an entity, which is the posture to want if reviewed source
+     * control is meant to be the single source of truth.
+     *
+     * With it on, the Bruno backend's own database becomes authoritative for
+     * the collections and links made through the UI:
+     * `BrunoCollectionEntityProvider` materialises the stored collections into
+     * entities and `BrunoKindProcessor` emits relations from the stored links,
+     * both on every cycle. Neither is reviewed, and neither travels with the
+     * collection's repository.
+     *
+     * Turning it off later does NOT retract what is already stored — the
+     * provider keeps emitting those entities and the processor keeps emitting
+     * those relations. The DELETE routes stay open precisely so they can be
+     * cleaned up; only creating new ones is refused.
+     *
+     * @visibility frontend
+     */
+    allowRuntimeWrites?: boolean;
+    /**
      * How long a fetched collection stays cached before the probe revalidates
      * it. Revalidation is an ETag check — one metadata API call, not a tree
      * download — so a short value is cheap. This is also the upper bound on

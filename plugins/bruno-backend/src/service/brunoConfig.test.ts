@@ -1,5 +1,5 @@
 import { ConfigReader } from '@backstage/config';
-import { readBrunoDiscovery } from './brunoConfig';
+import { readAllowRuntimeWrites, readBrunoDiscovery } from './brunoConfig';
 
 describe('readBrunoDiscovery', () => {
   it('is empty when nothing is configured', () => {
@@ -95,5 +95,30 @@ describe('readBrunoDiscovery', () => {
     );
     expect(entries).toEqual([]);
     expect(errors[0]).toMatch(/bruno.discovery\[0\]/);
+  });
+});
+
+describe('readAllowRuntimeWrites', () => {
+  // The default is the whole security posture of the two write flows, so it is
+  // asserted from three directions: no config at all, a `bruno` block that
+  // says nothing about it, and an explicit false. A regression that flipped it
+  // would silently re-open `POST /collections` and `POST /links` on every
+  // instance that never set the key.
+  it('is off unless it is turned on', () => {
+    expect(readAllowRuntimeWrites(new ConfigReader({}))).toBe(false);
+    expect(readAllowRuntimeWrites(new ConfigReader({ bruno: {} }))).toBe(false);
+    expect(
+      readAllowRuntimeWrites(
+        new ConfigReader({ bruno: { allowRuntimeWrites: false } })
+      )
+    ).toBe(false);
+  });
+
+  it('is on when it is turned on', () => {
+    expect(
+      readAllowRuntimeWrites(
+        new ConfigReader({ bruno: { allowRuntimeWrites: true } })
+      )
+    ).toBe(true);
   });
 });

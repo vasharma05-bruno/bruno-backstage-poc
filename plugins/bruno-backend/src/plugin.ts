@@ -4,7 +4,11 @@ import {
 } from '@backstage/backend-plugin-api';
 import { catalogServiceRef } from '@backstage/plugin-catalog-node';
 import { createRouter } from './service/router';
-import { readCacheTtlMs, readDefinitionOptions } from './service/brunoConfig';
+import {
+  readAllowRuntimeWrites,
+  readCacheTtlMs,
+  readDefinitionOptions
+} from './service/brunoConfig';
 import { createManifestProbe } from './service/manifestProbe';
 import { readRefreshSeconds } from './service/schedule';
 import { createRuntimeLinkStore } from './store/runtimeLinkStore';
@@ -77,7 +81,8 @@ export const brunoPlugin = createBackendPlugin({
             probe,
             uiCollections,
             runtimeLinks,
-            refreshSeconds: readRefreshSeconds(config)
+            refreshSeconds: readRefreshSeconds(config),
+            allowRuntimeWrites: readAllowRuntimeWrites(config)
           })
         );
 

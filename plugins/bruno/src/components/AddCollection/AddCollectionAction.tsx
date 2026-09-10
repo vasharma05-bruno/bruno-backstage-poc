@@ -5,6 +5,7 @@ import AddIcon from '@material-ui/icons/Add';
 import { useApi } from '@backstage/core-plugin-api';
 import { brunoApiRef } from '../../api';
 import { announceCollectionCreated } from '../../lib/collectionEvents';
+import { useRuntimeWritesEnabled } from '../../lib/runtimeWrites';
 import { useBrandStyles } from '../../theme/brandStyles';
 import { AddCollectionDialog } from './AddCollectionDialog';
 import { GeneratedYamlDialog } from './GeneratedYamlDialog';
@@ -59,6 +60,13 @@ type Flow
  *    `bruno.schedule.frequencySeconds`, and the dashboard's pending strip is
  *    what reports the gap.
  *
+ * The second ending exists only where `bruno.allowRuntimeWrites` is on. It is
+ * the flow that makes this backend the source of truth for an entity, so an
+ * instance that keeps source control authoritative gets the descriptor path
+ * alone — and gets it as the plain, unqualified way to add a collection rather
+ * than as one of two. The backend refuses the create either way; hiding it is
+ * so the user never meets that refusal.
+ *
  * The two are mutually exclusive on purpose. Doing both — which is what
  * submitting used to do — means two sources claiming one entity name: the
  * provider's `full` mutation and the descriptor's location, resolved by the
@@ -81,6 +89,7 @@ type Flow
 export function AddCollectionAction(): JSX.Element {
   const brandClasses = useBrandStyles();
   const brunoApi = useApi(brunoApiRef);
+  const runtimeAvailable = useRuntimeWritesEnabled();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [flow, setFlow] = useState<Flow>({ status: 'closed' });
@@ -205,7 +214,11 @@ export function AddCollectionAction(): JSX.Element {
         adding={flow.status === 'adding'}
         error={flow.status === 'form' ? flow.error : undefined}
         onClose={() => setFlow({ status: 'closed' })}
-        onAdd={onAdd}
+        // Withheld rather than passed-and-ignored when this instance does not
+        // store collections: the dialog renders its second ending only if it
+        // has somewhere to send it, so one condition decides both the button
+        // and the copy that describes it.
+        onAdd={runtimeAvailable ? onAdd : undefined}
         onCreatePullRequest={onCreatePullRequest}
       />
 

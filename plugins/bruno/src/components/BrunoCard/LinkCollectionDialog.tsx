@@ -28,6 +28,7 @@ import {
   useRuntimeLink
 } from '../PartOfPr';
 import { descriptorLocation, sourceUrl, version } from '../../lib/brunoEntity';
+import { useRuntimeWritesEnabled } from '../../lib/runtimeWrites';
 import { useBrandStyles } from '../../theme/brandStyles';
 
 const useStyles = makeStyles((theme) => ({
@@ -118,10 +119,15 @@ export function LinkCollectionDialog(props: {
     apiRef,
     direction: 'link'
   });
+  const runtimeAvailable = useRuntimeWritesEnabled();
   // `advice` is `undefined` exactly when a pull request can be opened, so it is
   // the whole test — no second reading of the location, and no way for the two
-  // to disagree.
-  const { method, setMethod, reset: resetMethod } = useLinkMethod(!advice);
+  // to disagree. `method` is undefined when the chosen collection can be linked
+  // neither way, which the primary button below reads as "nothing to press".
+  const { method, setMethod, reset: resetMethod } = useLinkMethod({
+    prPossible: !advice,
+    runtimePossible: runtimeAvailable
+  });
 
   const close = (): void => {
     pr.reset();
@@ -263,10 +269,14 @@ export function LinkCollectionDialog(props: {
         <Typography variant="body2">
           Linking adds <code>{apiRef}</code> to the collection&apos;s{' '}
           <code>partOf</code>, which is what the catalog turns into the relation
-          shown on both entities. It can be recorded in the collection&apos;s{' '}
-          <code>catalog-info.yaml</code> — where it is reviewed and travels with
-          the repository — or in this Backstage instance, which is immediate and
-          the only option for a collection with no descriptor.
+          shown on both entities.{' '}
+          {runtimeAvailable
+            ? 'It can be recorded in the collection\u2019s catalog-info.yaml '
+            + '\u2014 where it is reviewed and travels with the repository '
+            + '\u2014 or in this Backstage instance, which is immediate and '
+            + 'the only option for a collection with no descriptor.'
+            : 'It is recorded in the collection\u2019s catalog-info.yaml, by a '
+              + 'pull request against the repository that holds it.'}
         </Typography>
         <Box className={partOfClasses.detail}>
           <EntityPicker
@@ -301,6 +311,7 @@ export function LinkCollectionDialog(props: {
               method={method}
               onChange={setMethod}
               advice={advice}
+              runtimeAvailable={runtimeAvailable}
               disabled={busy}
               target={<code>{apiRef}</code>}
             />
@@ -321,38 +332,52 @@ export function LinkCollectionDialog(props: {
         <Button onClick={close} disabled={busy}>
           Cancel
         </Button>
-        <Button
-          variant="contained"
-          className={brandClasses.accentButton}
-          disabled={busy || !selected}
-          startIcon={busy ? <CircularProgress size={16} /> : undefined}
-          onClick={() => {
-            const collection = selected as Entity;
-            if (method === 'pr') {
-              pr.prepare({
-                apiRefs: [apiRef],
-                collectionName:
+        {/*
+          Absent, not disabled, when the CHOSEN collection can be linked
+          neither way — no descriptor to open a pull request against and no
+          instance-local links. Unlike its mirror, this dialog keeps the picker:
+          the dead end belongs to one candidate, and the next one may have a
+          descriptor. A greyed primary button would read as the dialog being
+          broken rather than as this collection being unreachable, and the
+          reason is already spelled out under the picker.
+        */}
+        {method && (
+          <Button
+            variant="contained"
+            className={brandClasses.accentButton}
+            disabled={busy || !selected}
+            startIcon={busy ? <CircularProgress size={16} /> : undefined}
+            onClick={() => {
+              const collection = selected as Entity;
+              if (method === 'pr') {
+                pr.prepare({
+                  apiRefs: [apiRef],
+                  collectionName:
                   collection.metadata.title ?? collection.metadata.name
+                });
+                return;
+              }
+              if (method !== 'runtime') {
+                return;
+              }
+              const collectionRef = stringifyEntityRef(collection);
+              runtime.link({
+                collectionRef,
+                apiRefs: [apiRef],
+                onLinked: (refreshRequested) =>
+                  onRuntimeLinked?.(collectionRef, refreshRequested)
               });
-              return;
-            }
-            const collectionRef = stringifyEntityRef(collection);
-            runtime.link({
-              collectionRef,
-              apiRefs: [apiRef],
-              onLinked: (refreshRequested) =>
-                onRuntimeLinked?.(collectionRef, refreshRequested)
-            });
-          }}
-        >
-          {planning
-            ? 'Reading descriptor…'
-            : working
-              ? 'Linking…'
-              : method === 'pr'
-                ? 'Prepare pull request'
-                : 'Link collection'}
-        </Button>
+            }}
+          >
+            {planning
+              ? 'Reading descriptor…'
+              : working
+                ? 'Linking…'
+                : method === 'runtime'
+                  ? 'Link collection'
+                  : 'Prepare pull request'}
+          </Button>
+        )}
       </>
     );
   }
