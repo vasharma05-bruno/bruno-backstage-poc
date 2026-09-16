@@ -41,6 +41,10 @@ database is in-memory SQLite, so nothing survives a restart.
   entity accessors, and the add/link/unlink flows.
 - [`plugins/bruno-backend/README.md`](plugins/bruno-backend/README.md) — config
   reference, HTTP routes, what goes on the entity, and credential handling.
+- [`docs/TECHNICAL-DESIGN.md`](docs/TECHNICAL-DESIGN.md) — the architecture
+  study and technical design (BRU-4488): both PoCs synthesized, a
+  recommendation per scope area, the setup guide, and the risks register.
+  **Start here** for *why* the architecture is what it is.
 - [`docs/`](docs/) — the PRD (`Bruno Backstage Plugin PRD - Entity.md`) and the
   per-phase execution plans under `docs/execution/`.
 - [`scripts/bruno-catalog/README.md`](scripts/bruno-catalog/README.md) — the
