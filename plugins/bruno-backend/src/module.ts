@@ -9,6 +9,7 @@ import {
   readCacheTtlMs,
   readDefinitionOptions
 } from './service/brunoConfig';
+import { warnOnAnonymousScmReads } from './service/credentialCheck';
 import { createManifestProbe } from './service/manifestProbe';
 import { readSchedule } from './service/schedule';
 import { BrunoCollectionEntityProvider } from './provider/BrunoCollectionEntityProvider';
@@ -74,6 +75,11 @@ export const brunoCatalogModule = createBackendModule({
           ttlMs: readCacheTtlMs(config),
           definition: readDefinitionOptions(config, logger)
         });
+
+        // Boot-time only, warn-only, and no network: the `integrations.*`
+        // mistakes it looks for cost an anonymous read rather than an error, so
+        // nothing downstream would ever report them.
+        await warnOnAnonymousScmReads({ config, logger });
 
         const storedCollections = createStoredCollectionReader({
           discovery,
