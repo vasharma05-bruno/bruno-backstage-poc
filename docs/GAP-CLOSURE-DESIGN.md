@@ -43,8 +43,8 @@ Severity is the operational consequence of shipping without the fix, not the eff
 
 | ID | Gap | Source | Severity | Closable here |
 | --- | --- | --- | --- | --- |
-| SEC-1 | SSRF and private-repo existence oracle on the probe/create routes | §9 S1, R3 | **Critical** | Yes |
-| SEC-2 | No authorization model (IDOR on every mutating route) | §9 S2, R2 | **Critical** | Yes |
+| SEC-1 | SSRF and private-repo existence oracle on the probe/create routes | §9 S1, R3 | **Critical** | Yes — *done* |
+| SEC-2 | No authorization model (IDOR on every mutating route) | §9 S2, R2 | **Critical** | Yes — *done* |
 | SEC-3 | Docs CSP allows `https:` broadly; `allow-same-origin` on the app's cookie origin | §9 S3 | High | Partial |
 | SEC-4 | Renderer bundle served from an unpinned staging CDN | §9 S4, R4 | High | Partial |
 | SEC-5 | Playground proxy: frontend-hardcoded host map, no server-side secret injection | §9.3, P5 | Medium | Deferred |
@@ -76,7 +76,7 @@ Severity is the operational consequence of shipping without the fix, not the eff
 | SCM-3 | Tier-1 zero-quota revalidation is GitHub-only | §5 | Medium | Yes |
 | SCM-4 | Support-matrix holes: Bitbucket Server/DC, Azure, Gitea, Gerrit, Harness | §5 | Medium | Partial |
 | SCM-5 | Large-repo tree truncation is logged, never surfaced | §14.7 | Low | Yes |
-| SCM-6 | Credential-shape traps are documented in prose only, so nothing stops a regression | §5 | Medium | Yes |
+| SCM-6 | Credential-shape traps are documented in prose only, so nothing stops a regression | §5 | Medium | Yes — *done* |
 | SCM-7 | Link/unlink pull request is broken on GitHub Enterprise — every call goes to `api.github.com` | *new* | **High** | Yes — *done* |
 
 ### Frontend and UX — `FE`
@@ -1911,8 +1911,19 @@ full gate set — `yarn tsc`, `CI=true yarn test --watchAll=false`, `yarn lint` 
 | `e5922d7` | — | DAT-8 and REL-7 recorded here |
 | `5a66b84` | SEC-6, SEC-7, SEC-8, SEC-9, REL-1 *(partial)* | Router harness + auth-policy matrix, four backend defects |
 | `c945a89` | SCM-7, FE-3 | GHE pull requests; dead-ref rows |
+| `e1f65b3` | — | Register statuses and deviations |
+| `d9e982c` | SEC-1 | Source allow-list, fail-closed; live GHE `apiBaseUrl` leak |
+| `6d0d5e1` | FE-4 *(partial)*, FE-5 *(partial)* | Stranded-row diagnosis; clone into the collection |
+| `2c1a916` | — | Credential-shape corrections |
+| `68de616` | SCM-6 | Six traps pinned; anonymous-read startup warning |
+| `3360ecc` | SEC-2 | Permissions and ownership on every mutating route |
 
-Test baseline over the same span: **113 tests / 12 suites → 185 / 18.**
+Test baseline over the same span: **113 tests / 12 suites → 244 / 21.**
+
+**Both Critical security gaps are closed.** Of the register's five Critical entries, four are done
+(SEC-1, SEC-2, REL-4, REL-5) and one is partial (REL-1 — the router harness and auth matrix exist;
+the processor and Playwright layers do not). DAT-1 is closed as a documentation task by the PRD-1
+decision.
 
 Two deviations from this document's own recommendations, both deliberate:
 
@@ -1923,3 +1934,12 @@ Two deviations from this document's own recommendations, both deliberate:
 - **DAT-8 was fixed although it was not in scope** for the byte-stability work. It is deterministic,
   so it was not churn — but it made the generated document disagree with Bruno's own export, and
   the DAT-1 decision makes parity the property we are defending.
+
+
+A third deviation, recorded with the other two:
+
+- **`mockServices.permissions` could not express the SEC-2 test matrix.** Its canned result is one
+  answer for every permission, so a blanket ALLOW also allows `bruno.collection.delete.any` — which
+  would have made the IDOR tests pass by skipping the check they exist to pin. The suite uses a
+  per-permission mock instead. This is the same class of trap as the default-to-mock-user one in
+  REL-1: a security test that passes for the wrong reason is worse than no test.
