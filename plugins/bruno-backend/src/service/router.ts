@@ -11,6 +11,7 @@ import {
   NotAllowedError,
   NotFoundError
 } from '@backstage/errors';
+import { ScmIntegrations } from '@backstage/integration';
 import type { CatalogService } from '@backstage/plugin-catalog-node';
 import express from 'express';
 import Router from 'express-promise-router';
@@ -22,6 +23,11 @@ import {
 import { collectionNameFromUrl } from '../provider/BrunoCollectionEntityProvider';
 import { readBrunoCollections } from './brunoConfig';
 import { normaliseApiRef, normaliseCollectionRef } from './entityRefs';
+import {
+  assertSourceAllowed,
+  createProbeRateLimiter,
+  readAllowedSources
+} from './sourceAllowlist';
 import type { UiCollectionStore } from '../store/uiCollectionStore';
 import type { RuntimeLinkStore } from '../store/runtimeLinkStore';
 import { escapeHtml, generateOcDocsHtml } from './generateOcDocsHtml';
@@ -193,6 +199,22 @@ export async function createRouter(
   };
 
   /**
+   * The two-dimensional host-and-path gate in front of every URL that arrives
+   * in a REQUEST BODY. Read once here: `bruno.allowedSources` is a security
+   * control, so a change to it takes a restart rather than taking effect
+   * halfway through a request.
+   *
+   * Applied to `POST /collections/probe` and `POST /collections` and to nothing
+   * else. `bruno.collections[]` and `bruno.discovery[]` are the operator's own
+   * URLs and stay ungated — see `sourceAllowlist.ts` for the whole argument.
+   */
+  const integrations = ScmIntegrations.fromConfig(config);
+  const allowedSources = readAllowedSources(config);
+  const assertAllowedSource = (url: string): string =>
+    assertSourceAllowed({ url, integrations, allowed: allowedSources });
+  const probeLimiter = createProbeRateLimiter();
+
+  /**
    * Marks a collection for immediate reprocessing, and says whether it worked.
    *
    * This is what makes a runtime link feel like a link rather than like the
@@ -253,13 +275,13 @@ export async function createRouter(
   // dialog renders it as a field-level message rather than a failure. Only an
   // unreadable URL is a 4xx.
   //
-  // POC scope: any authenticated user may ask the backend to read any URL its
-  // integrations can reach, which is both an SSRF surface and a way to confirm
-  // the existence of private repositories. Documented, not fixed, along with
-  // the rest of the Beta hardening — see docs/execution/UI-P6-plan.md
-  // §"Standing constraints".
+  // The URL is the caller's, so `bruno.allowedSources` decides whether the
+  // server will read it at all, and a per-user budget bounds how often. Both
+  // run BEFORE the probe: this route is the plugin's only cold-fetch surface
+  // reachable from a request body, and a check that fires after the read has
+  // already paid for everything it was meant to prevent.
   router.post('/collections/probe', async (req, res) => {
-    await httpAuth.credentials(req, { allow: ['user'] });
+    const credentials = await httpAuth.credentials(req, { allow: ['user'] });
 
     const url = (req.body as { url?: unknown })?.url;
     if (typeof url !== 'string' || !url.trim()) {
@@ -267,6 +289,39 @@ export async function createRouter(
         found: false,
         reason: 'unreadable',
         message: 'A collection URL is required.'
+      });
+      return;
+    }
+
+    // The gate's two outcomes are answered differently on purpose. A refusal is
+    // a 403 carrying the config key, because it is the operator's decision and
+    // the dialog has nothing useful to say about it; an unparseable URL keeps
+    // this route's existing `{ found: false, reason: 'unreadable' }` 400, which
+    // is what the dialog renders as a field-level message.
+    let allowedUrl: string;
+    try {
+      allowedUrl = assertAllowedSource(url);
+    } catch (e) {
+      const message = String((e as Error)?.message ?? e);
+      logger.info('Bruno collection probe failed.', { url, error: message });
+      if (e instanceof NotAllowedError) {
+        throw e;
+      }
+      res.status(400).json({ found: false, reason: 'unreadable', message });
+      return;
+    }
+
+    // Spent only for a URL that passed the gate: a refused URL costs the server
+    // nothing, so it must not cost the caller their budget either.
+    const retryAfter = probeLimiter.spend(credentials.principal.userEntityRef);
+    if (retryAfter !== undefined) {
+      res.setHeader('Retry-After', String(retryAfter));
+      res.status(429).json({
+        found: false,
+        reason: 'rate-limited',
+        message:
+          'Too many collection scans from this account. Try again in '
+          + `${retryAfter} seconds.`
       });
       return;
     }
@@ -279,7 +334,7 @@ export async function createRouter(
       // as a side effect, which is more work than the question needs; reusing
       // the one seam is worth more than a narrower read that would have to be
       // kept in step with it.
-      snapshot = await probe.probe(url);
+      snapshot = await probe.probe(allowedUrl);
     } catch (e) {
       const message = String((e as Error)?.message ?? e);
       // Logged at info: an unreachable URL here is a user typing a repository
@@ -338,12 +393,13 @@ export async function createRouter(
   // `created_by` would have to become a spoofable body field to carry anything
   // at all.
   //
-  // POC scope, matching the posture on the probe route above: any authenticated
-  // user may ask the backend to read any URL its integrations can reach (an
-  // SSRF surface and a private-repository existence oracle), and any
-  // authenticated user may add a collection that everyone else then sees.
-  // Documented, not fixed — see docs/execution/UI-P6-plan.md
-  // §"Standing constraints".
+  // The URL is gated by `bruno.allowedSources` exactly as on the probe route,
+  // and for the same reason plus one more: this route is the one that would let
+  // a caller who cannot reach `/collections/probe` reach the same read through
+  // the create instead, so the guard has to sit on both or on neither.
+  //
+  // Still POC scope: any authenticated user may add a collection from any
+  // allow-listed source, and everyone else then sees it.
   router.post('/collections', async (req, res) => {
     const credentials = await httpAuth.credentials(req, { allow: ['user'] });
     requireRuntimeWrites('Adding a collection');
@@ -361,6 +417,9 @@ export async function createRouter(
     if (typeof rawUrl !== 'string' || !rawUrl.trim()) {
       throw new InputError('A collection URL is required.');
     }
+    // Before the name checks and before the catalog fan-out, not just before
+    // the read: a URL this instance will not accept should cost nothing at all.
+    const allowedUrl = assertAllowedSource(rawUrl);
     const name = body.name;
     if (typeof name !== 'string' || !name.trim()) {
       throw new InputError('An entity name is required.');
@@ -403,7 +462,7 @@ export async function createRouter(
     // `normalize` is idempotent, so the two paths converge on one identity.
     let normalized: string;
     try {
-      normalized = probe.normalize(rawUrl);
+      normalized = probe.normalize(allowedUrl);
     } catch (e) {
       throw new InputError(
         `Backstage could not use this URL: ${String((e as Error)?.message ?? e)}`
@@ -422,7 +481,7 @@ export async function createRouter(
     // ingest a few seconds later reads from.
     let snapshot;
     try {
-      snapshot = await probe.probe(rawUrl);
+      snapshot = await probe.probe(allowedUrl);
     } catch (e) {
       throw new InputError(
         `Backstage could not read this URL: ${String((e as Error)?.message ?? e)}`

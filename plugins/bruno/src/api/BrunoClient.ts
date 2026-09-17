@@ -32,7 +32,8 @@ interface BackendError {
  * sentence, and collapsing it to `HTTP 409` puts the user back in front of a
  * form with no idea which field is wrong. This is the same mistake
  * {@link BrunoClient.probeCollection} was written to avoid, one status class
- * up.
+ * up — and which that method now uses this helper to avoid as well, since the
+ * source allow-list gave it statuses whose message is the whole point.
  *
  * The fallback is status/statusText only, never the body: a non-2xx that is not
  * ours (an auth redirect, a proxy error page) is usually HTML, and rendering
@@ -93,10 +94,13 @@ export class BrunoClient implements BrunoApi {
    * `integrations` entry or a revoked token — turning it into a generic
    * `HTTP 400` would throw away the entire diagnostic.
    *
-   * Any other non-2xx status is NOT ours: an auth redirect, a proxy error page,
-   * a 404 from a backend that predates this route. Those get a plain error, and
-   * the response body is deliberately not shown — an HTML error page rendered
-   * into a form field helps nobody.
+   * Any other non-2xx goes through {@link errorFromResponse}, which shows the
+   * backend's own sentence when there is one and falls back to the status when
+   * there is not. Both halves matter here: a 403 from the source allow-list and
+   * a 429 from the probe budget carry the only actionable text in the response,
+   * while a reply that is NOT ours — an auth redirect, a proxy error page — has
+   * no such sentence and is reported by status alone, because an HTML error page
+   * rendered into a form field helps nobody.
    */
   async probeCollection(url: string): Promise<ProbeResult> {
     const base = await this.baseUrl();
@@ -107,10 +111,12 @@ export class BrunoClient implements BrunoApi {
     });
 
     if (!response.ok && response.status !== 400) {
-      throw new Error(
-        `Could not probe ${url}: the Bruno backend responded `
-        + `${response.status} ${response.statusText}.`
-      );
+      // Through `errorFromResponse` rather than status/statusText, because the
+      // statuses that land here now carry the only actionable part. A 403 from
+      // the source allow-list says which config key to add the host to, and a
+      // 429 says how long to wait; "the Bruno backend responded 403 Forbidden"
+      // tells a user nothing they can act on.
+      throw await errorFromResponse(response, `Could not probe ${url}`);
     }
 
     // Shape-checked rather than cast blind: a 400 produced by something OTHER

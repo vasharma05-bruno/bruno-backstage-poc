@@ -38,8 +38,13 @@ export interface ScmProviderRegistry {
  * Matches the public hosts exactly (cheap and exact, even if usually redundant),
  * plus the common self-hosted convention of naming the first hostname label
  * after the product (`gitlab.company.com`).
+ *
+ * Exported for `service/sourceAllowlist.ts`, which uses it for exactly the same
+ * purpose in prose: to tell an operator which `integrations.<type>` key their
+ * unconfigured host wants. A wrong guess there costs a wrong hint and nothing
+ * else, which is the same tolerance this heuristic already carries here.
  */
-function inferTypeFromHost(url: string): string | undefined {
+export function inferTypeFromHost(url: string): string | undefined {
   let hostname: string;
   try {
     hostname = new URL(url).hostname.toLowerCase();

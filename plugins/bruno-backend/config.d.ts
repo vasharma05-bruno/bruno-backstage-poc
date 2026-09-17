@@ -152,6 +152,55 @@ export interface Config {
      */
     allowRuntimeWrites?: boolean;
     /**
+     * The sources this instance will read when the URL came from a USER, on
+     * `POST /collections/probe` and `POST /collections`.
+     *
+     * FAIL-CLOSED: with this key absent both routes refuse every URL, so the
+     * add-collection dialog cannot scan anything until an administrator lists
+     * at least one entry. That is deliberate. Without it any authenticated user
+     * can ask the server "does `<private-org>/<private-repo>` exist, and can
+     * your token read it?" and get the SCM host's own answer back — and an
+     * `integrations` entry is no guard, because Backstage self-defaults one for
+     * github.com, gitlab.com and bitbucket.org, so every public repository URL
+     * on earth has one.
+     *
+     * It does NOT affect `bruno.collections[]` or `bruno.discovery[]`. Those
+     * URLs are the operator's own, written in this file; an operator who wrote
+     * one has already consented to it.
+     *
+     * The list is `@visibility backend` in full: it names the organizations
+     * this company keeps collections in, and a browser has no use for that.
+     * @visibility backend
+     */
+    allowedSources?: Array<{
+      /**
+       * Hostname to accept, matched exactly — or `*.example.com` for any
+       * subdomain of it at any depth, which does NOT include `example.com`
+       * itself. Must also have an `integrations.*` entry; this list says which
+       * of the reachable hosts a USER may name, not how to reach them.
+       * @visibility backend
+       */
+      host: string;
+      /**
+       * Repo paths to accept on that host, matched on WHOLE SEGMENTS and
+       * case-insensitively: `/acme` accepts `/acme/payments` and rejects
+       * `/acme-legacy/x`. Usually one entry per organization.
+       *
+       * Omit it — or leave it empty — to accept the whole host. Do not do that
+       * for github.com: a host-only entry for a host everybody shares is the
+       * same as no allowlist at all.
+       * @visibility backend
+       */
+      pathPrefixes?: string[];
+      /**
+       * Whether `http://` URLs are accepted for this host. Off by default, so
+       * a collection is read over TLS or not at all. For a self-hosted SCM on
+       * a trusted network that has no certificate.
+       * @visibility backend
+       */
+      allowInsecure?: boolean;
+    }>;
+    /**
      * How long a fetched collection stays cached before the probe revalidates
      * it. Revalidation is an ETag check — one metadata API call, not a tree
      * download — so a short value is cheap. This is also the upper bound on

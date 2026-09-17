@@ -35,6 +35,10 @@ const NONE = mockCredentials.none.header();
 
 const COLLECTION_URL = 'https://github.com/acme/payments/tree/main/collection';
 
+/** What `bruno.allowedSources` has to say for `COLLECTION_URL` to be readable.
+ *  Every test below runs with this unless it is testing the absent-key case. */
+const ALLOWED_SOURCES = [{ host: 'github.com', pathPrefixes: ['/acme'] }];
+
 /** A `kind: Bruno` entity carrying a stored definition, so the docs route has
  *  something to render, plus the API the link routes point at. */
 const CATALOG_ENTITIES: Entity[] = [
@@ -94,7 +98,12 @@ describe('bruno router', () => {
    * it OFF — which is the only way to exercise what the flag does and does not
    * retract.
    */
-  async function startBruno(options?: { allowRuntimeWrites?: boolean }) {
+  async function startBruno(options?: {
+    allowRuntimeWrites?: boolean;
+    /** `null` omits the key entirely — the fail-closed default an adopter who
+     *  has configured nothing is in. */
+    allowedSources?: typeof ALLOWED_SOURCES | null;
+  }) {
     const reader = mockServices.urlReader.mock();
     reader.readTree.mockResolvedValue(treeResponse());
     const logger = mockServices.logger.mock();
@@ -107,7 +116,13 @@ describe('bruno router', () => {
             backend: { baseUrl: 'http://localhost:7007' },
             bruno: {
               allowRuntimeWrites: options?.allowRuntimeWrites ?? false,
-              schedule: { frequencySeconds: 30 }
+              schedule: { frequencySeconds: 30 },
+              ...(options?.allowedSources === null
+                ? {}
+                : {
+                    allowedSources:
+                      options?.allowedSources ?? ALLOWED_SOURCES
+                  })
             }
           }
         }),
@@ -266,6 +281,111 @@ describe('bruno router', () => {
         .set('Authorization', USER)
         .send({ ...body, title: 'x'.repeat(70 * 1024) })
         .expect(413);
+    });
+  });
+
+  /**
+   * `bruno.allowedSources`, run against BOTH routes that take a URL from a
+   * request body. One guard on one route would be no guard at all: the create
+   * route performs the same read, so a caller refused at `/collections/probe`
+   * would simply post to `/collections` instead.
+   *
+   * THE LOAD-BEARING ASSERTION IS THE CALL COUNT. A test that only checked for
+   * a 403 would pass just as happily if the fetch had already happened and the
+   * refusal came afterwards, which is precisely the bug this guard exists to
+   * prevent — the quota is spent and the existence question is answered the
+   * moment `readTree` runs, whatever status code follows.
+   */
+  describe('bruno.allowedSources', () => {
+    const REFUSED: Array<[string, string]> = [
+      ['the cloud metadata endpoint', 'https://169.254.169.254/latest/meta-data/'],
+      ['loopback pointing at this backend', 'http://127.0.0.1:7007/api/bruno/collections'],
+      ['a file: URL', 'file:///etc/passwd'],
+      ['an IPv6 literal', 'https://[::1]/acme/payments'],
+      ['http:// without allowInsecure', 'http://github.com/acme/payments'],
+      ['an allowed host with a disallowed owner', 'https://github.com/evil/secrets'],
+      ['a prefix match that is not a whole segment', 'https://github.com/acme-legacy/x']
+    ];
+
+    it.each(REFUSED)('refuses %s on both routes, before any read', async (_what, url) => {
+      const { server, reader } = await startBruno({ allowRuntimeWrites: true });
+      await request(server)
+        .post('/api/bruno/collections/probe')
+        .set('Authorization', USER)
+        .send({ url })
+        .expect(403);
+      await request(server)
+        .post('/api/bruno/collections')
+        .set('Authorization', USER)
+        .send({ url, name: 'payments-ui' })
+        .expect(403);
+      expect(reader.readTree).not.toHaveBeenCalled();
+    });
+
+    it('refuses every URL when the key is absent, naming it, on both routes', async () => {
+      const { server, reader } = await startBruno({
+        allowRuntimeWrites: true,
+        allowedSources: null
+      });
+      const probed = await request(server)
+        .post('/api/bruno/collections/probe')
+        .set('Authorization', USER)
+        .send({ url: COLLECTION_URL })
+        .expect(403);
+      expect(probed.body.error.message).toContain('bruno.allowedSources');
+
+      const created = await request(server)
+        .post('/api/bruno/collections')
+        .set('Authorization', USER)
+        .send({ url: COLLECTION_URL, name: 'payments-ui' })
+        .expect(403);
+      expect(created.body.error.message).toContain('bruno.allowedSources');
+      expect(reader.readTree).not.toHaveBeenCalled();
+    });
+
+    it('reads an allowed URL exactly once, normalised', async () => {
+      const { server, reader } = await startBruno({ allowRuntimeWrites: true });
+      await request(server)
+        .post('/api/bruno/collections/probe')
+        .set('Authorization', USER)
+        // Trailing slash and a fragment: what the gate returns is what is read.
+        .send({ url: `${COLLECTION_URL}/#readme` })
+        .expect(200);
+      expect(reader.readTree).toHaveBeenCalledTimes(1);
+      expect(reader.readTree).toHaveBeenCalledWith(COLLECTION_URL, undefined);
+    });
+
+    it('sits behind allowRuntimeWrites on the create route', async () => {
+      // Pinned because the order is a disclosure decision, not an accident: an
+      // instance that has turned writes off answers with THAT and never says
+      // whether the URL would have been accepted.
+      const { server, reader } = await startBruno({ allowRuntimeWrites: false });
+      const res = await request(server)
+        .post('/api/bruno/collections')
+        .set('Authorization', USER)
+        .send({ url: 'https://github.com/evil/secrets', name: 'x' })
+        .expect(403);
+      expect(res.body.error.message).toContain('bruno.allowRuntimeWrites');
+      expect(reader.readTree).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /collections/probe rate limit', () => {
+    it('answers 429 with a Retry-After once a user spends the window', async () => {
+      const { server } = await startBruno();
+      const scan = () =>
+        request(server)
+          .post('/api/bruno/collections/probe')
+          .set('Authorization', USER)
+          .send({ url: COLLECTION_URL });
+
+      // 30 per minute, from `createProbeRateLimiter`'s defaults.
+      for (let i = 0; i < 30; i++) {
+        await scan().expect(200);
+      }
+      const res = await scan().expect(429);
+      expect(res.headers['retry-after']).toBeDefined();
+      expect(res.body.reason).toBe('rate-limited');
     });
   });
 
