@@ -59,12 +59,13 @@ Severity is the operational consequence of shipping without the fix, not the eff
 | ID | Gap | Source | Severity | Closable here |
 | --- | --- | --- | --- | --- |
 | DAT-1 | Secrets in generated docs reach the catalog in plaintext | §14.1, R1, P1 | **Critical** | Yes |
-| DAT-2 | Byte-stability of the generated definition is not enforced in CI | §14.2, R8 | High | Yes |
+| DAT-2 | Byte-stability of the generated definition is not enforced in CI | §14.2, R8 | High | Yes — *done* |
 | DAT-3 | No database migrations on the two tables | §4, R10 | High | Yes |
 | DAT-4 | Postgres never exercised; everything has run on in-memory SQLite | §14.9, §18.4 | Medium | Yes |
-| DAT-5 | Multi-replica behaviour never run | §14.3, R9 | Medium | Partial |
+| DAT-5 | Multi-replica behaviour never run | §14.3, R9 | Medium | Partial — *scope invariant done* |
 | DAT-6 | Divergences from Bruno's own exporter are undocumented for users | §14.8 | Low | Yes |
 | DAT-7 | Entity size at scale unmeasured (500 collections × 1 MiB) | §18.7 | Medium | Yes |
+| DAT-8 | `meta.seq` silently dropped — requests order by filename, not the author's arrangement | *new* | Medium | Yes — *done* |
 
 ### SCM provider coverage — `SCM`
 
@@ -96,9 +97,10 @@ Severity is the operational consequence of shipping without the fix, not the eff
 | REL-1 | Zero router/security tests; the pyramid is unit-only | §14.4, R15 | **Critical** | Yes |
 | REL-2 | Backstage floor below 1.53 unknown | §12, §18.1 | Medium | Yes |
 | REL-3 | Distribution: package names, dependency ranges, licence | §11, R14, P6 | High | Partial |
-| REL-4 | **No CI exists at all** — a finding of this study, not of the design doc | new | **Critical** | Yes |
+| REL-4 | **No CI exists at all** — a finding of this study, not of the design doc | *new* | **Critical** | Yes — *done* |
 | REL-5 | `yarn install` fails on a clean checkout (dead `portal:` resolutions) | new | **Critical** | Yes — *done* |
 | REL-6 | Prior art unread; `deferToCatalogInfo` default unvalidated; CDN set audited on staging only | §18.8–18.10 | Low | Partial |
+| REL-7 | Four root scripts could not run: `build:backend`, `build-image`, `lint`, `lint:all` | *new* | Medium | Yes — *done* |
 
 ### Product calls — `PRD`
 
@@ -1824,3 +1826,69 @@ Recorded separately because they change conclusions, not just wording. Each was 
 | §11 | Do not use caret ranges on published `@backstage/*` deps (MNT-1) | **Contradicts every published Backstage plugin.** Exact pins duplicate the `@backstage/*` tree and break context identity. Honour the concern via a committed lockfile plus a drift-install CI leg |
 | §7.2 | A stranded row may mean an unreadable manifest | **That cause cannot occur** — the provider's emission loop reads nothing. Two real causes (store unreachable, discovery throwing) are omitted instead |
 | §13 | PagerDuty / GitHub Actions prior art | Still unverified, and likely a **counter-example** given §7.3's own finding on annotation gating |
+
+
+---
+
+## DAT-8 — `meta.seq` is silently dropped, so requests order by filename
+
+### The gap — found during this study
+
+`@usebruno/lang` returns `meta.seq` as a **string** (`'3'`, not `3`), while the YAML folder path
+returns a number. Every guard tested `typeof === 'number'`. The ambient shim types the parsers as
+`any` and the raw-request type declared `seq` as `number`, so the guard **type-checked cleanly and
+never matched at runtime**.
+
+Consequence: no request or folder ever carried a seq, `sortItems` saw nothing to sort by, and item
+order fell back entirely to insertion index — the order the tree filter listed the files, which is
+alphabetical by path. **The generated docs listed requests by filename rather than by the order the
+author arranged them in Bruno.**
+
+This is not churn — it was deterministic — which is why the byte-stability work did not catch it.
+It is a fidelity divergence, and it belongs with DAT-6.
+
+### Options
+
+| | Approach | Cons |
+| --- | --- | --- |
+| **A** | **One `readSeq` normalizer accepting both shapes, applied at all four parse sites** | Changes the generated document for any collection that sets seq — a one-time re-stitch |
+| **B** | Fix only the `.bru` path | Leaves two subtly different code paths for the same field |
+| **C** | Correct the ambient shim's types and let `tsc` find the sites | The shim is deliberately `any` at the boundary; typing it properly is a much larger task (see REL-4's lint budget) |
+| **D** | Leave it — order is deterministic either way | Silently disagrees with Bruno's own export, which is the property DAT-1 was just decided in favour of |
+
+### Selected: **A**
+
+D is the tempting one, because nothing is *broken* in the churn sense. But the parity-with-Bruno
+position taken in DAT-1 makes this a defect rather than a preference: Bruno orders by seq, and we
+did not. The one-time re-stitch is the cost of moving **toward** parity, not away.
+
+Note the tie-break: `sortItems` resolves equal seqs by insertion index, not by name, despite a
+docblock that says otherwise. That is still deterministic, because file selection is sorted — but
+the docblock and the code disagree and one of them should change.
+
+**Landed in `77e6211`.** Effort: S.
+
+---
+
+## REL-7 — Four root scripts could not run
+
+### The gap — found during this study
+
+- **`build:backend` and `build-image`** ran `yarn workspace backend ...`, but the workspace is
+  `@usebruno/backstage-backend`. Both had always failed.
+- **`lint` and `lint:all`** ran `backstage-cli repo lint`, which cannot run in this repo at all: it
+  constructs ESLint inside a worker thread with `new ESLint({ extensions: [...] })`, the worker
+  resolves `eslint` from the repo root — 9.39.5, the version the flat config requires — and ESLint 9
+  removed that option. It dies before linting anything. `backstage-cli package lint` fails
+  differently, unable to resolve a shared config that is not hoisted.
+
+A `lint-staged` block is configured but husky is absent, so the local pre-commit path was dead too.
+
+### Selected: repair the workspace names; repoint `lint`/`lint:all` at the flat config
+
+`yarn lint` now runs the flat config over the plugin source and is **exactly what CI runs**, so the
+two cannot drift. The Backstage scaffold packages (`packages/app`, `packages/backend`) remain
+unlinted — recorded in `docs/CI.md` rather than papered over, since fixing that means resolving the
+shared-config hoisting problem, which is its own task.
+
+**Landed in `9556ba5`.** Effort: S.
