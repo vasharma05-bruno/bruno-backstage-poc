@@ -4,7 +4,8 @@ import {
   BRUNO_RUNTIME_PART_OF_ANNOTATION,
   descriptorLocation,
   linkSource,
-  runtimePartOfRefs
+  runtimePartOfRefs,
+  unresolvedRefs
 } from './brunoEntity';
 
 function collection(input?: {
@@ -178,5 +179,82 @@ describe('linkSource', () => {
     ).toBe('none');
     expect(linkSource(collection({ partOf: ['api:default/orders'] }), '/nope'))
       .toBe('none');
+  });
+});
+
+describe('unresolvedRefs', () => {
+  /**
+   * The mixed-case cases are the whole reason both sides are normalised: the
+   * resolved side arrives from `stringifyEntityRef`, which lower-cases what it
+   * emits, so a raw comparison would report every hand-written `Orders` as a
+   * dead link and put a false accusation in front of a user whose descriptor is
+   * correct.
+   */
+  it.each([
+    // All three spellings, and a mixed-case one, against the same relation.
+    [['orders'], ['api:default/orders'], []],
+    [['api:orders'], ['api:default/orders'], []],
+    [['api:default/orders'], ['api:default/orders'], []],
+    [['API:Default/Orders'], ['api:default/orders'], []],
+    // The bug this exists for: a reference that resolved to nothing.
+    [['api:default/typo'], ['api:default/orders'], ['api:default/typo']],
+    // Duplicates across spellings collapse to one row, not three.
+    [
+      ['orders', 'api:orders', 'api:default/orders'],
+      [],
+      ['api:default/orders']
+    ],
+    // An entry the catalog cannot parse is DROPPED, not reported: the backend
+    // emits no relation for it either, so it is the descriptor that is wrong
+    // and not the stitch.
+    [['api:default/', 'api:default/typo'], [], ['api:default/typo']],
+    // Nothing declared, and nothing stitched yet.
+    [[], ['api:default/orders'], []],
+    [[], [], []]
+  ])(
+    'diffs %p against %p',
+    (declared, resolved, expected) => {
+      expect(unresolvedRefs(collection({ partOf: declared }), resolved))
+        .toEqual(expected);
+    }
+  );
+
+  it('covers runtime links as well as descriptor ones', () => {
+    // A runtime link produces the same relation, so an unresolved one is the
+    // same failure — and it is the half this card can offer to remove.
+    expect(
+      unresolvedRefs(collection({ runtime: 'Orders, api:default/typo' }), [
+        'api:default/orders'
+      ])
+    ).toEqual(['api:default/typo']);
+  });
+
+  it('reports a ref declared in both places once', () => {
+    expect(
+      unresolvedRefs(
+        collection({ partOf: ['orders'], runtime: 'api:default/orders' }),
+        []
+      )
+    ).toEqual(['api:default/orders']);
+  });
+
+  it('reports every declared ref before the first stitch', () => {
+    // The transient case `useRelationsSettled` exists for: the entity is in the
+    // catalog before its descriptor has been processed, so nothing resolves and
+    // the card must not call any of these dead yet.
+    expect(
+      unresolvedRefs(collection({ partOf: ['orders', 'api:payments'] }), [])
+    ).toEqual(['api:default/orders', 'api:default/payments']);
+  });
+
+  it('ignores a resolved ref the entity does not declare', () => {
+    // The relation can outlive the declaration by a stitch. That is the
+    // catalog catching up, not a broken link, and it has no row to add.
+    expect(
+      unresolvedRefs(collection({ partOf: ['orders'] }), [
+        'api:default/orders',
+        'api:default/stale'
+      ])
+    ).toEqual([]);
   });
 });

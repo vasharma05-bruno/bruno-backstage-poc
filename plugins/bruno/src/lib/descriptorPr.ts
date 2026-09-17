@@ -143,10 +143,14 @@ export async function planDescriptorPr(opts: {
   body: string;
   token: string;
   /**
-   * The integration's `apiBaseUrl`, for GitHub Enterprise. Omitted for
-   * github.com, where Octokit's own default is right — passing the wrong one
-   * here would send the whole flow at the public API and 404 on a repository
-   * that exists.
+   * The matched integration's `apiBaseUrl`, which is what makes this work on
+   * GitHub Enterprise. Backstage fills it in for every configured GitHub
+   * integration — `https://api.github.com` for github.com itself — so it is
+   * normally set and passing it is a no-op on the public host. Undefined only
+   * when no integration matches the descriptor's host, where Octokit's default
+   * is the best guess available. Getting this wrong is not subtle: without it
+   * a GHE flow asks the user for a token against their own host and then sends
+   * every call at the public API, 404ing on a repository that exists.
    */
   apiBaseUrl?: string;
 }): Promise<DescriptorPlan> {

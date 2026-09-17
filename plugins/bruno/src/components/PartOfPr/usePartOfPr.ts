@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useApiHolder } from '@backstage/core-plugin-api';
-import { scmAuthApiRef } from '@backstage/integration-react';
+import { scmAuthApiRef, scmIntegrationsApiRef } from '@backstage/integration-react';
 import type { PartOfDirection, PartOfPlan } from '../../lib/unlinkPr';
 import { planLink, planUnlink, submitLink, submitUnlink } from '../../lib/unlinkPr';
 
@@ -45,7 +45,23 @@ export function usePartOfPr(opts: {
   // `useApiHolder` rather than `useApi`: a host app is not obliged to register
   // the SCM auth API, and `useApi` throws at RENDER time for a missing one —
   // which would take the whole card down instead of just blocking this action.
-  const scmAuth = useApiHolder().get(scmAuthApiRef);
+  const apis = useApiHolder();
+  const scmAuth = apis.get(scmAuthApiRef);
+  /**
+   * The GitHub API to talk to, for a descriptor on a GitHub Enterprise host.
+   *
+   * Backstage sets this for every configured GitHub integration, including
+   * `https://api.github.com` for github.com, so it is undefined only when no
+   * integration matches. Without it the flow asked the user for a repo-write
+   * token against their own host and then sent every call at api.github.com,
+   * which 404s on a repository that exists — the one failure
+   * `useDescriptorAdvice` cannot warn about, since a GHE host IS a `github`
+   * integration and the pull request really is possible.
+   */
+  const apiBaseUrl = descriptorUrl
+    ? apis.get(scmIntegrationsApiRef)?.github.byUrl(descriptorUrl)?.config
+      .apiBaseUrl
+    : undefined;
 
   const [stage, setStage] = useState<PartOfStage>({ status: 'idle' });
 
@@ -97,7 +113,8 @@ export function usePartOfPr(opts: {
           descriptorUrl: descriptorUrl as string,
           apiRefs,
           collectionName,
-          token
+          token,
+          apiBaseUrl
         });
         setStage({ status: 'preview', plan });
       });
@@ -109,7 +126,7 @@ export function usePartOfPr(opts: {
       void withToken(async (token) => {
         const { link } = await (
           direction === 'link' ? submitLink : submitUnlink
-        )(plan, token);
+        )(plan, token, apiBaseUrl);
         setStage({ status: 'submitted', link });
         onSubmitted?.(link);
       });

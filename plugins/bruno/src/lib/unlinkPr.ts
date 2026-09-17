@@ -50,7 +50,7 @@ export interface PartOfPlan {
   direction: PartOfDirection;
   /** The `catalog-info.yaml` URL, as taken from `backstage.io/managed-by-location`. */
   descriptorUrl: string;
-  /** `https://github.com/<owner>/<repo>` — shown in the dialog. */
+  /** `https://<host>/<owner>/<repo>` — shown in the dialog. */
   repoUrl: string;
   owner: string;
   repo: string;
@@ -269,10 +269,17 @@ function removePartOf(yamlText: string, apiRefs: string[]): string {
   return doc.toString();
 }
 
-/** `https://github.com/<owner>/<repo>/blob/<ref>/<path>` → its parts. */
-function parseGitHubDescriptorUrl(
+/**
+ * `https://<host>/<owner>/<repo>/blob/<ref>/<path>` → its parts.
+ *
+ * `repoUrl` is rebuilt from the descriptor's OWN origin rather than from a
+ * `https://github.com/` literal: on GitHub Enterprise that literal named a
+ * repository on the public host, which is not where the pull request is going.
+ * Exported so the shapes below can be asserted without a network.
+ */
+export function parseGitHubDescriptorUrl(
   descriptorUrl: string
-): { owner: string; repo: string; path: string } | undefined {
+): { repoUrl: string; owner: string; repo: string; path: string } | undefined {
   let url: URL;
   try {
     url = new URL(descriptorUrl);
@@ -287,6 +294,7 @@ function parseGitHubDescriptorUrl(
     return undefined;
   }
   return {
+    repoUrl: `${url.origin}/${segments[0]}/${segments[1]}`,
     owner: segments[0],
     repo: segments[1],
     path: segments.slice(4).join('/')
@@ -378,8 +386,26 @@ async function planPartOfEdit(opts: {
   apiRefs: string[];
   collectionName: string;
   token: string;
+  /**
+   * The matched integration's `apiBaseUrl`, which is what makes this work on
+   * GitHub Enterprise. Backstage fills it in for every configured GitHub
+   * integration — `https://api.github.com` for github.com itself — so it is
+   * normally set and passing it is a no-op on the public host. Undefined only
+   * when no integration matches the descriptor's host, where Octokit's default
+   * is the best guess available. Getting this wrong is not subtle: without it
+   * a GHE flow asks the user for a token against their own host and then sends
+   * every call at the public API, 404ing on a repository that exists.
+   */
+  apiBaseUrl?: string;
 }): Promise<PartOfPlan> {
-  const { direction, descriptorUrl, apiRefs, collectionName, token } = opts;
+  const {
+    direction,
+    descriptorUrl,
+    apiRefs,
+    collectionName,
+    token,
+    apiBaseUrl
+  } = opts;
   const parsed = parseGitHubDescriptorUrl(descriptorUrl);
   if (!parsed) {
     throw new PartOfEditError(
@@ -387,9 +413,9 @@ async function planPartOfEdit(opts: {
       `Could not work out the repository and path from ${descriptorUrl}.`
     );
   }
-  const { owner, repo, path } = parsed;
+  const { repoUrl, owner, repo, path } = parsed;
 
-  const octokit = new Octokit({ auth: token });
+  const octokit = new Octokit({ auth: token, ...(apiBaseUrl ? { baseUrl: apiBaseUrl } : {}) });
   const repoInfo = await octokit.repos.get({ owner, repo });
   const baseBranch = repoInfo.data.default_branch;
 
@@ -416,7 +442,7 @@ async function planPartOfEdit(opts: {
   return {
     direction,
     descriptorUrl,
-    repoUrl: `https://github.com/${owner}/${repo}`,
+    repoUrl,
     owner,
     repo,
     path,
@@ -439,9 +465,10 @@ async function planPartOfEdit(opts: {
  */
 async function submitPartOfEdit(
   plan: PartOfPlan,
-  token: string
+  token: string,
+  apiBaseUrl?: string
 ): Promise<{ link: string }> {
-  const octokit = new Octokit({ auth: token });
+  const octokit = new Octokit({ auth: token, ...(apiBaseUrl ? { baseUrl: apiBaseUrl } : {}) });
 
   const baseRef = await octokit.git.getRef({
     owner: plan.owner,
@@ -490,15 +517,17 @@ export function planUnlink(opts: {
   apiRefs: string[];
   collectionName: string;
   token: string;
+  apiBaseUrl?: string;
 }): Promise<UnlinkPlan> {
   return planPartOfEdit({ ...opts, direction: 'unlink' });
 }
 
 export function submitUnlink(
   plan: UnlinkPlan,
-  token: string
+  token: string,
+  apiBaseUrl?: string
 ): Promise<{ link: string }> {
-  return submitPartOfEdit(plan, token);
+  return submitPartOfEdit(plan, token, apiBaseUrl);
 }
 
 export function planLink(opts: {
@@ -506,13 +535,15 @@ export function planLink(opts: {
   apiRefs: string[];
   collectionName: string;
   token: string;
+  apiBaseUrl?: string;
 }): Promise<PartOfPlan> {
   return planPartOfEdit({ ...opts, direction: 'link' });
 }
 
 export function submitLink(
   plan: PartOfPlan,
-  token: string
+  token: string,
+  apiBaseUrl?: string
 ): Promise<{ link: string }> {
-  return submitPartOfEdit(plan, token);
+  return submitPartOfEdit(plan, token, apiBaseUrl);
 }
