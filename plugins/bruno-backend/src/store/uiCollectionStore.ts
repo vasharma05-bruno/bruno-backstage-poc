@@ -31,7 +31,10 @@ export interface UiCollectionRow {
   url: string;
   owner?: string;
   partOf: string[];
-  /** Entity ref of the user who added it. Recorded, not enforced (POC). */
+  /** Entity ref of the user who added it. Read back by
+   *  `DELETE /collections/:name`, which refuses to remove a collection the
+   *  caller did not add unless the policy ALLOWs
+   *  `bruno.collection.delete.any`. */
   createdBy: string;
   createdAt: string;
 }

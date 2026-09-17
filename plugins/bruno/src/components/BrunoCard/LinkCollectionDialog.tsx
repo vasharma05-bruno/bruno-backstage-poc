@@ -28,6 +28,7 @@ import {
   useRuntimeLink
 } from '../PartOfPr';
 import { descriptorLocation, sourceUrl, version } from '../../lib/brunoEntity';
+import { useCanCreateLink } from '../../lib/permissions';
 import { useRuntimeWritesEnabled } from '../../lib/runtimeWrites';
 import { useBrandStyles } from '../../theme/brandStyles';
 
@@ -119,7 +120,14 @@ export function LinkCollectionDialog(props: {
     apiRef,
     direction: 'link'
   });
-  const runtimeAvailable = useRuntimeWritesEnabled();
+  // Both hooks are called unconditionally and combined afterwards — `&&` on
+  // the call expressions would short-circuit the second one, which is a
+  // conditional hook. They answer the same question between them: would
+  // `POST /links` accept this. A method the backend would refuse is not offered
+  // as a choice.
+  const writesEnabled = useRuntimeWritesEnabled();
+  const mayCreateLink = useCanCreateLink();
+  const runtimeAvailable = writesEnabled && mayCreateLink;
   // `advice` is `undefined` exactly when a pull request can be opened, so it is
   // the whole test — no second reading of the location, and no way for the two
   // to disagree. `method` is undefined when the chosen collection can be linked

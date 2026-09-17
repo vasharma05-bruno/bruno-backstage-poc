@@ -139,12 +139,12 @@ in [`src/plugin.ts`](src/plugin.ts).
 | --- | --- | --- |
 | `GET /health` | unauthenticated | `{ status: 'ok' }` — a liveness probe with no data. |
 | `POST /collections/probe` | `user` | `{ found: true, format, manifestPath, name?, version?, description? }`, or `{ found: false, reason: 'no-manifest' }` (200), or `{ found: false, reason: 'unreadable', message }` (400). |
-| `POST /collections` | `user` | Body `{ url, name, title?, owner?, partOf? }`. `201` with `{ name, title?, namespace, entityRef, url, refreshSeconds }`. **403** unless `bruno.allowRuntimeWrites`. `partOf` refs are normalised and must exist in the catalog. A blank `title` is stored as NULL, not as `''` — see below. |
+| `POST /collections` | `user` + `bruno.collection.create` | Body `{ url, name, title?, owner?, partOf? }`. `201` with `{ name, title?, namespace, entityRef, url, refreshSeconds }`. **403** unless `bruno.allowRuntimeWrites`. `partOf` refs are normalised and must exist in the catalog. A blank `title` is stored as NULL, not as `''` — see below. |
 | `GET /collections` | `user` \| `service` | `{ collections, refreshSeconds }`. A **user** principal gets rows with `createdBy` omitted. |
-| `DELETE /collections/:name` | `user` | `{ deleted: true, name, refreshSeconds }`, or `404` when no stored row exists. |
+| `DELETE /collections/:name` | `user` + `bruno.collection.delete` + owns the row | `{ deleted: true, name, refreshSeconds }`, `404` when no stored row exists, `403` when it is somebody else's and the policy does not ALLOW `bruno.collection.delete.any`. |
 | `GET /links` | `service` | `{ links }` — every runtime link in the instance, for `BrunoKindProcessor`. |
-| `POST /links` | `user` | Body `{ collectionRef, apiRefs }`. `201` with `{ linked: true, collectionRef, apiRefs, refreshRequested }` — all of the refs or none. **403** unless `bruno.allowRuntimeWrites`. |
-| `DELETE /links?collection=&api=` | `user` | `{ unlinked: true, collectionRef, apiRefs, refreshRequested }`, or `404` when no such row exists. |
+| `POST /links` | `user` + `bruno.link.create` | Body `{ collectionRef, apiRefs }`. `201` with `{ linked: true, collectionRef, apiRefs, refreshRequested }` — all of the refs or none. **403** unless `bruno.allowRuntimeWrites`. |
+| `DELETE /links?collection=&api=` | `user` + `bruno.link.delete` + made the link | `{ unlinked: true, collectionRef, apiRefs, refreshRequested }`, `404` when no such row exists, `403` when it is somebody else's and the policy does not ALLOW `bruno.link.delete.any`. |
 | `GET /entities/:namespace/:name/docs` | `user-cookie` | `text/html` — the OpenCollection docs page for that entity. `?theme=light\|dark`. |
 
 **The probe's three outcomes are deliberately not three status codes.**
@@ -222,14 +222,17 @@ not discovered by surprise:
 - Any authenticated user may ask the backend to read **any URL its integrations
   can reach** (`/collections/probe` and `/collections`). That is an SSRF surface
   and a private-repository existence oracle.
-- Any authenticated user may add a collection everyone else then sees, and may
-  **delete any** UI-created collection: `created_by` is recorded and *not*
-  enforced (IDOR). Beta hardening is a permission plus an ownership check.
-- The same applies to runtime links: any authenticated user may link any
-  collection to any API entity **they can read** — the routes resolve both
-  entities as the requesting user, so visibility is inherited from the catalog —
-  and may then remove any runtime link in the instance. `created_by` is recorded
-  and not enforced there either.
+- Ownership is **meaningless under the guest auth provider**, which this
+  repository's `app-config.yaml` enables. Every guest session resolves to the
+  single ref `user:development/guest`, so every stored row is owned by everyone
+  and the two delete routes' ownership check passes for anybody. That is not
+  coded around — no ownership model can separate two principals that are
+  genuinely the same principal — so a deployment that cares about it must use a
+  real identity provider. See [Permissions](#permissions).
+- A user who may link may link any collection to any API entity **they can
+  read** — the routes resolve both entities as the requesting user, so
+  visibility is inherited from the catalog, but nothing further restricts which
+  pairs are permissible.
 - The docs CSP allows `https:` broadly rather than pinned hosts, because the
   renderer bundle lazy-loads from several CDNs. Beta hardening is to pin them and
   serve the route from a dedicated origin.
@@ -418,6 +421,66 @@ The key is `@visibility frontend` (declared in
 collected from the *app's* dependency graph), so the browser hides both flows
 rather than rendering buttons that answer 403. The backend check is the
 enforcement; the frontend one is the courtesy.
+
+## Permissions
+
+Every **mutating** route is permissioned, and the two deletes additionally check
+ownership against the `created_by` column the stores have always written. The
+permissions are declared in [`src/permissions.ts`](src/permissions.ts),
+registered with `permissionsRegistry.addPermissions` in
+[`src/plugin.ts`](src/plugin.ts), and exported from the package root so an
+adopter's `PermissionPolicy` can `isPermission(...)` against the same objects
+the routes authorize with rather than matching on name strings.
+
+| Permission | Gates |
+| --- | --- |
+| `bruno.collection.create` | `POST /collections` |
+| `bruno.collection.delete` | `DELETE /collections/:name`, *plus* owning the row |
+| `bruno.collection.delete.any` | ALLOW skips the ownership check on that route |
+| `bruno.link.create` | `POST /links` |
+| `bruno.link.delete` | `DELETE /links`, *plus* having made the link |
+| `bruno.link.delete.any` | ALLOW skips the ownership check on that route |
+
+**The `.any` pair is the admin escape hatch**, and it is why this list is six
+rather than four. The ownership check underneath a delete is unconditional, so
+without them an adopter has no way to express "platform-admins may clean up
+anything" — a collection whose creator has left the company would be removable
+only from the database. They are checked *in addition to* the base permission,
+never instead of it: a policy that ALLOWs `bruno.collection.delete.any` and
+DENYs `bruno.collection.delete` still gets a 403.
+
+**Order matters, and it is fixed.** Authorize, then read the row the decision is
+about, then write. A route that read first would leak which names exist to a
+principal the policy refuses; one that deleted before checking ownership would
+be the IDOR this replaces.
+
+**There is no `bruno.collection.read`, deliberately.** Every read path resolves
+through `catalogServiceRef` with the *requesting user's* credentials, so reads
+are governed by **`catalog.entity.read`** and a Bruno collection is an ordinary
+catalog entity. A second gate would let an adopter deny a Bruno tab on an entity
+the catalog is happily showing — which reads as a bug, not as a policy — and
+every conditional catalog policy would have to be mirrored here with nothing
+keeping the two in step. `GET /collections` is the one read served from this
+plugin's own store, and it already strips `createdBy` for user principals.
+
+**Group ownership does not work, on purpose.** `ownershipEntityRefs` carries the
+caller's groups, but `created_by` only ever holds a user ref, so the comparison
+degrades to "is this mine". A user cannot delete a team-mate's collection
+because they share a group, and should not be able to: nothing records that the
+row belongs to the team. Making that work is a second column, not a looser
+comparison.
+
+**Under the guest auth provider the ownership check is meaningless.** Every
+guest shares the ref `user:development/guest`, so every row is owned by
+everyone. `auth.providers.guest` is enabled in this repository's
+`app-config.yaml`, so that is what a default `yarn dev` is in — the permission
+half still applies, the ownership half does not.
+
+The frontend mirrors the four non-`.any` permissions
+([`plugins/bruno/src/lib/permissions.ts`](../bruno/src/lib/permissions.ts)) to
+hide or disable the affordances. That is a courtesy layer: the backend re-asks
+the same policy on every call, and the UI cannot anticipate the ownership half
+at all, since `createdBy` is withheld from the rows a user is served.
 
 ## Adding a collection from the UI
 
@@ -810,6 +873,63 @@ token stays in the browser and is never sent to this backend.
 The provider likewise logs reader errors as a structured second argument, never
 string-interpolated, because the error can echo the request it made and
 interpolating it would put the plugin bearer token in the log.
+
+### Credential shapes are not uniform
+
+One credential means one config block per host, and the blocks do not look alike.
+The differences are worth spelling out because **most of them fail silently** —
+a misconfigured host reads anonymously rather than erroring, and an anonymous
+read is a 404 on a private repository and a rate-limit failure hours later on a
+public one.
+
+| Host type | The shape that authenticates |
+| --- | --- |
+| `integrations.github` | `token: <PAT>`, or an `apps:` entry |
+| `integrations.gitlab` | `token: <PAT>` |
+| `integrations.bitbucketCloud` | `username` **alongside** `token`/`appPassword`, or `clientId` + `clientSecret` |
+| `integrations.bitbucketServer` | `token: <PAT>`, or `username` + `password` |
+| `integrations.gitea` | `password: <token>` with `username` omitted — there is **no** `token` key |
+| `integrations.azure` | `credentials: [{ personalAccessToken }]` — a scalar `token` or `credential` **throws** at boot |
+
+Two of these are documented nowhere upstream and account for most of the lost
+afternoons:
+
+- **A bare `token` on Bitbucket Cloud passes validation and is then thrown
+  away.** Config validation only rejects the mirror case — a `username` with no
+  secret — so a lone `token` (or a lone `appPassword`) is read, stored on the
+  integration config where an operator inspecting their own YAML will see it,
+  and discarded when the request headers are built. Every read on that host is
+  anonymous on the 60-requests/hour bucket.
+- **`token: null` is the safe spelling of "absent"; `token: ''` is not.**
+  `ConfigReader.getOptionalString` treats an empty string as a *type error* and
+  throws, while an explicit `null` returns `undefined`. Because every
+  `core.urlReader` consumer builds `ScmIntegrations` at init, one blank env var
+  fails the **whole backend startup** — catalog, techdocs and scaffolder with
+  it. Comment the block out, write `null`, or leave the key off; never empty it.
+
+Two more that surprise people in the other direction:
+
+- **The three public hosts self-default.** `github.com`, `gitlab.com` and
+  `bitbucket.org` each get an auto-injected entry, so a public collection on any
+  of them reads with no `integrations` config at all — and, less comfortably,
+  `integrations.byUrl()` is truthy for every public repository URL on earth,
+  which is why [`src/service/sourceAllowlist.ts`](src/service/sourceAllowlist.ts)
+  exists. **Bitbucket Server does not self-default**: an undeclared Bitbucket
+  Server host genuinely has no integration.
+- **GitLab's `retry` block is off by default**, and `maxRetries` defaults to `0`
+  even when the block is present — so `retry: {}` turns nothing on. It is the
+  only outbound backoff any provider offers.
+
+All six are pinned by
+[`src/scm/credentialShapes.test.ts`](src/scm/credentialShapes.test.ts), so an
+upstream change to any of them fails the build rather than quietly invalidating
+this section. At boot,
+[`src/service/credentialCheck.ts`](src/service/credentialCheck.ts) round-trips a
+sentinel through the integration for each host named by `bruno.collections[]` and
+`bruno.discovery[]` and **warns** — never throws — when no `Authorization` header
+comes back. It observes only whether the header exists, never its contents, and
+it warns rather than refusing to start because `integrations.*` belongs to the
+host app and an anonymous read of public collections is a legitimate choice.
 
 ### What the generated document *does* contain
 

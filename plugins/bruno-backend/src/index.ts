@@ -21,6 +21,24 @@ export {
   BRUNO_API_VERSION,
   brunoEntityV1alpha1Schema
 } from './processor/BrunoKindProcessor';
+/**
+ * The permissions this plugin registers, for an adopter's `PermissionPolicy`.
+ *
+ * Exported as OBJECTS rather than as name strings so a policy can use
+ * `isPermission(request.permission, brunoCollectionDeletePermission)` and get a
+ * compile error when one is renamed, instead of a policy that silently stops
+ * matching. `brunoPermissions` is the whole set, which is what `plugin.ts`
+ * hands to `permissionsRegistry.addPermissions`.
+ */
+export {
+  brunoCollectionCreatePermission,
+  brunoCollectionDeleteAnyPermission,
+  brunoCollectionDeletePermission,
+  brunoLinkCreatePermission,
+  brunoLinkDeleteAnyPermission,
+  brunoLinkDeletePermission,
+  brunoPermissions
+} from './permissions';
 export {
   readBrunoCollections,
   readCacheTtlMs,

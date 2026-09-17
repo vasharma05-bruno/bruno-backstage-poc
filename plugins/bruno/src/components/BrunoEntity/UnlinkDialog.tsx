@@ -19,6 +19,7 @@ import {
 import { InlineNotice } from '../InlineNotice';
 import { useBrandStyles } from '../../theme/brandStyles';
 import { descriptorLocation, linkSource } from '../../lib/brunoEntity';
+import { useCanDeleteLink } from '../../lib/permissions';
 
 /**
  * The Unlink flow: removing an API from a Bruno collection's `partOf`.
@@ -73,6 +74,7 @@ export function UnlinkDialog(props: {
   const descriptorUrl = location.kind === 'url' ? location.target : undefined;
   const pr = usePartOfPr({ direction: 'unlink', descriptorUrl });
   const runtime = useRuntimeLink();
+  const mayRemoveRuntime = useCanDeleteLink();
   // Undefined once a pull request is actually possible; until then it is both
   // the explanation and the reason no pull request is offered.
   const advice = useDescriptorAdvice({ location, apiRef, direction: 'unlink' });
@@ -245,10 +247,21 @@ export function UnlinkDialog(props: {
           Removing <code>{apiRef}</code> from <strong>{collectionName}</strong>{' '}
           changes nothing in source control.
         </Typography>
-        {hasDescriptorHalf && (
+        {hasDescriptorHalf && mayRemoveRuntime && (
           <InlineNotice className={classes.detail}>
             Start here. The descriptor half needs a pull request, and this
             dialog moves on to it once the runtime link is gone.
+          </InlineNotice>
+        )}
+        {/*
+          The screen still EXPLAINS the runtime half when the policy refuses
+          it — the relation is there and the user is entitled to know why it
+          will not go — and only the button that would 403 is taken away.
+        */}
+        {!mayRemoveRuntime && (
+          <InlineNotice className={classes.detail}>
+            You do not have permission to remove links made in this Backstage
+            instance. Ask someone who does, or an administrator.
           </InlineNotice>
         )}
       </>
@@ -261,7 +274,7 @@ export function UnlinkDialog(props: {
         <Button
           variant="contained"
           className={brandClasses.accentButton}
-          disabled={working}
+          disabled={working || !mayRemoveRuntime}
           startIcon={working ? <CircularProgress size={16} /> : undefined}
           onClick={removeRuntime}
         >

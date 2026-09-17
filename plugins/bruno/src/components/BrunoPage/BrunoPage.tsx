@@ -25,6 +25,7 @@ import {
   sourceUrl,
   version
 } from '../../lib/brunoEntity';
+import { useCanDeleteCollection } from '../../lib/permissions';
 import { elideCollectionUrl } from '../../lib/scmUrl';
 import { DeleteCollectionDialog } from './DeleteCollectionDialog';
 import { PendingCollections } from './PendingCollections';
@@ -228,22 +229,31 @@ function BrunoStatTiles(): JSX.Element {
  */
 function BrunoCollectionsTable(): JSX.Element {
   const [pending, setPending] = useState<Entity | undefined>();
+  const mayDelete = useCanDeleteCollection();
 
   // Memoised for the same reason `columns` is a module constant: `CatalogTable`
   // hands this array to material-table, which treats a new `actions` identity
   // as a reason to rebuild the actions column on every render — and this
   // component re-renders on every entity-list change underneath it. `setPending`
-  // is a stable setter, so there is nothing for the array to depend on.
+  // is a stable setter, so `mayDelete` is the only real dependency.
+  //
+  // HIDDEN rather than disabled when the policy refuses. A row action is an
+  // icon with no room for a reason, so a disabled one is a puzzle; and the
+  // permission is about the user, not about this row, so it cannot come back
+  // differently for the row below. Ownership is the other half of the backend's
+  // decision and this app cannot see it — `createdBy` is stripped from the
+  // rows a user is served — so a visible Remove can still be refused, and
+  // `DeleteCollectionDialog` shows that message.
   const actions = useMemo<TableProps<CatalogTableRow>['actions']>(
     () => [
       (row) => ({
         icon: () => <DeleteOutlineIcon fontSize="small" />,
         tooltip: 'Remove this collection',
-        hidden: collectionOrigin(row.entity) !== 'ui',
+        hidden: !mayDelete || collectionOrigin(row.entity) !== 'ui',
         onClick: () => setPending(row.entity)
       })
     ],
-    []
+    [mayDelete]
   );
 
   return (

@@ -10,6 +10,7 @@ import { catalogApiRef, useEntityList } from '@backstage/plugin-catalog-react';
 import { brunoApiRef } from '../../api';
 import type { StoredCollectionSummary } from '../../api';
 import { onCollectionCreated } from '../../lib/collectionEvents';
+import { useCanDeleteCollection } from '../../lib/permissions';
 import { landingTimeoutSeconds } from '../../lib/landingWindow';
 import { brunoBrand } from '../../theme/brand';
 
@@ -228,6 +229,7 @@ export function PendingCollections(): JSX.Element | null {
   const brunoApi = apis.get(brunoApiRef);
   const catalogApi = apis.get(catalogApiRef);
   const alertApi = apis.get(alertApiRef);
+  const mayDelete = useCanDeleteCollection();
   const { backendEntities, refresh } = useEntityList();
 
   const [pending, setPending] = useState<StoredCollectionSummary[]>([]);
@@ -486,9 +488,20 @@ export function PendingCollections(): JSX.Element | null {
                 </Typography>
               )}
             </div>
+            {/*
+              Disabled rather than hidden, unlike the dashboard table's row
+              action: this strip exists to explain a row that has not landed,
+              and a Remove that silently vanished would leave the explanation
+              with no ending at all.
+            */}
             <Button
               size="small"
-              disabled={busy}
+              disabled={busy || !mayDelete}
+              title={
+                mayDelete
+                  ? undefined
+                  : 'You do not have permission to remove Bruno collections.'
+              }
               onClick={() => void remove(row.name)}
             >
               {busy ? 'Removing…' : 'Remove'}

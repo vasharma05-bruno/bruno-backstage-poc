@@ -3,6 +3,7 @@ import {
   createBackendPlugin
 } from '@backstage/backend-plugin-api';
 import { catalogServiceRef } from '@backstage/plugin-catalog-node';
+import { brunoPermissions } from './permissions';
 import { createRouter } from './service/router';
 import {
   readAllowRuntimeWrites,
@@ -30,6 +31,17 @@ export const brunoPlugin = createBackendPlugin({
         logger: coreServices.logger,
         config: coreServices.rootConfig,
         httpAuth: coreServices.httpAuth,
+        // The adopter's `PermissionPolicy`, asked once per mutating route
+        // before anything is read or written, and the ownership half that
+        // follows it. `userInfo` is what turns a credential into the
+        // `ownershipEntityRefs` the `created_by` column is compared against —
+        // `httpAuth` alone cannot answer that, it only carries the principal.
+        permissions: coreServices.permissions,
+        userInfo: coreServices.userInfo,
+        // Publishes the six permissions so `/.well-known/backstage/permissions/
+        // metadata` lists them and an adopter's policy can be written against
+        // names it can discover.
+        permissionsRegistry: coreServices.permissionsRegistry,
         // Stores the collections added from the Bruno dashboard, and the links
         // made in this instance instead of in source control — the two write
         // models the catalog does not have. `BrunoCollectionEntityProvider`
@@ -51,10 +63,15 @@ export const brunoPlugin = createBackendPlugin({
         logger,
         config,
         httpAuth,
+        permissions,
+        userInfo,
+        permissionsRegistry,
         database,
         catalog,
         reader
       }) {
+        permissionsRegistry.addPermissions(brunoPermissions);
+
         // A SECOND probe instance: the catalog module builds its own
         // (module.ts), and the two cannot be shared because they are separate
         // backend features with no wiring between them — and sharing one
@@ -78,6 +95,8 @@ export const brunoPlugin = createBackendPlugin({
             config,
             catalog,
             httpAuth,
+            permissions,
+            userInfo,
             probe,
             uiCollections,
             runtimeLinks,

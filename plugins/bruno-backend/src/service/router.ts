@@ -1,6 +1,8 @@
 import type {
   HttpAuthService,
-  LoggerService
+  LoggerService,
+  PermissionsService,
+  UserInfoService
 } from '@backstage/backend-plugin-api';
 import { MiddlewareFactory } from '@backstage/backend-defaults/rootHttpRouter';
 import type { Entity } from '@backstage/catalog-model';
@@ -16,6 +18,15 @@ import type { CatalogService } from '@backstage/plugin-catalog-node';
 import express from 'express';
 import Router from 'express-promise-router';
 import type { ManifestProbe } from './manifestProbe';
+import { assertOwns, isAllowed, requirePermission } from './authorization';
+import {
+  brunoCollectionCreatePermission,
+  brunoCollectionDeleteAnyPermission,
+  brunoCollectionDeletePermission,
+  brunoLinkCreatePermission,
+  brunoLinkDeleteAnyPermission,
+  brunoLinkDeletePermission
+} from '../permissions';
 import {
   DEFINITION_BYTES_ANNOTATION,
   DEFINITION_OMITTED_ANNOTATION
@@ -81,6 +92,12 @@ export interface RouterOptions {
   config: Config;
   catalog: CatalogService;
   httpAuth: HttpAuthService;
+  /** The adopter's `PermissionPolicy`. Every mutating route asks it before it
+   *  reads or writes anything; see `service/authorization.ts`. */
+  permissions: PermissionsService;
+  /** Resolves a credential's `ownershipEntityRefs`, which is what the two
+   *  delete routes compare `created_by` against. */
+  userInfo: UserInfoService;
   /** Reads a collection folder from source control, using the SERVER's
    *  integration credentials. Backs the add-collection scan. */
   probe: ManifestProbe;
@@ -109,17 +126,25 @@ export interface RouterOptions {
  *   GET    /entities/:namespace/:name/docs  -> text/html (docs for a kind:Bruno entity)
  *   POST   /collections/probe               -> { found, ... } (does this URL hold a collection?)
  *   POST   /collections                     -> 201 (add a collection; auth: user;
- *                                              needs `bruno.allowRuntimeWrites`)
+ *                                              needs `bruno.allowRuntimeWrites`
+ *                                              + `bruno.collection.create`)
  *   GET    /collections                     -> { collections, refreshSeconds }
  *                                              (auth: user | service; a user's
  *                                              rows omit `createdBy`)
- *   DELETE /collections/:name               -> { deleted: true } (auth: user)
+ *   DELETE /collections/:name               -> { deleted: true } (auth: user;
+ *                                              `bruno.collection.delete` + owns
+ *                                              the row, unless
+ *                                              `bruno.collection.delete.any`)
  *   GET    /links                           -> { links } (auth: service)
  *   POST   /links                           -> 201 (link at runtime; auth: user;
- *                                              needs `bruno.allowRuntimeWrites`)
+ *                                              needs `bruno.allowRuntimeWrites`
+ *                                              + `bruno.link.create`)
  *                                              takes `apiRefs[]`, all or none,
  *                                              at most `MAX_PART_OF` entries
- *   DELETE /links?collection=&api=          -> { unlinked: true } (auth: user)
+ *   DELETE /links?collection=&api=          -> { unlinked: true } (auth: user;
+ *                                              `bruno.link.delete` + owns the
+ *                                              row, unless
+ *                                              `bruno.link.delete.any`)
  *
  * The first three are read-only and were the whole of this plugin: everything
  * the UI knows about an EXISTING collection travels on the `kind: Bruno` entity
@@ -146,6 +171,15 @@ export interface RouterOptions {
  * see `requireRuntimeWrites` for why a delete has to outlive the permission
  * that created the row.
  *
+ * EVERY MUTATING ROUTE IS PERMISSIONED, and the two deletes additionally check
+ * ownership. The order is fixed and is the security property: authorize first,
+ * then read the row the decision is about, then write. A route that read the
+ * row first would leak its existence to a principal the policy refuses, and one
+ * that deleted before checking ownership would be the IDOR this replaces —
+ * `created_by` was recorded from the first commit and read by nothing. See
+ * `../permissions.ts` for the six permissions and `./authorization.ts` for the
+ * ownership comparison.
+ *
  * The `/links` three are the same argument applied to RELATIONS. A relation is
  * derived output — recomputed and rewritten on every stitch — so there is no
  * relation to insert or delete either, and the only durable place a link can
@@ -162,6 +196,8 @@ export async function createRouter(
     config,
     catalog,
     httpAuth,
+    permissions,
+    userInfo,
     probe,
     uiCollections,
     runtimeLinks,
@@ -398,11 +434,17 @@ export async function createRouter(
   // a caller who cannot reach `/collections/probe` reach the same read through
   // the create instead, so the guard has to sit on both or on neither.
   //
-  // Still POC scope: any authenticated user may add a collection from any
-  // allow-listed source, and everyone else then sees it.
+  // `bruno.collection.create` is asked BEFORE the allow-list, the name checks
+  // and the probe, so a principal the policy refuses cannot use this route to
+  // ask the server to read anything.
   router.post('/collections', async (req, res) => {
     const credentials = await httpAuth.credentials(req, { allow: ['user'] });
     requireRuntimeWrites('Adding a collection');
+    await requirePermission({
+      permissions,
+      permission: brunoCollectionCreatePermission,
+      credentials
+    });
     const createdBy = credentials.principal.userEntityRef;
 
     const body = (req.body ?? {}) as {
@@ -646,20 +688,48 @@ export async function createRouter(
   // and cannot be removed from here at all. Silently succeeding would leave the
   // user watching a row that never goes away.
   //
-  // POC scope (IDOR): any authenticated user may delete any UI-created
-  // collection. `created_by` is recorded and NOT enforced. Beta hardening is a
-  // permission plus an ownership check against that column.
+  // Three gates in a fixed order, and the order is the whole point. The policy
+  // decides whether this principal may delete collections AT ALL; only then is
+  // the row read, so a refused principal learns nothing about which names
+  // exist; and only then is ownership decided, against the same row that the
+  // delete below removes — `getByName` and `delete` fold case identically, so
+  // there is no gap between the row that was authorised and the row that goes.
+  //
+  // `bruno.collection.delete.any` is the admin escape hatch: ALLOW on it skips
+  // the ownership check and nothing else. It is asked only when there is a row
+  // to own, because until then there is no decision for it to change.
   router.delete('/collections/:name', async (req, res) => {
-    await httpAuth.credentials(req, { allow: ['user'] });
+    const credentials = await httpAuth.credentials(req, { allow: ['user'] });
+    await requirePermission({
+      permissions,
+      permission: brunoCollectionDeletePermission,
+      credentials
+    });
     const { name } = req.params;
-    const removed = await uiCollections.delete(name);
-    if (!removed) {
+    const existing = await uiCollections.getByName(name);
+    if (!existing) {
       throw new NotFoundError(
         `No collection named "${name}" was added from the Bruno UI. `
         + 'Collections defined in app-config.yaml, or by a catalog-info.yaml in '
         + 'source control, are removed by editing that file.'
       );
     }
+    const mayDeleteAny = await isAllowed({
+      permissions,
+      permission: brunoCollectionDeleteAnyPermission,
+      credentials
+    });
+    if (!mayDeleteAny) {
+      await assertOwns({
+        userInfo,
+        credentials,
+        createdBy: existing.createdBy,
+        what: `The collection "${existing.name}"`
+      });
+    }
+    // The 404 above already proved the row is there, so a false here can only
+    // be a concurrent delete — which is the same outcome the caller wanted.
+    await uiCollections.delete(name);
 
     // The collection's runtime links go with it. They are keyed by entity ref
     // and the entity is about to stop existing, so leaving them would leave
@@ -725,13 +795,19 @@ export async function createRouter(
   // would let any backend plugin mint catalog-visible relations with no user
   // attribution.
   //
-  // POC scope, matching the rest of this router: any authenticated user may
-  // link any collection to any API entity they can read, and any authenticated
-  // user may then remove that link. Documented, not fixed — see
-  // docs/execution/UI-P6-plan.md §"Standing constraints".
+  // `bruno.link.create` is asked before the body is even read, so a refused
+  // principal costs the catalog nothing. WHICH entities may be linked is still
+  // the catalog's decision, not this permission's: both reads below are made as
+  // the requesting user, so the route can never link something the caller could
+  // not see.
   router.post('/links', async (req, res) => {
     const credentials = await httpAuth.credentials(req, { allow: ['user'] });
     requireRuntimeWrites('Linking an API to a collection');
+    await requirePermission({
+      permissions,
+      permission: brunoLinkCreatePermission,
+      credentials
+    });
     const createdBy = credentials.principal.userEntityRef;
 
     const body = (req.body ?? {}) as {
@@ -834,13 +910,25 @@ export async function createRouter(
   // works but is the kind of thing a proxy in front of the backend decodes
   // early and then routes wrong. A DELETE with a body is the other option and
   // is worse — bodies on DELETE are widely dropped in transit.
+  //
+  // Gated in the same three steps as `DELETE /collections/:name`, and for the
+  // same reasons: authorize, then read the row so `created_by` can be compared,
+  // then delete. `bruno.link.delete.any` skips the ownership step. Note the
+  // collection delete above CASCADES to these rows without consulting this
+  // permission — the links belong to the collection, and a user who may remove
+  // the collection may remove what hangs off it.
   router.delete('/links', async (req, res) => {
     const credentials = await httpAuth.credentials(req, { allow: ['user'] });
+    await requirePermission({
+      permissions,
+      permission: brunoLinkDeletePermission,
+      credentials
+    });
     const collectionRef = readCollectionRef(req.query.collection);
     const apiRef = readApiRef(req.query.api);
 
-    const removed = await runtimeLinks.delete(collectionRef, apiRef);
-    if (!removed) {
+    const existing = await runtimeLinks.get(collectionRef, apiRef);
+    if (!existing) {
       throw new NotFoundError(
         `${apiRef} is not linked to ${collectionRef} in this Backstage `
         + 'instance. A link declared by `spec.partOf` in the collection\'s '
@@ -848,6 +936,22 @@ export async function createRouter(
         + 'editing that file.'
       );
     }
+    const mayDeleteAny = await isAllowed({
+      permissions,
+      permission: brunoLinkDeleteAnyPermission,
+      credentials
+    });
+    if (!mayDeleteAny) {
+      await assertOwns({
+        userInfo,
+        credentials,
+        createdBy: existing.createdBy,
+        what: `The link from ${collectionRef} to ${apiRef}`
+      });
+    }
+    // The 404 above already proved the row is there, so a false here can only
+    // be a concurrent delete — the same outcome the caller asked for.
+    await runtimeLinks.delete(collectionRef, apiRef);
     const refreshRequested = await requestRefresh(collectionRef, credentials);
 
     // `apiRefs` even though this route removes exactly one, so both link

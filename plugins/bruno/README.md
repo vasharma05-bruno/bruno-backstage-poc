@@ -498,6 +498,43 @@ The package also exports `BrunoIcon`, so the app can register it as the
 `kind:bruno` catalog icon (`packages/app/src/modules/icons`) without reaching
 into the plugin's source tree.
 
+### Permissions, and what they hide
+
+The backend permissions every mutating route now carries
+([`plugins/bruno-backend/README.md` §Permissions](../bruno-backend/README.md#permissions))
+are mirrored by name in [`src/lib/permissions.ts`](src/lib/permissions.ts) and
+consulted with `usePermission`, alongside `bruno.allowRuntimeWrites`:
+
+| Denied | Effect |
+| --- | --- |
+| `bruno.collection.create` | The add-collection dialog offers **Create pull request** only, exactly as with runtime writes off. |
+| `bruno.collection.delete` | The dashboard table's Remove row action is hidden; the pending strip's Remove is disabled with a reason. |
+| `bruno.link.create` | The link dialogs drop the **Link in this Backstage instance** method. |
+| `bruno.link.delete` | The unlink dialog still explains the runtime half but cannot remove it. |
+
+**Reads are not permissioned here or in the backend.** Everything this plugin
+displays is read from the catalog as the signed-in user, so
+**`catalog.entity.read`** governs it; there is no `bruno.collection.read` to
+deny, and adding one would let an adopter blank a Bruno tab on an entity the
+catalog is showing.
+
+**This is a courtesy layer.** The backend re-asks the same policy on every call,
+so the only cost of getting it wrong here is a button that answers 403. It is
+resolved towards *showing* the control: `loading` and `error` from
+`usePermission` both leave the affordance in place, because the first is the
+first render of every screen and the second says nothing about what the user may
+do. Only a definitive DENY removes it.
+
+**It cannot anticipate ownership.** The backend also refuses a delete of a row
+somebody else created, and `GET /collections` deliberately withholds `createdBy`
+from the rows a user is served — so a visible Remove can still come back 403,
+and the dialogs surface that message rather than pretending it cannot happen.
+
+Unlike the other APIs below, `permissionApiRef` is **not** guarded with
+`useApiHolder`: it is registered by `createApp` itself (`@backstage/plugin-app`'s
+`defaultApis`), not by an optional module, so there is no host that can be
+missing it — and a hook cannot be called conditionally in any case.
+
 ### App APIs it uses, and how it degrades without them
 
 `discoveryApi` and `fetchApi` are required. `scmIntegrationsApi`, `scmAuthApi`

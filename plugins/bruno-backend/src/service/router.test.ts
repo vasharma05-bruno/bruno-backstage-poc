@@ -7,8 +7,17 @@ import {
 } from '@backstage/backend-test-utils';
 import type { Entity } from '@backstage/catalog-model';
 import { catalogServiceMock } from '@backstage/plugin-catalog-node/testUtils';
+import { AuthorizeResult } from '@backstage/plugin-permission-common';
 import request from 'supertest';
 import { brunoPlugin } from '../plugin';
+import {
+  brunoCollectionCreatePermission,
+  brunoCollectionDeleteAnyPermission,
+  brunoCollectionDeletePermission,
+  brunoLinkCreatePermission,
+  brunoLinkDeleteAnyPermission,
+  brunoLinkDeletePermission
+} from '../permissions';
 
 /**
  * The whole point of driving the plugin through `startTestBackend` rather than
@@ -32,6 +41,18 @@ import { brunoPlugin } from '../plugin';
 const USER = mockCredentials.user.header();
 const SERVICE = mockCredentials.service.header();
 const NONE = mockCredentials.none.header();
+
+/**
+ * Two DIFFERENT users, which is the whole apparatus the IDOR cases need.
+ *
+ * `mockServices.userInfo` resolves `ownershipEntityRefs` to `[userEntityRef]`
+ * of the principal on the request, and `created_by` is written from that same
+ * ref — so these headers exercise the real comparison rather than a stubbed
+ * one. See `service/authorization.ts` for why no normalisation sits between
+ * the two.
+ */
+const USER_A = mockCredentials.user.header('user:default/a');
+const USER_B = mockCredentials.user.header('user:default/b');
 
 const COLLECTION_URL = 'https://github.com/acme/payments/tree/main/collection';
 
@@ -77,6 +98,33 @@ function treeResponse(): UrlReaderServiceReadTreeResponse {
   };
 }
 
+/**
+ * A `PermissionsService` that ALLOWs exactly the named permissions.
+ *
+ * Per-name rather than `mockServices.permissions.factory({ result })`, whose
+ * single canned result answers for EVERY permission: a blanket ALLOW would
+ * allow `bruno.collection.delete.any` too, and the IDOR cases below would then
+ * pass by skipping the very check they exist to pin.
+ *
+ * `undefined` falls back to the default factory, which with no
+ * `permission.enabled` in config allows everything — the state every test
+ * written before permissions existed assumes, and the state an adopter who has
+ * installed no policy is in.
+ */
+function permissionsFactory(allowed?: string[]) {
+  if (!allowed) {
+    return mockServices.permissions.factory();
+  }
+  return mockServices.permissions.mock({
+    authorize: async (requests) =>
+      requests.map(({ permission }) => ({
+        result: allowed.includes(permission.name)
+          ? AuthorizeResult.ALLOW
+          : AuthorizeResult.DENY
+      }))
+  }).factory;
+}
+
 const databases = TestDatabases.create({ ids: ['SQLITE_3'] });
 
 describe('bruno router', () => {
@@ -93,6 +141,31 @@ describe('bruno router', () => {
   });
 
   /**
+   * Counts the statements this plugin's two tables see, so a "the policy
+   * refused" test can assert the store was never REACHED rather than only that
+   * the status was 403.
+   *
+   * That distinction is the whole value of the DENY cases. A 403 proves
+   * nothing about ordering — a route that deleted the row and then threw would
+   * answer 403 too — and ordering is the property being tested: authorize
+   * first, read second, write third.
+   *
+   * Counted off knex's own `query` event rather than by wrapping the store,
+   * because the stores are built inside `plugin.ts` from the database service
+   * and there is no seam to inject a double through. Table creation happens at
+   * backend start, before any counter is reset.
+   */
+  function countStoreQueries(): { reset: () => void; total: () => number } {
+    let count = 0;
+    knex.on('query', ({ sql }: { sql: string }) => {
+      if (/bruno_(ui_collections|runtime_links)/.test(sql)) {
+        count += 1;
+      }
+    });
+    return { reset: () => (count = 0), total: () => count };
+  }
+
+  /**
    * Starts the plugin against one shared `knex`, so a test can hand a row
    * written by a backend with `allowRuntimeWrites` ON to a second backend with
    * it OFF — which is the only way to exercise what the flag does and does not
@@ -103,13 +176,17 @@ describe('bruno router', () => {
     /** `null` omits the key entirely — the fail-closed default an adopter who
      *  has configured nothing is in. */
     allowedSources?: typeof ALLOWED_SOURCES | null;
+    /** The permission names the policy ALLOWs; see {@link permissionsFactory}. */
+    allowed?: string[];
   }) {
     const reader = mockServices.urlReader.mock();
     reader.readTree.mockResolvedValue(treeResponse());
     const logger = mockServices.logger.mock();
+    const permissions = permissionsFactory(options?.allowed);
     const backend = await startTestBackend({
       features: [
         brunoPlugin,
+        permissions,
         mockServices.rootConfig.factory({
           data: {
             app: { baseUrl: 'http://localhost:3000' },
@@ -570,6 +647,224 @@ describe('bruno router', () => {
         .delete(`/api/bruno/links${query}`)
         .set('Authorization', USER)
         .expect(404);
+    });
+  });
+
+  /**
+   * The permission and ownership gates on the four mutating routes.
+   *
+   * Two things in this area are ALREADY right and are pinned elsewhere in this
+   * file rather than here, because they are not what changed: `GET /collections`
+   * strips `createdBy` for a user principal, and `GET /links` is service-only.
+   * Neither grew a permission — every read this plugin serves from the catalog
+   * is made with the requesting user's credentials, so `catalog.entity.read`
+   * governs it, and a second gate would only let an adopter deny a tab the
+   * catalog is happily showing.
+   */
+  describe('permissions', () => {
+    /** Everything except the two admin escape hatches: the ordinary user. */
+    const BASE = [
+      brunoCollectionCreatePermission.name,
+      brunoCollectionDeletePermission.name,
+      brunoLinkCreatePermission.name,
+      brunoLinkDeletePermission.name
+    ];
+
+    const LINK_QUERY
+      = '?collection=bruno:default/payments&api=api:default/orders';
+
+    /** Adds a stored collection as `auth`. Named `payments` by default so the
+     *  `kind: Bruno` catalog fixture of the same name makes it linkable. */
+    const addCollection = (
+      server: Parameters<typeof request>[0],
+      auth: string,
+      name = 'payments'
+    ) =>
+      request(server)
+        .post('/api/bruno/collections')
+        .set('Authorization', auth)
+        .send({ url: COLLECTION_URL, name })
+        .expect(201);
+
+    const addLink = (server: Parameters<typeof request>[0], auth: string) =>
+      request(server)
+        .post('/api/bruno/links')
+        .set('Authorization', auth)
+        .send({
+          collectionRef: 'bruno:default/payments',
+          apiRefs: ['api:default/orders']
+        })
+        .expect(201);
+
+    const storedNames = async (
+      server: Parameters<typeof request>[0]
+    ): Promise<string[]> => {
+      const res = await request(server)
+        .get('/api/bruno/collections')
+        .set('Authorization', SERVICE)
+        .expect(200);
+      return (res.body.collections as Array<{ name: string }>).map(
+        (row) => row.name
+      );
+    };
+
+    const storedLinks = async (
+      server: Parameters<typeof request>[0]
+    ): Promise<unknown[]> => {
+      const res = await request(server)
+        .get('/api/bruno/links')
+        .set('Authorization', SERVICE)
+        .expect(200);
+      return res.body.links;
+    };
+
+    it('answers 403 on every mutating route without ever reaching the store', async () => {
+      const { server } = await startBruno({
+        allowRuntimeWrites: true,
+        allowed: []
+      });
+      const queries = countStoreQueries();
+      queries.reset();
+
+      await request(server)
+        .post('/api/bruno/collections')
+        .set('Authorization', USER_A)
+        .send({ url: COLLECTION_URL, name: 'payments' })
+        .expect(403);
+      await request(server)
+        .post('/api/bruno/links')
+        .set('Authorization', USER_A)
+        .send({
+          collectionRef: 'bruno:default/payments',
+          apiRefs: ['api:default/orders']
+        })
+        .expect(403);
+      await request(server)
+        .delete('/api/bruno/collections/payments')
+        .set('Authorization', USER_A)
+        .expect(403);
+      await request(server)
+        .delete(`/api/bruno/links${LINK_QUERY}`)
+        .set('Authorization', USER_A)
+        .expect(403);
+
+      // THE LOAD-BEARING ASSERTION. Not one statement ran against either
+      // table: the refusals happened before the row that a delete would have
+      // read, let alone removed.
+      expect(queries.total()).toBe(0);
+    });
+
+    it('refuses user B the collection user A added, and leaves it listed', async () => {
+      const { server } = await startBruno({
+        allowRuntimeWrites: true,
+        allowed: BASE
+      });
+      await addCollection(server, USER_A);
+
+      const res = await request(server)
+        .delete('/api/bruno/collections/payments')
+        .set('Authorization', USER_B)
+        .expect(403);
+      expect(res.body.error.message).toContain('someone else');
+      // The creator is NOT named: `GET /collections` strips `createdBy` from a
+      // user's rows for exactly that reason, and a refusal that quoted it back
+      // would hand the same fact out one probe at a time.
+      expect(res.body.error.message).not.toContain('user:default/a');
+
+      expect(await storedNames(server)).toEqual(['payments']);
+    });
+
+    it('lets user A delete their own collection, cascading to its links', async () => {
+      const { server } = await startBruno({
+        allowRuntimeWrites: true,
+        allowed: BASE
+      });
+      await addCollection(server, USER_A);
+      await addLink(server, USER_A);
+      expect(await storedLinks(server)).toHaveLength(1);
+
+      await request(server)
+        .delete('/api/bruno/collections/payments')
+        .set('Authorization', USER_A)
+        .expect(200);
+
+      expect(await storedNames(server)).toEqual([]);
+      // The cascade has to survive the new code path: the links hang off an
+      // entity that is about to stop existing, and a collection re-added under
+      // the same name would otherwise inherit them.
+      expect(await storedLinks(server)).toEqual([]);
+    });
+
+    it('decides ownership and deletes on the same row whatever the casing', async () => {
+      // `Payments` stored, `payments` deleted. `getByName` reads the row the
+      // ownership check judges and `delete` removes the row the request names,
+      // so a fold that differed between them would authorise one row and
+      // destroy another.
+      const { server } = await startBruno({
+        allowRuntimeWrites: true,
+        allowed: BASE
+      });
+      await addCollection(server, USER_A, 'Payments');
+
+      await request(server)
+        .delete('/api/bruno/collections/payments')
+        .set('Authorization', USER_B)
+        .expect(403);
+      expect(await storedNames(server)).toEqual(['Payments']);
+
+      await request(server)
+        .delete('/api/bruno/collections/payments')
+        .set('Authorization', USER_A)
+        .expect(200);
+      expect(await storedNames(server)).toEqual([]);
+    });
+
+    it('lets bruno.collection.delete.any past the ownership check', async () => {
+      const { server } = await startBruno({
+        allowRuntimeWrites: true,
+        allowed: [...BASE, brunoCollectionDeleteAnyPermission.name]
+      });
+      await addCollection(server, USER_A);
+
+      await request(server)
+        .delete('/api/bruno/collections/payments')
+        .set('Authorization', USER_B)
+        .expect(200);
+      expect(await storedNames(server)).toEqual([]);
+    });
+
+    it('refuses user B the link user A made, and leaves it in place', async () => {
+      const { server } = await startBruno({
+        allowRuntimeWrites: true,
+        allowed: BASE
+      });
+      await addLink(server, USER_A);
+
+      await request(server)
+        .delete(`/api/bruno/links${LINK_QUERY}`)
+        .set('Authorization', USER_B)
+        .expect(403);
+      expect(await storedLinks(server)).toHaveLength(1);
+
+      await request(server)
+        .delete(`/api/bruno/links${LINK_QUERY}`)
+        .set('Authorization', USER_A)
+        .expect(200);
+      expect(await storedLinks(server)).toEqual([]);
+    });
+
+    it('lets bruno.link.delete.any past the ownership check', async () => {
+      const { server } = await startBruno({
+        allowRuntimeWrites: true,
+        allowed: [...BASE, brunoLinkDeleteAnyPermission.name]
+      });
+      await addLink(server, USER_A);
+
+      await request(server)
+        .delete(`/api/bruno/links${LINK_QUERY}`)
+        .set('Authorization', USER_B)
+        .expect(200);
+      expect(await storedLinks(server)).toEqual([]);
     });
   });
 
