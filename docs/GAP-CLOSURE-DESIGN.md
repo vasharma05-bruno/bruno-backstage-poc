@@ -48,10 +48,10 @@ Severity is the operational consequence of shipping without the fix, not the eff
 | SEC-3 | Docs CSP allows `https:` broadly; `allow-same-origin` on the app's cookie origin | §9 S3 | High | Partial |
 | SEC-4 | Renderer bundle served from an unpinned staging CDN | §9 S4, R4 | High | Partial |
 | SEC-5 | Playground proxy: frontend-hardcoded host map, no server-side secret injection | §9.3, P5 | Medium | Deferred |
-| SEC-6 | `</script` neutralisation misses `<!--`; any ingested repo can break the docs page | *new* | High | Yes |
-| SEC-7 | Log injection via the raw probe URL | *new* | Medium | Yes |
-| SEC-8 | `getByName` case-insensitive, `delete` case-sensitive — becomes a security bug under SEC-2 | *new* | Medium | Yes |
-| SEC-9 | No caps on request-body array lengths | *new* | Low | Yes |
+| SEC-6 | `</script` neutralisation misses `<!--`; any ingested repo can break the docs page | *new* | High | Yes — *done* |
+| SEC-7 | Log injection via the raw probe URL | *new* | Medium | Yes — *done* |
+| SEC-8 | `getByName` case-insensitive, `delete` case-sensitive — becomes a security bug under SEC-2 | *new* | Medium | Yes — *done* |
+| SEC-9 | No caps on request-body array lengths | *new* | Low | Yes — *done* |
 | SEC-10 | Docs iframe silently cannot download (`allow-downloads` absent) | *new* | Low | Yes |
 
 ### Data correctness and persistence — `DAT`
@@ -77,7 +77,7 @@ Severity is the operational consequence of shipping without the fix, not the eff
 | SCM-4 | Support-matrix holes: Bitbucket Server/DC, Azure, Gitea, Gerrit, Harness | §5 | Medium | Partial |
 | SCM-5 | Large-repo tree truncation is logged, never surfaced | §14.7 | Low | Yes |
 | SCM-6 | Credential-shape traps are documented in prose only, so nothing stops a regression | §5 | Medium | Yes |
-| SCM-7 | Link/unlink pull request is broken on GitHub Enterprise — every call goes to `api.github.com` | *new* | **High** | Yes |
+| SCM-7 | Link/unlink pull request is broken on GitHub Enterprise — every call goes to `api.github.com` | *new* | **High** | Yes — *done* |
 
 ### Frontend and UX — `FE`
 
@@ -85,16 +85,16 @@ Severity is the operational consequence of shipping without the fix, not the eff
 | --- | --- | --- | --- | --- |
 | FE-1 | Legacy frontend system unsupported | §8, R6, P2 | High | Yes |
 | FE-2 | Docs frame does not match a customised host theme | §10, P3 | Medium | Partial |
-| FE-3 | No broken-link detection for dead `spec.partOf` refs | §7.2 | Medium | Yes |
-| FE-4 | Stranded UI-created collection whose name config claimed | §7.2 | Low | Yes |
-| FE-5 | `bruno://` deep link absent; only the repo root is sent, not the subpath | §14.5, R13 | Medium | Partial |
+| FE-3 | No broken-link detection for dead `spec.partOf` refs | §7.2 | Medium | Yes — *done* |
+| FE-4 | Stranded UI-created collection whose name config claimed | §7.2 | Low | Partial — *copy corrected* |
+| FE-5 | `bruno://` deep link absent; only the repo root is sent, not the subpath | §14.5, R13 | Medium | Partial — *clone path done* |
 | FE-6 | Tree truncation never reaches a user-visible surface — *merged into SCM-5* | §14.7 | Low | Yes |
 
 ### Release engineering — `REL`
 
 | ID | Gap | Source | Severity | Closable here |
 | --- | --- | --- | --- | --- |
-| REL-1 | Zero router/security tests; the pyramid is unit-only | §14.4, R15 | **Critical** | Yes |
+| REL-1 | Zero router/security tests; the pyramid is unit-only | §14.4, R15 | **Critical** | Partial — *router harness + auth matrix done* |
 | REL-2 | Backstage floor below 1.53 unknown | §12, §18.1 | Medium | Yes |
 | REL-3 | Distribution: package names, dependency ranges, licence | §11, R14, P6 | High | Partial |
 | REL-4 | **No CI exists at all** — a finding of this study, not of the design doc | *new* | **Critical** | Yes — *done* |
@@ -1892,3 +1892,32 @@ unlinted — recorded in `docs/CI.md` rather than papered over, since fixing tha
 shared-config hoisting problem, which is its own task.
 
 **Landed in `9556ba5`.** Effort: S.
+
+---
+
+## Delivery log
+
+What has actually landed on `claude/technical-design-gaps-b63dc3`, in order. Each commit ran the
+full gate set — `yarn tsc`, `CI=true yarn test --watchAll=false`, `yarn lint` — green before landing.
+
+| Commit | Closes | Notes |
+| --- | --- | --- |
+| `547f66f` | REL-5 | Clean checkout installs; `tsc` back to zero |
+| `00dc0c7` | — | This document |
+| `77e6211` | DAT-2, DAT-5, DAT-8 | Byte-stability, explicit global scope, `meta.seq` |
+| `9556ba5` | REL-4, REL-7 | CI pipeline; four dead scripts repaired |
+| `e5922d7` | — | DAT-8 and REL-7 recorded here |
+| `5a66b84` | SEC-6, SEC-7, SEC-8, SEC-9, REL-1 *(partial)* | Router harness + auth-policy matrix, four backend defects |
+| `c945a89` | SCM-7, FE-3 | GHE pull requests; dead-ref rows |
+
+Test baseline over the same span: **113 tests / 12 suites → 185 / 18.**
+
+Two deviations from this document's own recommendations, both deliberate:
+
+- **SEC-1 ships fail-closed**, where the research suggested one permissive release with a startup
+  warning first. A config key that defaults to open documents a Critical hole rather than closing
+  it. Ingestion from `bruno.collections[]` and `bruno.discovery[]` is deliberately not gated, so
+  only the two user-driven routes change behaviour.
+- **DAT-8 was fixed although it was not in scope** for the byte-stability work. It is deterministic,
+  so it was not churn — but it made the generated document disagree with Bruno's own export, and
+  the DAT-1 decision makes parity the property we are defending.
