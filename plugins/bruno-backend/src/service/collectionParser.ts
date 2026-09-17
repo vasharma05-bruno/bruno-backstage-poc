@@ -68,7 +68,8 @@ import { joinPosix, posixBaseName, posixDirname } from '../posixPath';
  *  - `assertions`: `Array<{ name, value, enabled }>` (name = LHS expr, value = "op rhs")
  */
 type RawRequest = {
-  meta?: { name?: string; type?: string; seq?: number };
+  // `seq` really does arrive as a STRING here — see {@link readSeq}.
+  meta?: { name?: string; type?: string; seq?: number | string };
   http?: { method?: string; url?: string; body?: string; auth?: string };
   headers?: Array<{ name: string; value: string; enabled?: boolean }>;
   params?: Array<{
@@ -260,6 +261,62 @@ function commonRootPrefix(tree: FileTree): string {
   return firstSegments.slice(0, prefixLen).join('/');
 }
 
+/**
+ * Orders environment names by UTF-16 code unit — deliberately NOT
+ * `localeCompare`.
+ *
+ * `localeCompare` with no locale argument collates by the runtime's default
+ * locale, which `LANG`/`LC_ALL` and the ICU build both move: a small-icu Node
+ * and a full-icu Node, or two ICU versions, can order the same names
+ * differently. That is not cosmetic here. The result reaches the catalog twice
+ * over — as `spec.environments` and inside the generated `spec.definition` —
+ * and `DefaultCatalogProcessingEngine` decides whether to write an entity by
+ * hashing `stableStringify(completedEntity)`, which sorts object keys but
+ * PRESERVES array order. Two replicas that disagree therefore rewrite and
+ * re-stitch every Bruno entity in the catalog every reprocess cycle, forever
+ * and invisibly (R8).
+ *
+ * Code-unit order is the same on every runtime, which is the only property
+ * this sort needs — nobody reads an environment list for alphabetization
+ * nuance. Same discipline as the bare `.sort()` in `scm/treeFilter.ts`.
+ *
+ * Exported so the byte-stability test can pin it as a pure function; a
+ * regression to `localeCompare` is otherwise only visible on a machine whose
+ * locale happens to differ.
+ */
+/**
+ * Reads `meta.seq`, which arrives as a NUMBER from the YAML folder files and as
+ * a STRING from `@usebruno/lang` — `bruToJsonV2` hands back each `meta` value
+ * as written, unconverted, so `seq: 3` parses to `'3'`.
+ *
+ * That asymmetry was silently losing every `.bru` request's ordering. The
+ * ambient shim for `@usebruno/lang` types the parsers as `any` and `RawRequest`
+ * declared `seq` as `number`, so a `typeof seq === 'number'` guard type-checked
+ * cleanly and then never matched at runtime: `sortItems` saw no seq at all and
+ * fell back to insertion order — the order `selectCollectionFiles` listed the
+ * files, which is alphabetical by path, rather than the order the author
+ * arranged them in Bruno.
+ *
+ * Non-numeric and non-finite values yield `undefined`, which `sortItems`
+ * already treats as "unordered, keep insertion position".
+ */
+function readSeq(value: unknown): number | undefined {
+  const parsed
+    = typeof value === 'string' && value.trim() !== ''
+      ? Number(value)
+      : value;
+  return typeof parsed === 'number' && Number.isFinite(parsed)
+    ? parsed
+    : undefined;
+}
+
+export function compareEnvironmentNames(a: string, b: string): number {
+  if (a < b) {
+    return -1;
+  }
+  return a > b ? 1 : 0;
+}
+
 /** Parses `environments/*.bru` files into Environment[]. */
 function parseEnvironments(
   tree: FileTree,
@@ -300,7 +357,7 @@ function parseEnvironments(
     }
   }
 
-  environments.sort((a, b) => a.name.localeCompare(b.name));
+  environments.sort((a, b) => compareEnvironmentNames(a.name, b.name));
   return environments;
 }
 
@@ -393,14 +450,12 @@ function buildFolder(
   if (folderBru) {
     try {
       const parsed = collectionBruToJson(folderBru) as RawCollectionBru & {
-        meta?: { name?: string; seq?: number };
+        meta?: { name?: string; seq?: number | string };
       };
       if (parsed.meta?.name) {
         name = parsed.meta.name;
       }
-      if (typeof parsed.meta?.seq === 'number') {
-        seq = parsed.meta.seq;
-      }
+      seq = readSeq(parsed.meta?.seq);
       if (parsed.docs) {
         docs = parsed.docs;
       }
@@ -444,8 +499,7 @@ function parseRequestFile(
     = metaType === 'graphql' ? 'graphql' : 'http';
 
   const name = raw.meta?.name ?? posixBaseName(key).replace(/\.bru$/, '');
-  const seq
-    = typeof raw.meta?.seq === 'number' ? raw.meta.seq : undefined;
+  const seq = readSeq(raw.meta?.seq);
 
   const headers: KeyValue[] = (raw.headers ?? []).map((h) => ({
     name: h.name,
@@ -704,7 +758,7 @@ function parseEnvironmentsYml(
     }
   }
 
-  environments.sort((a, b) => a.name.localeCompare(b.name));
+  environments.sort((a, b) => compareEnvironmentNames(a.name, b.name));
   return environments;
 }
 
@@ -800,15 +854,13 @@ function buildFolderYml(
   if (folderYml) {
     try {
       const parsed = parseYmlFolder(folderYml, { format: 'yml' }) as {
-        meta?: { name?: string; seq?: number };
+        meta?: { name?: string; seq?: number | string };
         docs?: string;
       };
       if (parsed.meta?.name) {
         name = parsed.meta.name;
       }
-      if (typeof parsed.meta?.seq === 'number') {
-        seq = parsed.meta.seq;
-      }
+      seq = readSeq(parsed.meta?.seq);
       if (parsed.docs) {
         docs = parsed.docs;
       }

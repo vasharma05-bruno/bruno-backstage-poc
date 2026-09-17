@@ -1,0 +1,28 @@
+meta {
+  name: Create order
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+  x-request-region: {{region}}
+}
+
+auth:bearer {
+  token: {{apiToken}}
+}
+
+body:json {
+  {
+    "sku": "SKU-1042",
+    "quantity": 2,
+    "currency": "EUR"
+  }
+}

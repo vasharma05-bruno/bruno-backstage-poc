@@ -1,0 +1,23 @@
+meta {
+  name: List orders
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/orders?status=open&limit=25
+  auth: bearer
+}
+
+params:query {
+  status: open
+  limit: 25
+}
+
+headers {
+  accept: application/json
+}
+
+auth:bearer {
+  token: {{apiToken}}
+}

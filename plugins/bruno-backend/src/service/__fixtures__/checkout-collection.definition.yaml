@@ -1,0 +1,156 @@
+opencollection: 1.0.0
+info:
+  name: Checkout
+  version: '1'
+config:
+  environments:
+    - name: Dev-EU
+      variables:
+        - name: baseUrl
+          value: https://dev.eu.checkout.example.com
+        - name: region
+          value: eu-west-1
+        - name: apiToken
+          secret: true
+    - name: dev
+      variables:
+        - name: baseUrl
+          value: https://dev.checkout.example.com
+        - name: region
+          value: us-east-1
+        - name: apiToken
+          secret: true
+    - name: développement
+      variables:
+        - name: baseUrl
+          value: http://localhost:8080
+        - name: region
+          value: local
+    - name: staging
+      variables:
+        - name: baseUrl
+          value: https://staging.checkout.example.com
+        - name: region
+          value: us-east-1
+        - name: apiToken
+          secret: true
+items:
+  - info:
+      name: Health
+      type: http
+      seq: 1
+    http:
+      method: GET
+      url: '{{baseUrl}}/health'
+      headers:
+        - name: accept
+          value: application/json
+    settings:
+      encodeUrl: true
+      timeout: 0
+      followRedirects: true
+      maxRedirects: 5
+  - info:
+      name: Auth
+      type: folder
+    docs:
+      content: Token issuance. Every other folder assumes a token from here.
+      type: text/markdown
+    items:
+      - info:
+          name: Login
+          type: http
+          seq: 1
+        http:
+          method: POST
+          url: '{{baseUrl}}/auth/login'
+          headers:
+            - name: content-type
+              value: application/json
+          body:
+            type: json
+            data: |-
+              {
+                "email": "{{userEmail}}",
+                "password": "{{userPassword}}"
+              }
+        runtime:
+          scripts:
+            - type: after-response
+              code: bru.setEnvVar('apiToken', res.body.token);
+        settings:
+          encodeUrl: true
+          timeout: 0
+          followRedirects: true
+          maxRedirects: 5
+  - info:
+      name: Orders
+      type: folder
+    docs:
+      content: Order lifecycle endpoints.
+      type: text/markdown
+    items:
+      - info:
+          name: Create order
+          type: http
+          seq: 1
+        http:
+          method: POST
+          url: '{{baseUrl}}/orders'
+          headers:
+            - name: content-type
+              value: application/json
+            - name: x-request-region
+              value: '{{region}}'
+          body:
+            type: json
+            data: |-
+              {
+                "sku": "SKU-1042",
+                "quantity": 2,
+                "currency": "EUR"
+              }
+          auth:
+            type: bearer
+            token: '{{apiToken}}'
+        settings:
+          encodeUrl: true
+          timeout: 0
+          followRedirects: true
+          maxRedirects: 5
+      - info:
+          name: List orders
+          type: http
+          seq: 2
+        http:
+          method: GET
+          url: '{{baseUrl}}/orders?status=open&limit=25'
+          headers:
+            - name: accept
+              value: application/json
+          params:
+            - name: status
+              value: open
+              type: query
+            - name: limit
+              value: '25'
+              type: query
+          auth:
+            type: bearer
+            token: '{{apiToken}}'
+        settings:
+          encodeUrl: true
+          timeout: 0
+          followRedirects: true
+          maxRedirects: 5
+docs:
+  content: |
+    # Checkout
+
+    The order-placement API. `{{baseUrl}}` and `{{region}}` come from the selected
+    environment; `{{apiToken}}` is written by `Auth / Login`.
+  type: text/markdown
+bundled: true
+extensions:
+  bruno:
+    exportedUsing: bruno-for-backstage

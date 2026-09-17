@@ -74,11 +74,11 @@ export function buildDefinition(input: {
       target: url
     };
     const normalized = parseCollection(source, { files: tree }, logger);
-    const yaml = toOpenCollectionYaml(normalized, {
-      // Stable across runs: no per-call timestamp, or the entity is rewritten
-      // and re-stitched every 100-150s reprocess cycle (BE-P2 F11).
-      exportedAt: null
-    });
+    // No options: the exporter is byte-stable by default, and stays that way
+    // only while this call site declines to stamp a timestamp on the document.
+    // One would rewrite and re-stitch the entity every 100-150s reprocess cycle
+    // (BE-P2 F11). `definitionBuilder.test.ts` holds that line.
+    const yaml = toOpenCollectionYaml(normalized);
 
     // Derived from the same parse, so they cost nothing extra and are pure
     // functions of the content — stamping them cannot churn `resultHash`. They
