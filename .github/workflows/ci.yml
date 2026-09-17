@@ -1,0 +1,217 @@
+# Per-PR gate. Four independent jobs so a red X localises the failure.
+#
+# Everything here was run locally against this repo before being committed —
+# see docs/CI.md for the reproduce-locally table.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ESLint over the code we actually wrote. The flat config in
+  # eslint.config.mjs scopes itself to these paths; packages/app and
+  # packages/backend are Backstage scaffold and are deliberately NOT linted
+  # here — see the note at the bottom of this file.
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # corepack MUST be enabled before setup-node: the runner ships Yarn 1
+      # classic on PATH, and setup-node's `cache: yarn` probes `yarn --version`
+      # to decide which cache folder to save. Without the corepack shim it
+      # would cache Yarn 1's ~/.cache/yarn, which this repo never writes to.
+      # `packageManager: yarn@4.13.0` plus the vendored
+      # .yarn/releases/yarn-4.13.0.cjs make the shim resolve to Yarn 4.
+      - run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+
+      # --immutable makes a lockfile that does not match package.json a build
+      # failure rather than something yarn silently rewrites.
+      - run: yarn install --immutable
+
+      # `yarn lint` carries the paths and the warning budget, so this job and a
+      # developer's local run are the same command rather than two things that
+      # drift apart.
+      #
+      # That budget — --max-warnings 5 — is a ratchet, not a blank cheque. The
+      # repo has exactly five warnings today, all
+      # `@typescript-eslint/no-explicit-any` in the two hand-written ambient
+      # shims under plugins/bruno-backend/src/types/ that declare the untyped
+      # @usebruno/lang and @usebruno/converters packages. A sixth warning
+      # anywhere fails this job. To move the budget to 0, give those two shims
+      # real types (their `any`s are documented as intentional boundary types,
+      # so that is a typing task, not a lint task) and drop the number in
+      # package.json. Do not raise it.
+      - run: yarn lint
+
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+      - run: yarn install --immutable
+      - run: yarn tsc
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+      - run: yarn install --immutable
+
+      # GitHub sets CI=true already; set it explicitly so the command in this
+      # file is the same one a developer copies and runs locally.
+      - run: yarn test --watchAll=false
+        env:
+          CI: true
+
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+      - run: yarn install --immutable
+
+      # Two separate builds, on purpose.
+      #
+      # The APP build is required: under CI, playwright.config.ts sets
+      # `webServer: []` and points baseURL at http://localhost:7007, so the
+      # tests hit the backend, and the backend serves the SPA through
+      # plugin-app-backend out of packages/app/dist. No app build, no page.
+      #
+      # The BACKEND build is not required to run the tests — the backend is
+      # booted from source below — but bundle.tar.gz is the deployable, so
+      # building it here is the only check that it still builds.
+      #
+      # NOTE: the root `yarn build:backend` script is BROKEN — it runs
+      # `yarn workspace backend build`, but the workspace is named
+      # @usebruno/backstage-backend. Both workspaces are addressed by their
+      # real names here.
+      - name: Build app bundle
+        run: yarn workspace @usebruno/backstage-frontend build
+
+      - name: Build backend bundle
+        run: yarn workspace @usebruno/backstage-backend build
+
+      - name: Start backend
+        run: |
+          yarn workspace @usebruno/backstage-backend start > backend.log 2>&1 &
+          echo $! > backend.pid
+
+      # Poll a real endpoint, never sleep. /api/bruno/health is the Bruno
+      # plugin's liveness route and is explicitly registered as
+      # `allow: 'unauthenticated'` in plugins/bruno-backend/src/plugin.ts, so
+      # it answers 200 {"status":"ok"} with no token.
+      #
+      # Do NOT probe /healthcheck. Backstage has no such route here: the
+      # app-backend SPA fallback catches it and returns 200 with index.html,
+      # so it would report ready for any path and prove nothing.
+      - name: Wait for backend
+        run: |
+          for i in $(seq 1 90); do
+            if curl -fsS http://localhost:7007/api/bruno/health > /dev/null 2>&1; then
+              echo "backend ready after ${i} attempt(s)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::backend did not become ready within 180s"
+          cat backend.log
+          exit 1
+
+      # Key the browser cache on the RESOLVED version, not the declared
+      # `^1.32.3` range — that range currently resolves to 1.62.1, and a range
+      # key would keep serving a stale cache across a real upgrade.
+      - name: Resolve Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      # Honest note on what this actually saves: `playwright install chrome`
+      # reports `Install location: <system>` — the Chrome channel is installed
+      # through the OS package manager, not into ~/.cache/ms-playwright, and
+      # ubuntu-latest already ships Google Chrome stable. So today this cache
+      # only carries Playwright's ffmpeg build (a few MB). It is kept because
+      # it is correctly keyed and starts paying immediately if the config ever
+      # drops `channel: 'chrome'` and falls back to bundled Chromium.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright.outputs.version }}
+
+      # generateProjects() in playwright.config.ts emits every project with
+      # `channel: 'chrome'` — real Google Chrome, not bundled Chromium — so
+      # this must be `chrome`, not `chromium`.
+      - name: Install Chrome for Playwright
+        run: npx playwright install --with-deps chrome
+
+      - run: yarn test:e2e
+        env:
+          CI: true
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e-test-report/
+          retention-days: 7
+
+      - name: Upload backend log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-log
+          path: backend.log
+          retention-days: 7
+
+# ---------------------------------------------------------------------------
+# Deliberately NOT gated here:
+#
+# * packages/app and packages/backend are not linted by anything.
+#   `backstage-cli repo lint` — which `yarn lint` and `yarn lint:all` used to
+#   call — cannot run here: it builds its ESLint instance inside a worker
+#   thread with `new ESLint({ extensions: [...] })`, the worker resolves
+#   `eslint` from the repo root (9.39.5, which the flat config needs), and
+#   ESLint 9 removed the `extensions` option, so it dies with
+#   `Invalid Options: Unknown options: extensions` before linting anything.
+#   `backstage-cli package lint` fails differently, unable to resolve
+#   @spotify/eslint-config-base. Both scripts have been repointed at the flat
+#   config, which covers the plugin source this repo actually authors; the two
+#   scaffold packages remain uncovered. Pre-existing, and not introduced here.
+#
+# * `yarn prettier:check`. ESLint (@stylistic rules in eslint.config.mjs) is
+#   the formatter of record for this project.
+#
+# * `yarn bruno:catalog:check`. scripts/bruno-catalog/generate.mjs does a
+#   `git clone --depth 1` against github.com/bruno-collections for each source.
+#   That is network-dependent and rate-limitable, so it must not sit on the PR
+#   path.
+# ---------------------------------------------------------------------------

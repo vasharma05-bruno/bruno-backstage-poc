@@ -1,0 +1,97 @@
+# The expensive, network-heavy legs that must not sit on the PR path.
+#
+# Neither job here is a merge gate. Both change the dependency graph before
+# they check anything, so both can go red for reasons that have nothing to do
+# with the commit under test.
+name: Nightly
+
+on:
+  schedule:
+    # 03:00 UTC — off-peak for the runner pool and well clear of the working
+    # day in both Europe and India, so a red result is waiting in the morning
+    # rather than landing mid-review.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  # Where is the real Backstage version floor?
+  #
+  # The suspected constraint is the frontend blueprint APIs the Bruno plugin
+  # builds its extensions on. Those are COMPILE-time failures, so `yarn tsc`
+  # after a bump is enough to answer the question — no build, no tests, no
+  # booting anything.
+  compat:
+    name: compat (Backstage ${{ matrix.backstage }})
+    runs-on: ubuntu-latest
+    # The current-version leg is real signal: this repo is on 1.53.0
+    # (backstage.json), so that bump is close to a no-op and should pass. The
+    # older legs are the experiment, and are allowed to fail.
+    continue-on-error: ${{ matrix.backstage != '1.53.0' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        backstage: ['1.53.0', '1.52.0', '1.51.0']
+    steps:
+      - uses: actions/checkout@v4
+      - run: corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+
+      # Install once against the committed lockfile so backstage-cli exists.
+      - run: yarn install --immutable
+
+      # versions:bump rewrites every @backstage/* range to the pinned versions
+      # in https://versions.backstage.io/v1/releases/<v>/manifest.json.
+      # Verified: manifests for 1.53.0, 1.52.0 and 1.51.0 all return 200, and
+      # `--release` is a real flag on @backstage/cli 0.36.4.
+      #
+      # --skip-install keeps the bump and the install as separate, separately
+      # readable steps.
+      - name: Bump to Backstage ${{ matrix.backstage }}
+        run: yarn backstage-cli versions:bump --release ${{ matrix.backstage }} --skip-install
+
+      # Not --immutable: the bump has just invalidated the lockfile on purpose.
+      #
+      # .yarnrc.yml sets `npmMinimalAgeGate: 3d` with `npmPreapprovedPackages:
+      # ['@backstage/*']`, so the Backstage packages themselves are exempt; a
+      # brand-new transitive dependency could still be held back by the gate.
+      - run: yarn install --no-immutable
+
+      - run: yarn tsc
+
+  # Caret-range drift. Every @backstage/* dependency is a `^` range, so a
+  # clean `yarn install` weeks from now can resolve to newer minors than the
+  # lockfile pins. This job finds out before an adopter does.
+  drift:
+    name: drift (fresh resolution)
+    runs-on: ubuntu-latest
+    # Advisory by construction: it is testing dependency versions nobody has
+    # committed to, so a failure is news, not a regression in this repo.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+
+      # The lockfile has to go. `yarn install --no-immutable` on its own
+      # re-uses every pin in the existing lockfile — it only re-resolves ranges
+      # the lockfile no longer satisfies — so keeping it would make this job a
+      # duplicate of the `test` job in ci.yml.
+      - name: Drop the lockfile and re-resolve every range
+        run: |
+          rm -f yarn.lock
+          yarn install --no-immutable
+
+      - name: Show what moved
+        run: git --no-pager diff --stat -- yarn.lock || true
+
+      - run: yarn tsc
+
+      - run: yarn test --watchAll=false
+        env:
+          CI: true
