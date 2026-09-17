@@ -53,6 +53,23 @@ const MAX_ENTITY_NAME_LENGTH = 63;
  */
 const MAX_TITLE_LENGTH = 255;
 
+/**
+ * Ceiling on the entity refs one request body may carry.
+ *
+ * `POST /links` and `POST /collections` hand their whole ref list to
+ * `catalog.getEntitiesByRefs` in a SINGLE call, so an unbounded array is an
+ * unbounded catalog query bought with one authenticated request. Until now the
+ * only bound was `express.json`'s byte cap, which is incidental: it limits how
+ * much a caller may SEND, not how much work the send asks for, and it moves
+ * whenever that cap is retuned.
+ *
+ * 100 is far above any real body — both lists come from a picker, and the APIs
+ * one collection documents are counted in tens — and far below the point where
+ * a single refused request costs anything. It is deliberately one number for
+ * both routes: they are the same fan-out into the same catalog call.
+ */
+const MAX_PART_OF = 100;
+
 export interface RouterOptions {
   logger: LoggerService;
   config: Config;
@@ -94,7 +111,8 @@ export interface RouterOptions {
  *   GET    /links                           -> { links } (auth: service)
  *   POST   /links                           -> 201 (link at runtime; auth: user;
  *                                              needs `bruno.allowRuntimeWrites`)
- *                                              takes `apiRefs[]`, all or none
+ *                                              takes `apiRefs[]`, all or none,
+ *                                              at most `MAX_PART_OF` entries
  *   DELETE /links?collection=&api=          -> { unlinked: true } (auth: user)
  *
  * The first three are read-only and were the whole of this plugin: everything
@@ -209,7 +227,11 @@ export async function createRouter(
   };
 
   const router = Router();
-  router.use(express.json());
+  // Explicit, rather than `express.json()`'s incidental 100 kB default. Every
+  // body this router reads is a handful of short strings plus a ref list capped
+  // at `MAX_PART_OF`, so 64 kB is roomy; what matters is that the number is a
+  // decision rather than whatever a dependency happens to ship.
+  router.use(express.json({ limit: '64kb' }));
 
   router.get('/health', (_req, res) => {
     res.json({ status: 'ok' });
@@ -262,7 +284,14 @@ export async function createRouter(
       const message = String((e as Error)?.message ?? e);
       // Logged at info: an unreachable URL here is a user typing a repository
       // they cannot see, not a fault in the deployment.
-      logger.info(`Bruno collection probe failed for ${url}: ${message}`);
+      //
+      // The URL travels as STRUCTURED metadata rather than interpolated into
+      // the message. It is the request body's value verbatim — the probe throws
+      // on an unparseable URL before it normalises anything — so it can hold
+      // newlines, and interpolating it would let an authenticated caller forge
+      // whole log lines. The reader's message goes the same way: it can echo
+      // the request it made, and that request can carry a token.
+      logger.info('Bruno collection probe failed.', { url, error: message });
       res.status(400).json({ found: false, reason: 'unreadable', message });
       return;
     }
@@ -895,10 +924,19 @@ function readApiRef(raw: unknown): string {
  * Deduped AFTER normalising, so a body naming the same API twice under two
  * spellings — which is what a hand-edited `spec.partOf` looks like — is one
  * link rather than a unique violation against itself.
+ *
+ * Counted BEFORE normalising, so the refusal costs one length read rather than
+ * a parse of every entry. See {@link MAX_PART_OF}.
  */
 function readApiRefs(raw: unknown): string[] {
   if (!Array.isArray(raw) || raw.length === 0) {
     throw new InputError('At least one API entity reference is required.');
+  }
+  if (raw.length > MAX_PART_OF) {
+    throw new InputError(
+      `At most ${MAX_PART_OF} API entity references can be linked in one `
+      + `request; this one names ${raw.length}.`
+    );
   }
   return [...new Set(raw.map(readApiRef))];
 }
@@ -923,6 +961,12 @@ function readOptionalApiRefs(raw: unknown): string[] {
   if (!Array.isArray(raw)) {
     throw new InputError(
       '`partOf` must be a list of API entity references.'
+    );
+  }
+  if (raw.length > MAX_PART_OF) {
+    throw new InputError(
+      `A collection can list at most ${MAX_PART_OF} entries in \`partOf\`; `
+      + `this one names ${raw.length}.`
     );
   }
   return [...new Set(raw.map(readApiRef))];

@@ -237,12 +237,28 @@ export async function createUiCollectionStore(
       const rows = await client(TABLE).select('*');
       return (rows as RawRow[]).map(rowToModel);
     },
+    /**
+     * Folds case exactly as {@link UiCollectionStore.getByName} does, and the
+     * two MUST stay identical.
+     *
+     * Today a mismatch is a latent 404: `DELETE /collections/Payments` finds no
+     * row under a raw comparison while `getByName` would have found `payments`,
+     * so the route answers "no collection named that" about a collection that
+     * exists. The moment an ownership check lands on the route — the Beta
+     * hardening its IDOR note describes — it stops being latent: the check
+     * reads the row `getByName` resolves and the delete then removes whatever
+     * the other comparison matches, which is a DIFFERENT row or none. An
+     * authorization decision and the write it authorises have to be about the
+     * same row.
+     */
     async delete(name): Promise<boolean> {
       // The count is the whole point: the route turns "no row" into a 404 that
       // explains a config- or descriptor-origin collection cannot be deleted
       // here, and a delete that silently succeeded would leave the user waiting
       // for an entity that is never going to disappear.
-      const removed = await client(TABLE).where({ name }).delete();
+      const removed = await client(TABLE)
+        .whereRaw('lower(name) = ?', [name.toLocaleLowerCase('en-US')])
+        .delete();
       return removed > 0;
     }
   };

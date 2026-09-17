@@ -29,10 +29,21 @@ export function escapeHtml(s: string): string {
  * makes the bundle's `sessionStorage` access and its `HashRouter`-based routing
  * work: both need a real URL/origin, which `srcdoc` does not provide.
  *
- * The YAML is injected as a JSON string literal with any `</script` sequence
- * neutralized (the HTML tokenizer ends a script element on `</script` followed
- * by whitespace, `/`, or `>`, not just `</script>`); the capture group
- * preserves the original casing of the tag.
+ * The YAML is injected as a JSON string literal with EVERY `<` escaped, not
+ * just the ones that begin a `</script` sequence. Blocking the end tag alone is
+ * not enough: the script-data tokenizer has a double-escape state, and a
+ * payload carrying `<!--` followed by `<script` drives it there, after which
+ * this document's own `</script>` returns it to "script data escaped" instead
+ * of closing the element — the rest of the page is swallowed as script source
+ * and the renderer never boots. A collection's YAML is whatever a `.bru` or
+ * `opencollection.yaml` file in an ingested repository says, so that is a
+ * denial of rendering anyone who can land a file can trigger.
+ *
+ * A `\u003c` escape inside a double-quoted JS string literal parses back
+ * to `<`, so the YAML the renderer receives is byte-identical to the YAML
+ * passed in. The two JS line terminators go the same way: they are not valid
+ * inside a JSON string literal's source but ARE legal raw in JSON output, and
+ * unescaped they would end the statement.
  *
  * @public
  */
@@ -41,7 +52,10 @@ export function generateOcDocsHtml(
   title: string,
   theme: 'light' | 'dark'
 ): string {
-  const data = JSON.stringify(yaml).replace(/<(\/script)/gi, '<\\$1');
+  const data = JSON.stringify(yaml)
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
   return [
     '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/>',
     '<meta name="viewport" content="width=device-width, initial-scale=1.0"/>',
