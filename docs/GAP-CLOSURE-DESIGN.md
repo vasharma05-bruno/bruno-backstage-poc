@@ -60,8 +60,8 @@ Severity is the operational consequence of shipping without the fix, not the eff
 | --- | --- | --- | --- | --- |
 | DAT-1 | Secrets in generated docs reach the catalog in plaintext | §14.1, R1, P1 | **Critical** | Yes |
 | DAT-2 | Byte-stability of the generated definition is not enforced in CI | §14.2, R8 | High | Yes — *done* |
-| DAT-3 | No database migrations on the two tables | §4, R10 | High | Yes |
-| DAT-4 | Postgres never exercised; everything has run on in-memory SQLite | §14.9, §18.4 | Medium | Yes |
+| DAT-3 | No database migrations on the two tables | §4, R10 | High | Yes — *done* |
+| DAT-4 | Postgres never exercised; everything has run on in-memory SQLite | §14.9, §18.4 | Medium | Yes — *harness + nightly job done* |
 | DAT-5 | Multi-replica behaviour never run | §14.3, R9 | Medium | Partial — *scope invariant done* |
 | DAT-6 | Divergences from Bruno's own exporter are undocumented for users | §14.8 | Low | Yes |
 | DAT-7 | Entity size at scale unmeasured (500 collections × 1 MiB) | §18.7 | Medium | Yes |
@@ -1944,3 +1944,25 @@ A third deviation, recorded with the other two:
   would have made the IDOR tests pass by skipping the check they exist to pin. The suite uses a
   per-permission mock instead. This is the same class of trap as the default-to-mock-user one in
   REL-1: a security test that passes for the wrong reason is worse than no test.
+
+---
+
+## Correction to DAT-4's own plan
+
+This document stated that `TestDatabases` needs no skip logic because
+`isDockerDisabledForTests()` returns true whenever `CI` is unset, so a laptop run offers SQLite only
+and CI transparently gains Postgres. **That is inverted for this repository.** The predicate is
+`BACKSTAGE_TEST_DISABLE_DOCKER || !process.env.CI`, and this repo's own mandated test command is
+`CI=true yarn test` — so every local run reads as CI, tries to pull a Postgres container, and hard
+fails on a machine with no container runtime.
+
+The working arrangement pins `disableDocker: true` and selects Postgres on the presence of
+`BACKSTAGE_TEST_DATABASE_POSTGRES17_CONNECTION_STRING` and nothing else. SQLite has no docker image
+and so always runs. That keeps the "no `it.skip` anywhere" property the plan wanted, by construction
+rather than by convention — but it means **the second dialect only exists if CI provides the
+connection string**, which is why a `postgres` job with a service container was added to the nightly
+workflow. Verified by pointing the variable at a dead port and confirming all six cases run against
+`POSTGRES_17` rather than being skipped.
+
+One residual: the test's `pg_indexes` assertion branch is exercised only under Postgres, so it stays
+unverified until that nightly job has run once.
