@@ -60,18 +60,14 @@ type RawRow = {
 /**
  * `part_of` back into a `string[]`, tolerating anything.
  *
- * The column is `text` holding JSON rather than a `json` column or a join
- * table, and the reasoning is worth keeping next to the parser. `text` is the
- * only column type whose read-back value is byte-identical on better-sqlite3
- * and on postgres — both dialects hand back a `string`. Knex's `table.json()`
- * maps to a native `json` column on postgres, where `node-postgres` parses it
- * to a JS value on read, and to `text` on sqlite, where it stays a string; that
- * divergence forces a `typeof === 'string' ? JSON.parse(…) : …` fork which can
- * only ever be exercised on one dialect at a time. A join table was the other
- * candidate and buys index-able membership queries nobody asks for — `partOf`
- * is copied verbatim into `spec.partOf` and is never filtered or joined on —
- * at the price of referential integrity sqlite does not enforce unless
- * `PRAGMA foreign_keys = ON`, which Backstage's connector does not guarantee.
+ * This is one code path rather than a `typeof === 'string' ? JSON.parse(…) : …`
+ * fork BECAUSE the column is `text` on both dialects; the baseline migration
+ * holds the reasoning and the warning against changing it. A join table was the
+ * other candidate and buys index-able membership queries nobody asks for —
+ * `partOf` is copied verbatim into `spec.partOf` and is never filtered or
+ * joined on — at the price of referential integrity sqlite does not enforce
+ * unless `PRAGMA foreign_keys = ON`, which Backstage's connector does not
+ * guarantee.
  *
  * Tolerant rather than strict, mirroring `readPartOf` in
  * `service/brunoConfig.ts`: a row whose `part_of` cannot be read is still a
@@ -111,65 +107,16 @@ function rowToModel(row: RawRow): UiCollectionRow {
 /**
  * The store behind `POST`/`GET`/`DELETE /api/bruno/collections`.
  *
- * Create-table-if-not-exists rather than a formal migration, matching the store
- * this plugin used to carry, and a POC that has to be re-pointed at a fresh
- * database on every schema change is a worse trade than the knex migration
- * machinery.
- *
- * The table now has a SECOND shape — `title` was added after rows existed — so
- * the create is followed by an add-column-if-missing, which is the same idea
- * one column down. It is idempotent, it is the only widening this table has
- * had, and the alternative on a POC without migrations is a backend that
- * answers 500 to every create against a database that predates the column. A
- * third widening is the point at which this should become a real migration
- * rather than a third stanza.
+ * Pure data access: the table is created and evolved by `store/migrations.ts`,
+ * which `plugin.ts` runs to completion before this factory is called. Nothing
+ * here may create or widen a column — a schema change that a store applied on
+ * boot would be invisible to `knex_migrations` and could never be rolled
+ * forward or back afterwards.
  */
 export async function createUiCollectionStore(
   database: DatabaseService
 ): Promise<UiCollectionStore> {
   const client = await database.getClient();
-
-  if (!(await client.schema.hasTable(TABLE))) {
-    try {
-      await client.schema.createTable(TABLE, (table) => {
-        table.text('name').primary();
-        // Nullable, and never `notNullable().defaultTo('')`: the difference
-        // between NULL and `''` is the difference between "follow the
-        // collection manifest" and "display nothing", and a default would
-        // silently pick the wrong one of those for every row.
-        table.text('title');
-        table.text('url').notNullable();
-        table.text('owner');
-        table.text('part_of').notNullable();
-        table.text('created_by').notNullable();
-        table.text('created_at').notNullable();
-      });
-    } catch (error) {
-      // Tolerate a concurrent creator (e.g. a second backend replica) that won
-      // the race; only rethrow if the table genuinely still does not exist.
-      if (!(await client.schema.hasTable(TABLE))) {
-        throw error;
-      }
-    }
-  }
-
-  // Widens a table created before `title` existed. Runs on every startup, and
-  // when the column is already there — every startup after the first — it costs
-  // one information-schema query and nothing else. The same concurrent-writer
-  // tolerance as the create above, and for the same reason: two backend
-  // replicas start together, and whichever loses the race must not take the
-  // plugin down with it.
-  if (!(await client.schema.hasColumn(TABLE, 'title'))) {
-    try {
-      await client.schema.alterTable(TABLE, (table) => {
-        table.text('title');
-      });
-    } catch (error) {
-      if (!(await client.schema.hasColumn(TABLE, 'title'))) {
-        throw error;
-      }
-    }
-  }
 
   return {
     async insert(row): Promise<void> {

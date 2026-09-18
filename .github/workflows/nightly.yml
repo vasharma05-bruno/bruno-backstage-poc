@@ -61,6 +61,54 @@ jobs:
 
       - run: yarn tsc
 
+  # Does the schema behave the same on postgres as on sqlite?
+  #
+  # Everything in this repo has otherwise only ever run on better-sqlite3, and
+  # the one decision that depends on the answer is `part_of`: it is a `text`
+  # column holding JSON rather than a `json` one, because `table.json()` maps to
+  # a NATIVE json column on postgres where the driver parses it back to an
+  # object, and to text on sqlite where it comes back a string. The store reads
+  # it with one code path, so the two dialects have to agree byte for byte.
+  #
+  # `migrations.test.ts` already parameterises over every dialect it can reach,
+  # and selects postgres on the presence of the connection string below and
+  # nothing else — so this job is what makes that second dialect exist. Without
+  # it the postgres half of that suite is inert and nobody would notice.
+  postgres:
+    name: postgres (cross-dialect schema)
+    runs-on: ubuntu-latest
+    # Not advisory: a disagreement between the two dialects is a real defect in
+    # this repo, not news about somebody else's package.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: bruno_test
+        ports: ['5432:5432']
+        # Without a healthcheck the job races the container's first boot and
+        # fails on connection refused rather than on anything real.
+        options: &gt;-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+      - run: yarn install --immutable
+
+      - name: Run the suite against sqlite AND postgres
+        run: yarn test --watchAll=false
+        env:
+          CI: true
+          BACKSTAGE_TEST_DATABASE_POSTGRES17_CONNECTION_STRING: postgresql://postgres:postgres@localhost:5432/bruno_test
+
   # Caret-range drift. Every @backstage/* dependency is a `^` range, so a
   # clean `yarn install` weeks from now can resolve to newer minors than the
   # lockfile pins. This job finds out before an adopter does.

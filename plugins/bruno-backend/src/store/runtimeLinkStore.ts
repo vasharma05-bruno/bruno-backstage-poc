@@ -86,15 +86,13 @@ function rowToModel(row: RawRow): RuntimeLinkRow {
 /**
  * The store behind `GET`/`POST`/`DELETE /api/bruno/links`.
  *
- * Create-table-if-not-exists rather than a formal migration, matching
- * `uiCollectionStore` beside it: the table has one shape and a POC that has to
- * be re-pointed at a fresh database on every schema change is a worse trade
- * than the knex migration machinery.
+ * Pure data access, like `uiCollectionStore` beside it: the table is owned by
+ * `store/migrations.ts`, which `plugin.ts` runs before this factory is called.
  *
  * The primary key is the PAIR, which is the whole integrity model: a link
  * either exists or it does not, there is nothing to update, and a second
  * `POST /links` for the same pair is a conflict rather than a duplicate row.
- * Both columns are `text` for the reason `parsePartOf` gives next door — it is
+ * Both columns are `text` for the reason the baseline migration gives — it is
  * the one column type whose read-back value is byte-identical on
  * better-sqlite3 and on postgres.
  */
@@ -102,28 +100,6 @@ export async function createRuntimeLinkStore(
   database: DatabaseService
 ): Promise<RuntimeLinkStore> {
   const client = await database.getClient();
-
-  if (!(await client.schema.hasTable(TABLE))) {
-    try {
-      await client.schema.createTable(TABLE, (table) => {
-        table.text('collection_ref').notNullable();
-        table.text('api_ref').notNullable();
-        table.text('created_by').notNullable();
-        table.text('created_at').notNullable();
-        table.primary(['collection_ref', 'api_ref']);
-        // The processor reads the whole table and groups by collection, but the
-        // routes look one collection up at a time, and `deleteForCollection`
-        // runs on every UI-collection delete.
-        table.index(['collection_ref']);
-      });
-    } catch (error) {
-      // Tolerate a concurrent creator (a second backend replica) that won the
-      // race; only rethrow if the table genuinely still does not exist.
-      if (!(await client.schema.hasTable(TABLE))) {
-        throw error;
-      }
-    }
-  }
 
   return {
     async insert(rows): Promise<void> {

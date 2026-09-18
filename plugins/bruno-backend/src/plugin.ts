@@ -13,6 +13,7 @@ import {
 } from './service/brunoConfig';
 import { createManifestProbe } from './service/manifestProbe';
 import { readRefreshSeconds } from './service/schedule';
+import { applyDatabaseMigrations } from './store/migrations';
 import { createRuntimeLinkStore } from './store/runtimeLinkStore';
 import { createUiCollectionStore } from './store/uiCollectionStore';
 
@@ -86,6 +87,10 @@ export const brunoPlugin = createBackendPlugin({
           ttlMs: readCacheTtlMs(config),
           definition: readDefinitionOptions(config, logger)
         });
+
+        // Strictly before the stores, which no longer carry any DDL of their
+        // own and would otherwise query tables that do not yet exist.
+        await applyDatabaseMigrations(database);
 
         const uiCollections = await createUiCollectionStore(database);
         const runtimeLinks = await createRuntimeLinkStore(database);
