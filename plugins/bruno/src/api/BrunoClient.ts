@@ -4,6 +4,7 @@ import type {
   CreateCollectionInput,
   CreatedCollection,
   DeletedCollection,
+  DiscoverySweepReport,
   ProbeResult,
   RuntimeLinkInput,
   RuntimeLinkResult,
@@ -222,6 +223,36 @@ export class BrunoClient implements BrunoApi {
       );
     }
     return (await response.json()) as StoredCollections;
+  }
+
+  /**
+   * `GET /discovery/report`.
+   *
+   * The route answers `{ report: … | null }`, and the null is unwrapped to
+   * `undefined` here rather than passed through: a caller reading `.incomplete`
+   * off a `null` gets a TypeError, off an `undefined` gets a TypeError too, but
+   * only one of the two is a type the compiler makes them handle. What is NOT
+   * done is collapsing it into an empty report — that is a different answer,
+   * and {@link DiscoverySweepReport} says why.
+   *
+   * Every non-2xx throws. There is nothing partial to show: the strip built on
+   * this renders nothing at all rather than a report it cannot stand behind,
+   * which also covers a backend too old to have the route.
+   */
+  async getDiscoveryReport(): Promise<DiscoverySweepReport | undefined> {
+    const base = await this.baseUrl();
+    const response = await this.fetchApi.fetch(`${base}/discovery/report`);
+
+    if (!response.ok) {
+      throw await errorFromResponse(
+        response,
+        'Could not read the Bruno autodiscovery report'
+      );
+    }
+    const body = (await response.json()) as {
+      report: DiscoverySweepReport | null;
+    };
+    return body.report ?? undefined;
   }
 
   /**

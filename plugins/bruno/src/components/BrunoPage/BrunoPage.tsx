@@ -28,6 +28,7 @@ import {
 import { useCanDeleteCollection } from '../../lib/permissions';
 import { elideCollectionUrl } from '../../lib/scmUrl';
 import { DeleteCollectionDialog } from './DeleteCollectionDialog';
+import { IncompleteDiscovery } from './IncompleteDiscovery';
 import { PendingCollections } from './PendingCollections';
 import { StatTiles } from './StatTiles';
 import type { StatTile } from './StatTiles';
@@ -333,6 +334,16 @@ export function BrunoPage(): JSX.Element {
               renders nothing at all when there is nothing outstanding.
             */}
             <PendingCollections />
+            {/*
+              Beside the pending strip, and reporting the mirror-image gap: that
+              one names collections that are stored and not catalogued YET, this
+              one names REPOSITORIES whose collections were never found and will
+              not be. Both render nothing at all in the normal case. It is
+              outside the pending strip rather than merged into it because its
+              rows are repositories, not collections, and nothing on screen
+              corresponds to them.
+            */}
+            <IncompleteDiscovery />
             <BrunoCollectionsTable />
           </CatalogFilterLayout.Content>
         </CatalogFilterLayout>

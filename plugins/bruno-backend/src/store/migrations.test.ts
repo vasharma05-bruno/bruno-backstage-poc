@@ -118,13 +118,15 @@ describe.each(databases.eachSupportedId())(
       knex = await databases.init(databaseId);
     });
 
-    it('creates both tables and the collection_ref index on a fresh database',
+    it('creates every table and the collection_ref index on a fresh database',
       async () => {
         await applyDatabaseMigrations(service(knex));
 
         await expect(knex.schema.hasTable('bruno_ui_collections'))
           .resolves.toBe(true);
         await expect(knex.schema.hasTable('bruno_runtime_links'))
+          .resolves.toBe(true);
+        await expect(knex.schema.hasTable('bruno_sweep_report'))
           .resolves.toBe(true);
         await expect(knex.schema.hasColumn('bruno_ui_collections', 'title'))
           .resolves.toBe(true);
@@ -149,6 +151,9 @@ describe.each(databases.eachSupportedId())(
      * them — so the first migration runs against a schema it is about to
      * recreate. An unguarded baseline would crash here, and a "fix" that
      * dropped the tables first would take the user's collections with it.
+     *
+     * Only the BASELINE's two tables are seeded: nothing predates
+     * `bruno_sweep_report`, which is why its own migration needs no guards.
      */
     it('adopts tables created by the pre-migration DDL without losing rows',
       async () => {
@@ -178,10 +183,16 @@ describe.each(databases.eachSupportedId())(
     });
 
     /**
-     * `migrate.down` takes no state from `migrate.latest`, so it needs the
+     * `rollback` takes no state from `migrate.latest`, so it needs the
      * directory handed to it again — and resolving it here the same way the
      * runner does doubles as a check that `resolvePackagePath` really does find
      * `migrations/` at the package root from inside `src/`.
+     *
+     * `rollback(…, true)` rather than `migrate.down`, which unwinds ONE step:
+     * with more than one migration in the directory that would leave the
+     * baseline's tables standing and the assertions below would be about a
+     * rollback that never reached them. `true` is knex's all-the-way flag, so
+     * this stays a whole-schema round trip however many migrations land later.
      */
     it('rolls back and forward again', async () => {
       const directory = resolvePackagePath(
@@ -190,16 +201,20 @@ describe.each(databases.eachSupportedId())(
       );
       await applyDatabaseMigrations(service(knex));
 
-      await knex.migrate.down({ directory });
+      await knex.migrate.rollback({ directory }, true);
       await expect(knex.schema.hasTable('bruno_ui_collections'))
         .resolves.toBe(false);
       await expect(knex.schema.hasTable('bruno_runtime_links'))
+        .resolves.toBe(false);
+      await expect(knex.schema.hasTable('bruno_sweep_report'))
         .resolves.toBe(false);
 
       await applyDatabaseMigrations(service(knex));
       await expect(knex.schema.hasTable('bruno_ui_collections'))
         .resolves.toBe(true);
       await expect(knex.schema.hasTable('bruno_runtime_links'))
+        .resolves.toBe(true);
+      await expect(knex.schema.hasTable('bruno_sweep_report'))
         .resolves.toBe(true);
     });
 
@@ -215,6 +230,8 @@ describe.each(databases.eachSupportedId())(
       await expect(knex.schema.hasTable('bruno_ui_collections'))
         .resolves.toBe(false);
       await expect(knex.schema.hasTable('bruno_runtime_links'))
+        .resolves.toBe(false);
+      await expect(knex.schema.hasTable('bruno_sweep_report'))
         .resolves.toBe(false);
       await expect(knex.schema.hasTable('knex_migrations'))
         .resolves.toBe(false);

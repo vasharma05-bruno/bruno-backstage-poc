@@ -15,6 +15,7 @@ import { createManifestProbe } from './service/manifestProbe';
 import { readRefreshSeconds } from './service/schedule';
 import { applyDatabaseMigrations } from './store/migrations';
 import { createRuntimeLinkStore } from './store/runtimeLinkStore';
+import { createSweepReportStore } from './store/sweepReportStore';
 import { createUiCollectionStore } from './store/uiCollectionStore';
 
 /**
@@ -94,6 +95,12 @@ export const brunoPlugin = createBackendPlugin({
 
         const uiCollections = await createUiCollectionStore(database);
         const runtimeLinks = await createRuntimeLinkStore(database);
+        // Not a write model like the other two: the only writer is this
+        // plugin's own provider, over a plugin token, and the next sweep
+        // rewrites whatever is in it. It is here because the provider runs in
+        // `brunoCatalogModule` on ONE replica while the route is served from
+        // all of them, so the database is the only place the two can meet.
+        const sweepReports = await createSweepReportStore(database);
 
         httpRouter.use(
           await createRouter({
@@ -106,6 +113,7 @@ export const brunoPlugin = createBackendPlugin({
             probe,
             uiCollections,
             runtimeLinks,
+            sweepReports,
             refreshSeconds: readRefreshSeconds(config),
             allowRuntimeWrites: readAllowRuntimeWrites(config),
             docs: readDocsOptions(config, logger)

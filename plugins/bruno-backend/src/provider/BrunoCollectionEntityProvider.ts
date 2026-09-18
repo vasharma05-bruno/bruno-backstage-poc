@@ -14,8 +14,10 @@ import {
 import type { BrunoOrigin } from '../processor/BrunoKindProcessor';
 import type {
   CollectionDiscovery,
-  DiscoveredCollection
+  DiscoveredCollection,
+  SweepReport
 } from '../discovery';
+import type { SweepReportPublisher } from './sweepReportPublisher';
 import { readBrunoCollections } from '../service/brunoConfig';
 import { sanitizeName } from '../service/entityName';
 import type { ManifestProbe } from '../service/manifestProbe';
@@ -103,6 +105,13 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
        *  turn discovery off — an always-present sweep with no entries would
        *  still cost a listing per tick. */
       discovery?: CollectionDiscovery;
+      /**
+       * Where the sweep report goes so a browser can read it. Absent exactly
+       * when `discovery` is — with no sweep there is nothing to publish, and an
+       * empty report published anyway would tell the dashboard that discovery
+       * ran and found nothing wrong.
+       */
+      sweepReports?: SweepReportPublisher;
     }
   ) {}
 
@@ -211,9 +220,14 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
     // rather than return a short list, so this catch is the only place that
     // decides what an unknown sweep means — and it never means "delete".
     let discovered: DiscoveredCollection[] = [];
+    /** The report of the sweep that just ran, absent when it did not run or
+     *  threw — which is what keeps a failed sweep from overwriting the last
+     *  report with one that says nothing is wrong. */
+    let sweep: SweepReport | undefined;
     if (this.options.discovery) {
       try {
-        discovered = await this.options.discovery.discover();
+        sweep = await this.options.discovery.discover();
+        discovered = sweep.collections;
         this.lastDiscovered = discovered;
       } catch (error) {
         if (this.lastDiscovered === undefined) {
@@ -236,6 +250,14 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
         );
         discovered = this.lastDiscovered;
       }
+    }
+
+    // OUTSIDE the try above, deliberately. A publish failure is not a sweep
+    // failure, and catching it there would fall back to the last known
+    // collections — or skip the whole tick — over a diagnostic that nothing in
+    // the catalog depends on.
+    if (sweep) {
+      await this.publishSweep(sweep);
     }
 
     const entities: BrunoEntity[] = [];
@@ -407,6 +429,50 @@ export class BrunoCollectionEntityProvider implements EntityProvider {
         + `already catalogued from another source.`
         : '')
     );
+  }
+
+  /**
+   * Hands the completed sweep to the `bruno` plugin, where a browser can read
+   * it back.
+   *
+   * WHY THIS IS NOT AN ANNOTATION, since the catalog is right there. Two
+   * reasons, and the second is the decisive one. Catalog processing stamps
+   * annotations a cycle late, which this repository has a standing rule against
+   * relying on — but more than that, an incomplete listing is a property of a
+   * REPOSITORY, and the collections it cost do not exist as entities. There is
+   * nothing to annotate. Annotating the ones that WERE found would mark exactly
+   * the wrong thing.
+   *
+   * EVERY TICK, not only when the report changes. A truncated repository stays
+   * truncated for weeks, so almost every publish rewrites the same row — and
+   * that is the point: the row's `sweptAt` is what separates "swept a moment
+   * ago, nothing is wrong" from "no sweep has ever been recorded", and a
+   * publish that skipped the unchanged case would let the first decay into
+   * looking like the second. One small write per
+   * `bruno.schedule.frequencySeconds` is nothing beside the full catalog
+   * mutation this same tick applies.
+   *
+   * Never throws. The report is a diagnostic about the entities, not the
+   * entities, so a plugin that is still starting up or briefly unreachable
+   * costs one stale report and nothing else.
+   */
+  private async publishSweep(report: SweepReport): Promise<void> {
+    if (!this.options.sweepReports) {
+      return;
+    }
+    try {
+      await this.options.sweepReports.publish(report);
+    } catch (error) {
+      // Structured second argument, never interpolation: the publisher's error
+      // can echo the request it made, and that request carries a plugin token.
+      this.options.logger.warn(
+        'BrunoCollectionEntityProvider swept the bruno.discovery organizations '
+        + 'but could not record the report; the Bruno dashboard will show the '
+        + 'previous one, or none, until a later tick succeeds. The sweep itself '
+        + 'is unaffected and its collections have been emitted.',
+        error instanceof Error ? error : new Error(String(error))
+      );
+    }
   }
 }
 

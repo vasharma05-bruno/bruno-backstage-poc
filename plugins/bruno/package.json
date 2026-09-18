@@ -57,6 +57,8 @@
   "devDependencies": {
     "@backstage/cli": "^0.36.4",
     "@backstage/frontend-test-utils": "^0.6.2",
+    "@backstage/test-utils": "^1.7.20",
+    "@testing-library/react": "^14.3.1",
     "@types/react": "^18.0.0"
   },
   "files": [

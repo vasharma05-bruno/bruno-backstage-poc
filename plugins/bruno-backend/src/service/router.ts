@@ -42,6 +42,10 @@ import {
 } from './sourceAllowlist';
 import type { UiCollectionStore } from '../store/uiCollectionStore';
 import type { RuntimeLinkStore } from '../store/runtimeLinkStore';
+import type {
+  IncompleteRepositoryRow,
+  SweepReportStore
+} from '../store/sweepReportStore';
 import { escapeHtml, generateOcDocsHtml } from './generateOcDocsHtml';
 
 /**
@@ -109,6 +113,11 @@ export interface RouterOptions {
    *  control. Read back service-to-service by `BrunoKindProcessor`, which turns
    *  the rows into the same relations `spec.partOf` produces. */
   runtimeLinks: RuntimeLinkStore;
+  /** The latest `bruno.discovery[]` sweep report, written by
+   *  `BrunoCollectionEntityProvider` over a plugin token and read back by the
+   *  dashboard. A table rather than a field because the sweep's task is
+   *  `scope: 'global'` — one replica writes, all N serve the route. */
+  sweepReports: SweepReportStore;
   /** `bruno.allowRuntimeWrites` — whether this instance may record a
    *  collection or a link in its own database rather than only in source
    *  control. Gates the two POST routes; see `requireRuntimeWrites`. */
@@ -128,6 +137,12 @@ export interface RouterOptions {
  * Builds the Express router for `/api/bruno/*`.
  *
  *   GET    /health                          -> { status: 'ok' }
+ *   GET    /discovery/report                -> { report } (auth: user; the last
+ *                                              sweep, or `null` when none has
+ *                                              been recorded)
+ *   PUT    /discovery/report                -> { recorded: true } (auth: service;
+ *                                              written by the catalog module's
+ *                                              provider)
  *   GET    /entities/:namespace/:name/docs  -> text/html (docs for a kind:Bruno entity)
  *   POST   /collections/probe               -> { found, ... } (does this URL hold a collection?)
  *   POST   /collections                     -> 201 (add a collection; auth: user;
@@ -206,6 +221,7 @@ export async function createRouter(
     probe,
     uiCollections,
     runtimeLinks,
+    sweepReports,
     refreshSeconds,
     allowRuntimeWrites,
     docs
@@ -299,6 +315,71 @@ export async function createRouter(
 
   router.get('/health', (_req, res) => {
     res.json({ status: 'ok' });
+  });
+
+  // What the last `bruno.discovery[]` sweep could NOT see.
+  //
+  // Beside `/health` rather than folded into `GET /collections` because it
+  // reports on REPOSITORIES, not on entities. GitHub caps a recursive tree
+  // listing, and a repository past that cap yields collections that are never
+  // discovered — so the interesting rows here are precisely the ones that have
+  // no entity, and there is nothing in the collection list to hang them off.
+  // For the same reason an annotation is the wrong channel: the collections
+  // this describes do not exist, and annotating the ones that were found would
+  // mark exactly the wrong thing. (Catalog processing stamping annotations a
+  // cycle late is the second reason, and the lesser one.)
+  //
+  // `report: null` is NOT "everything is fine". It means no sweep has ever been
+  // recorded — `bruno.discovery[]` is unconfigured, or the provider has not
+  // finished its first tick — and it is a different answer from a report with
+  // an empty `incomplete`, which is a sweep that ran and found nothing missing.
+  // A caller that merged the two would report an instance with discovery
+  // switched off as a healthy one.
+  //
+  // `['user']`: it names repositories an operator can act on, which is the
+  // dashboard's business and no service's.
+  router.get('/discovery/report', async (req, res) => {
+    await httpAuth.credentials(req, { allow: ['user'] });
+    res.json({ report: (await sweepReports.get()) ?? null });
+  });
+
+  // The provider's side of that report.
+  //
+  // `['service']` ONLY, exactly like `GET /links`: the sole writer is
+  // `BrunoCollectionEntityProvider`, which runs in `brunoCatalogModule` — a
+  // separate backend feature with no in-process link to this router — and
+  // reaches this plugin with a plugin token, as it already does to read
+  // `GET /collections`. See `provider/sweepReportPublisher.ts` for why an
+  // in-memory field could not work: the sweep's task is `scope: 'global'`, so
+  // it runs on one replica while this route is served from all of them.
+  //
+  // NOT gated on `bruno.allowRuntimeWrites`. That key is about this instance
+  // becoming the source of truth for something the CATALOG shows, in place of a
+  // reviewed file; this row is a diagnostic about a sweep the operator already
+  // configured, it produces no entity and no relation, and gating it would take
+  // the strip away from every instance on the default configuration.
+  //
+  // A PUT rather than a POST because there is one row and this replaces it.
+  // Malformed entries are dropped rather than rejected: a redeployed module
+  // talking to an older plugin should cost the entries it added, not the whole
+  // report.
+  router.put('/discovery/report', async (req, res) => {
+    await httpAuth.credentials(req, { allow: ['service'] });
+    const body = (req.body ?? {}) as {
+      sweptAt?: unknown;
+      incomplete?: unknown;
+    };
+    if (typeof body.sweptAt !== 'string' || !body.sweptAt) {
+      throw new InputError('`sweptAt` must be a non-empty string.');
+    }
+    if (!Array.isArray(body.incomplete)) {
+      throw new InputError('`incomplete` must be an array.');
+    }
+    await sweepReports.save({
+      sweptAt: body.sweptAt,
+      incomplete: readIncomplete(body.incomplete)
+    });
+    res.json({ recorded: true });
   });
 
   // Does this URL hold a Bruno collection? The scan behind the add-collection
@@ -1041,6 +1122,50 @@ export async function createRouter(
   router.use(middleware.error());
 
   return router;
+}
+
+/**
+ * Reads the incomplete-repository entries off a `PUT /discovery/report` body.
+ *
+ * TOLERANT, unlike every other body reader in this file, and the asymmetry is
+ * deliberate. The others read a USER's input, where a rejection is a sentence
+ * the user reads and acts on. This body comes from this plugin's own provider
+ * over a service token, and the two can be different versions of the code in a
+ * rolling deploy — so an entry with a `reason` this build has never heard of is
+ * a newer module talking, and dropping that one entry keeps the report the
+ * older build CAN understand rather than throwing all of it away.
+ *
+ * `found` is clamped to a non-negative integer rather than dropped when it is
+ * odd, because it is rendered into a sentence with a number in it; everything
+ * else is required to be exactly what it claims.
+ */
+function readIncomplete(raw: unknown[]): IncompleteRepositoryRow[] {
+  const rows: IncompleteRepositoryRow[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null) {
+      continue;
+    }
+    const row = entry as Record<string, unknown>;
+    if (
+      typeof row.repository !== 'string'
+      || !row.repository
+      || typeof row.host !== 'string'
+      || !row.host
+      || row.reason !== 'listing-limit'
+    ) {
+      continue;
+    }
+    rows.push({
+      repository: row.repository,
+      host: row.host,
+      found:
+        typeof row.found === 'number' && Number.isFinite(row.found)
+          ? Math.max(0, Math.trunc(row.found))
+          : 0,
+      reason: 'listing-limit'
+    });
+  }
+  return rows;
 }
 
 /**

@@ -229,6 +229,161 @@ describe('bruno router', () => {
     });
   });
 
+  /**
+   * The strip's backend, and the reason it is a table rather than a field on
+   * this router: the sweep runs in `brunoCatalogModule` on ONE replica (its
+   * task is `scope: 'global'`) while this route is served from all N, so the
+   * two can only meet in the database.
+   */
+  describe('/discovery/report', () => {
+    const REPORT = {
+      sweptAt: '2026-09-18T10:00:00.000Z',
+      incomplete: [
+        {
+          repository: 'acme/monorepo',
+          host: 'github.com',
+          found: 3,
+          reason: 'listing-limit'
+        }
+      ]
+    };
+
+    /**
+     * THE CASE THE STRIP DEPENDS ON MOST. With no `bruno.discovery[]` the
+     * provider has no sweeper, publishes nothing, and this table stays empty —
+     * and `null` has to stay distinguishable from a report whose `incomplete`
+     * is `[]`, which is a sweep that RAN and found everything complete. Merging
+     * the two would let the dashboard describe an instance with discovery
+     * switched off as a healthy one.
+     */
+    it('answers null when no sweep has ever been recorded', async () => {
+      const { server } = await startBruno();
+      const res = await request(server)
+        .get('/api/bruno/discovery/report')
+        .set('Authorization', USER)
+        .expect(200);
+      expect(res.body).toEqual({ report: null });
+    });
+
+    it('reports a sweep that found nothing incomplete as an empty list',
+      async () => {
+        const { server } = await startBruno();
+        await request(server)
+          .put('/api/bruno/discovery/report')
+          .set('Authorization', SERVICE)
+          .send({ sweptAt: REPORT.sweptAt, incomplete: [] })
+          .expect(200);
+
+        const res = await request(server)
+          .get('/api/bruno/discovery/report')
+          .set('Authorization', USER)
+          .expect(200);
+        expect(res.body.report).toEqual({
+          sweptAt: REPORT.sweptAt,
+          incomplete: []
+        });
+      });
+
+    it('round-trips a report, keeping the found count', async () => {
+      const { server } = await startBruno();
+      await request(server)
+        .put('/api/bruno/discovery/report')
+        .set('Authorization', SERVICE)
+        .send(REPORT)
+        .expect(200);
+
+      const res = await request(server)
+        .get('/api/bruno/discovery/report')
+        .set('Authorization', USER)
+        .expect(200);
+      expect(res.body.report).toEqual(REPORT);
+    });
+
+    // One row, replaced. An append-only history would grow forever to serve a
+    // route that only ever asks for the newest entry.
+    it('replaces the previous report rather than accumulating', async () => {
+      const { server } = await startBruno();
+      await request(server)
+        .put('/api/bruno/discovery/report')
+        .set('Authorization', SERVICE)
+        .send(REPORT)
+        .expect(200);
+      await request(server)
+        .put('/api/bruno/discovery/report')
+        .set('Authorization', SERVICE)
+        .send({ sweptAt: '2026-09-18T10:01:00.000Z', incomplete: [] })
+        .expect(200);
+
+      const res = await request(server)
+        .get('/api/bruno/discovery/report')
+        .set('Authorization', USER)
+        .expect(200);
+      expect(res.body.report).toEqual({
+        sweptAt: '2026-09-18T10:01:00.000Z',
+        incomplete: []
+      });
+      await expect(knex('bruno_sweep_report').select('*'))
+        .resolves.toHaveLength(1);
+    });
+
+    // A newer module talking to an older plugin: the entry whose `reason` this
+    // build does not know is dropped, and the ones it does know survive. The
+    // alternative — rejecting the body — would hide every repository that IS
+    // reportable behind one it is not.
+    it('drops entries it cannot read and keeps the rest', async () => {
+      const { server } = await startBruno();
+      await request(server)
+        .put('/api/bruno/discovery/report')
+        .set('Authorization', SERVICE)
+        .send({
+          sweptAt: REPORT.sweptAt,
+          incomplete: [
+            ...REPORT.incomplete,
+            { repository: 'acme/other', host: 'github.com', reason: 'from-the-future' },
+            'not an object'
+          ]
+        })
+        .expect(200);
+
+      const res = await request(server)
+        .get('/api/bruno/discovery/report')
+        .set('Authorization', USER)
+        .expect(200);
+      expect(res.body.report.incomplete).toEqual(REPORT.incomplete);
+    });
+
+    it('refuses an unauthenticated read', async () => {
+      const { server } = await startBruno();
+      await request(server)
+        .get('/api/bruno/discovery/report')
+        .set('Authorization', NONE)
+        .expect(401);
+    });
+
+    // The write is the provider's alone. A user token here would let anyone
+    // with a browser tell every dashboard in the instance that a repository is
+    // missing collections.
+    it('refuses a user principal on the write', async () => {
+      const { server } = await startBruno();
+      await request(server)
+        .put('/api/bruno/discovery/report')
+        .set('Authorization', USER)
+        .send(REPORT)
+        .expect(403);
+      await expect(knex('bruno_sweep_report').select('*'))
+        .resolves.toHaveLength(0);
+    });
+
+    it('rejects a body with no sweep time', async () => {
+      const { server } = await startBruno();
+      await request(server)
+        .put('/api/bruno/discovery/report')
+        .set('Authorization', SERVICE)
+        .send({ incomplete: [] })
+        .expect(400);
+    });
+  });
+
   describe('POST /collections/probe', () => {
     it('refuses an unauthenticated caller before reading anything', async () => {
       const { server, reader } = await startBruno();

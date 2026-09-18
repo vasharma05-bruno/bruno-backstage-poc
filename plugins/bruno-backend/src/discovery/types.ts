@@ -20,6 +20,39 @@ export interface DiscoveredCollection {
   repository: string;
 }
 
+/**
+ * A repository that was read successfully and whose file listing was KNOWABLY
+ * partial — today, always because GitHub capped the recursive tree response.
+ *
+ * Deliberately NOT modelled as a failure, and deliberately not an annotation on
+ * the collections that were found. It is a property of a REPOSITORY, and the
+ * collections it cost do not exist as entities, so there is nothing to
+ * annotate; marking the ones that WERE found would label exactly the wrong
+ * thing.
+ */
+export interface IncompleteRepository {
+  /** `owner/repo`. */
+  repository: string;
+  host: string;
+  /**
+   * How many collections WERE found there.
+   *
+   * The field that decides whether an operator cares: it is the difference
+   * between missing one collection and missing fifty, and it is the only figure
+   * anybody reading this has.
+   */
+  found: number;
+  reason: 'listing-limit';
+}
+
+/** What one completed sweep of every configured entry yielded. */
+export interface SweepReport {
+  collections: DiscoveredCollection[];
+  /** Repositories read successfully whose file listing was knowably partial. */
+  incomplete: IncompleteRepository[];
+  sweptAt: string;
+}
+
 /** A source of collections found by sweeping an SCM host. */
 export interface CollectionDiscovery {
   /**
@@ -30,8 +63,16 @@ export interface CollectionDiscovery {
    * partial result is indistinguishable from "these collections are gone" — a
    * throw is the only way to say "I do not know", and the provider answers it
    * by skipping the tick.
+   *
+   * `incomplete` on the resolved report is a DIFFERENT fact from that throw and
+   * must never be conflated with it: it means "I read this repository and the
+   * answer it gave me was partial", which is a permanent condition an operator
+   * has to fix, whereas a throw means "I could not read it", which is usually a
+   * blip that fixes itself. Reporting one as the other would turn a network
+   * hiccup into a silent data-loss claim, or hide real data loss behind a
+   * retry.
    */
-  discover(): Promise<DiscoveredCollection[]>;
+  discover(): Promise<SweepReport>;
 }
 
 /** One repository, as the sweep needs it. */

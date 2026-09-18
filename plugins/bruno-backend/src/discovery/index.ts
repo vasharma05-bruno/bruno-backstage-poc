@@ -1,2 +1,7 @@
 export { createGithubCollectionDiscovery } from './githubDiscovery';
-export type { CollectionDiscovery, DiscoveredCollection } from './types';
+export type {
+  CollectionDiscovery,
+  DiscoveredCollection,
+  IncompleteRepository,
+  SweepReport
+} from './types';
