@@ -72,7 +72,7 @@ Severity is the operational consequence of shipping without the fix, not the eff
 | ID | Gap | Source | Severity | Closable here |
 | --- | --- | --- | --- | --- |
 | SCM-1 | Org-wide discovery is GitHub-only | §6, R12 | High | Yes |
-| SCM-2 | Pull-request (descriptor write) flows are GitHub-only | §14.6, R12 | High | Yes |
+| SCM-2 | Pull-request (descriptor write) flows are GitHub-only | §14.6, R12 | High | Partial — *seam + GitLab + universal fallback done; Bitbucket needs an app scope decision* |
 | SCM-3 | Tier-1 zero-quota revalidation is GitHub-only | §5 | Medium | Yes |
 | SCM-4 | Support-matrix holes: Bitbucket Server/DC, Azure, Gitea, Gerrit, Harness | §5 | Medium | Partial |
 | SCM-5 | Large-repo tree truncation is logged, never surfaced | §14.7 | Low | Yes — *done* |
@@ -1920,8 +1920,12 @@ full gate set — `yarn tsc`, `CI=true yarn test --watchAll=false`, `yarn lint` 
 | `73496be` | SEC-3 *(partial)*, SEC-4 *(partial)*, SEC-10 | Pinned docs CSP; `bruno.docs.cdnBaseUrl`; iframe downloads |
 | `15dab92` | DAT-3, DAT-4 | Knex migrations; cross-dialect harness + nightly Postgres job |
 | `8c87c6f` | FE-1 | Legacy entry point, and the bundle guard that found a live leak |
+| `b79c1f1` | — | Lockfile drift the new CI caught on its first run |
+| `72700d9` | — | Nightly workflow repaired; it was an invalid file |
+| `07cf87d` | SCM-5, FE-6 | Truncation reported end to end |
+| `07115c5` | SCM-2 *(partial)* | PR adapter seam, GitLab, universal fallback |
 
-Test baseline over the same span: **113 tests / 12 suites → 259 / 23.**
+Test baseline over the same span: **113 tests / 12 suites → 311 / 26.**
 
 **Both Critical security gaps are closed.** Of the register's five Critical entries, four are done
 (SEC-1, SEC-2, REL-4, REL-5) and one is partial (REL-1 — the router harness and auth matrix exist;
