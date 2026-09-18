@@ -89,7 +89,7 @@ jobs:
         ports: ['5432:5432']
         # Without a healthcheck the job races the container's first boot and
         # fails on connection refused rather than on anything real.
-        options: &gt;-
+        options: >-
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
