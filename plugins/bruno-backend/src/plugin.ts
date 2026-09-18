@@ -8,7 +8,8 @@ import { createRouter } from './service/router';
 import {
   readAllowRuntimeWrites,
   readCacheTtlMs,
-  readDefinitionOptions
+  readDefinitionOptions,
+  readDocsOptions
 } from './service/brunoConfig';
 import { createManifestProbe } from './service/manifestProbe';
 import { readRefreshSeconds } from './service/schedule';
@@ -101,7 +102,8 @@ export const brunoPlugin = createBackendPlugin({
             uiCollections,
             runtimeLinks,
             refreshSeconds: readRefreshSeconds(config),
-            allowRuntimeWrites: readAllowRuntimeWrites(config)
+            allowRuntimeWrites: readAllowRuntimeWrites(config),
+            docs: readDocsOptions(config, logger)
           })
         );
 

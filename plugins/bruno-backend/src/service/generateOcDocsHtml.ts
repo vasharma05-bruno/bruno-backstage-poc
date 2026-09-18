@@ -1,5 +1,4 @@
-/** CDN that hosts the OpenCollection docs renderer bundle (POC: staging). */
-const CDN = 'https://staging.cdn.usebruno.com/api-docs';
+import type { DocsOptions } from './brunoConfig';
 
 /**
  * HTML-escape a value for safe interpolation into markup or an attribute.
@@ -50,7 +49,8 @@ export function escapeHtml(s: string): string {
 export function generateOcDocsHtml(
   yaml: string,
   title: string,
-  theme: 'light' | 'dark'
+  theme: 'light' | 'dark',
+  docs: DocsOptions
 ): string {
   const data = JSON.stringify(yaml)
     .replace(/</g, '\\u003c')
@@ -61,8 +61,15 @@ export function generateOcDocsHtml(
     '<meta name="viewport" content="width=device-width, initial-scale=1.0"/>',
     `<title>${escapeHtml(title)} - API Documentation</title>`,
     '<style>html,body{margin:0;padding:0;height:100%}#opencollection-container{width:100vw;height:100vh}</style>',
-    `<link rel="stylesheet" href="${CDN}/api-docs.css"/>`,
-    `<script src="${CDN}/api-docs.js"></script>`,
+    `<link rel="stylesheet" href="${escapeHtml(docs.cdnBaseUrl)}/api-docs.css"/>`,
+    // `integrity` pins the exact bytes, which only means anything against an
+    // immutable URL — so it is emitted when an operator has one and omitted
+    // otherwise, rather than being faked against the mutable default.
+    `<script src="${escapeHtml(docs.cdnBaseUrl)}/api-docs.js"`
+    + (docs.integrity
+      ? ` integrity="${escapeHtml(docs.integrity)}" crossorigin="anonymous"`
+      : '')
+    + '></script>',
     '</head><body><div id="opencollection-container"></div>',
     '<script>',
     `const collectionData = ${data};`,

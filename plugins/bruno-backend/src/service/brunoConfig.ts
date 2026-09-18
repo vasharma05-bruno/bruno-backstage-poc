@@ -218,3 +218,56 @@ function readPartOf(value: unknown): string[] {
   }
   return [];
 }
+
+/**
+ * Where the OpenCollection docs renderer bundle is served from, and what to
+ * check it against.
+ */
+export interface DocsOptions {
+  /** Base URL holding `api-docs.js` and `api-docs.css`, no trailing slash. */
+  cdnBaseUrl: string;
+  /** Subresource-integrity token for `api-docs.js`, or undefined. */
+  integrity?: string;
+}
+
+/**
+ * The bundle's current home. A STAGING host, and unversioned.
+ *
+ * Both halves of that matter. Unversioned means the path cannot carry a
+ * Subresource Integrity hash, so `integrity` below is off unless an operator
+ * points `cdnBaseUrl` at something immutable — and the CDN serves this path
+ * with a one-year `max-age`, so a browser that has fetched it may not see a
+ * renderer fix until that expires. Promoting to a versioned production URL is
+ * upstream work in the renderer's own publishing pipeline, not something this
+ * repository can do; what it CAN do is let an operator point elsewhere.
+ */
+const DEFAULT_CDN_BASE_URL = 'https://staging.cdn.usebruno.com/api-docs';
+
+/**
+ * Reads `bruno.docs`. Tolerant on the same grounds as the readers above: a
+ * mistyped knob degrades to the default rather than failing the boot.
+ *
+ * The value is load-bearing twice over — it is where the docs page fetches the
+ * renderer from, AND it is what the page's Content-Security-Policy names as an
+ * allowed script and style origin. One read, one source of truth: a mirror that
+ * the CSP did not know about would load nothing and report nothing useful.
+ */
+export function readDocsOptions(
+  config: Config,
+  logger?: LoggerService
+): DocsOptions {
+  try {
+    const docs = config.getOptionalConfig('bruno')?.getOptionalConfig('docs');
+    const cdnBaseUrl = docs?.getOptionalString('cdnBaseUrl');
+    return {
+      cdnBaseUrl: (cdnBaseUrl ?? DEFAULT_CDN_BASE_URL).replace(/\/+$/, ''),
+      integrity: docs?.getOptionalString('integrity')
+    };
+  } catch (e) {
+    logger?.error(
+      `bruno.docs: ${String((e as Error)?.message ?? e)}; `
+      + 'falling back to the default renderer bundle.'
+    );
+    return { cdnBaseUrl: DEFAULT_CDN_BASE_URL };
+  }
+}

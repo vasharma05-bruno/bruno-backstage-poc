@@ -116,7 +116,14 @@ export function BrunoApiDocsContent(): JSX.Element {
               title="API Documentation"
               className={classes.frame}
               style={{ height: frameHeight }}
-              sandbox="allow-scripts allow-same-origin"
+              // `allow-downloads` is not decoration: the renderer offers "save
+              // this collection" and attachment downloads, both built on
+              // `URL.createObjectURL` plus a synthetic `<a download>` click,
+              // which a sandboxed frame blocks outright without it. Those
+              // controls were visible and silently inert. Independent of
+              // `allow-same-origin`, which is what the frame's cookie auth and
+              // its blob workers need.
+              sandbox="allow-scripts allow-same-origin allow-downloads"
               src={src}
             />
           )

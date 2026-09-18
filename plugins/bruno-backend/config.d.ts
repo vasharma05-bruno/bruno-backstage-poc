@@ -224,6 +224,37 @@ export interface Config {
       maxBytes?: number;
     };
     /**
+     * Where the OpenCollection docs renderer bundle is served from.
+     * @visibility backend
+     */
+    docs?: {
+      /**
+       * Base URL holding `api-docs.js` and `api-docs.css`, without a trailing
+       * slash. Defaults to the Bruno-hosted CDN.
+       *
+       * Point it at a mirror you control for an air-gapped install. The docs
+       * page's Content-Security-Policy is derived from this value, so a change
+       * here moves the page's allowed script and style origins with it — a
+       * mirror cannot end up fetchable and CSP-refused at the same time.
+       *
+       * Note the shipped default is a STAGING host on an unversioned path,
+       * served with a one-year `max-age`. Serving the bundle from an immutable
+       * versioned URL is the upstream fix; this key is what lets an operator
+       * stop waiting for it.
+       * @visibility backend
+       */
+      cdnBaseUrl?: string;
+      /**
+       * Subresource-integrity token for `api-docs.js`, e.g. `sha384-...`.
+       *
+       * Omitted by default because it is only meaningful against an immutable
+       * URL, and the shipped `cdnBaseUrl` is not one — a hash against a mutable
+       * path breaks the page on the renderer's next release.
+       * @visibility backend
+       */
+      integrity?: string;
+    };
+    /**
      * Optional provider refresh schedule.
      * @visibility backend
      */

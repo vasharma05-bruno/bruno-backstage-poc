@@ -887,5 +887,52 @@ describe('bruno router', () => {
         .set('Authorization', NONE)
         .expect(401);
     });
+
+    /** The docs page's Content-Security-Policy IS the security property here,
+     *  so these assert its shape rather than that a header merely exists. */
+    describe('content-security-policy', () => {
+      async function csp(path: string): Promise<string> {
+        const { server } = await startBruno();
+        const res = await request(server)
+          .get(path)
+          .set('Cookie', mockCredentials.limitedUser.cookie());
+        return String(res.headers['content-security-policy']);
+      }
+
+      it('names hosts in script-src rather than the https: scheme', async () => {
+        const policy = await csp('/api/bruno/entities/default/payments/docs');
+        const scriptSrc = policy
+          .split('; ')
+          .find((d) => d.startsWith('script-src '));
+
+        // A bare `https:` source admits every origin on the web, which is
+        // barely a policy at all - and is what this directive used to carry.
+        expect(scriptSrc).toBeDefined();
+        expect(scriptSrc).not.toMatch(/\shttps:(\s|$)/);
+        expect(scriptSrc).toContain('https://staging.cdn.usebruno.com');
+
+        // Neither of these is tightenable: the bundle ships a QuickJS WASM
+        // runtime and calls `new Function`, and it builds module workers from
+        // blob URLs. Asserted so a future tidy-up has to argue with a test.
+        expect(scriptSrc).toContain('unsafe-eval');
+        expect(scriptSrc).toContain('blob:');
+      });
+
+      it('carries the app origin as a frame-ancestor', async () => {
+        const policy = await csp('/api/bruno/entities/default/payments/docs');
+        expect(policy).toContain('frame-ancestors');
+        expect(policy).toContain('http://localhost:3000');
+      });
+
+      it('applies the same policy to an error page', async () => {
+        // Embedding headers are set BEFORE any error branch so a failure is
+        // framable too - otherwise the user gets "refused to connect" instead
+        // of the message. That ordering is what a later refactor breaks, so
+        // both paths are pinned to the same value.
+        const ok = await csp('/api/bruno/entities/default/payments/docs');
+        const missing = await csp('/api/bruno/entities/default/nope/docs');
+        expect(missing).toBe(ok);
+      });
+    });
   });
 });

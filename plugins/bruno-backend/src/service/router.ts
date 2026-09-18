@@ -33,6 +33,7 @@ import {
 } from '../processor/BrunoKindProcessor';
 import { collectionNameFromUrl } from '../provider/BrunoCollectionEntityProvider';
 import { readBrunoCollections } from './brunoConfig';
+import type { DocsOptions } from './brunoConfig';
 import { normaliseApiRef, normaliseCollectionRef } from './entityRefs';
 import {
   assertSourceAllowed,
@@ -117,6 +118,10 @@ export interface RouterOptions {
    *  Returned on the create and delete responses so the UI can quote the real
    *  number instead of hardcoding the default. */
   refreshSeconds: number;
+  /** `bruno.docs` — where the renderer bundle is fetched from, and what the
+   *  docs page's Content-Security-Policy names as an allowed script and style
+   *  origin. One value, both jobs; see `readDocsOptions`. */
+  docs: DocsOptions;
 }
 
 /**
@@ -202,7 +207,8 @@ export async function createRouter(
     uiCollections,
     runtimeLinks,
     refreshSeconds,
-    allowRuntimeWrites
+    allowRuntimeWrites,
+    docs
   } = options;
 
   /**
@@ -989,7 +995,7 @@ export async function createRouter(
     // page below is framable too: the docs are reached as an iframe `src`, and
     // Helmet's default `X-Frame-Options: SAMEORIGIN` would otherwise leave the
     // user with a cryptic "refused to connect" instead of the message.
-    applyDocsEmbeddingHeaders(res, config);
+    applyDocsEmbeddingHeaders(res, config, docs);
     const credentials = await httpAuth.credentials(req, {
       allow: ['user', 'service'],
       allowLimitedAccess: true
@@ -1027,7 +1033,7 @@ export async function createRouter(
     }
     const theme = req.query.theme === 'dark' ? 'dark' : 'light';
     const title = entity.metadata.title ?? entity.metadata.name;
-    res.type('text/html').send(generateOcDocsHtml(yaml, title, theme));
+    res.type('text/html').send(generateOcDocsHtml(yaml, title, theme, docs));
   });
 
   // Error handling per current Backstage conventions.
@@ -1253,37 +1259,61 @@ function missingDefinitionMessage(entity: Entity): string {
  */
 function applyDocsEmbeddingHeaders(
   res: express.Response,
-  config: Config
+  config: Config,
+  docs: DocsOptions
 ): void {
   const appBaseUrl = config.getOptionalString('app.baseUrl');
   const frameAncestors = ['\'self\'', appBaseUrl].filter(Boolean).join(' ');
-  // POC-scope: the OpenCollection renderer (staging bundle) lazy-loads from
-  // several CDNs and embeds arbitrary third-party media, so pinning hosts is
-  // impractical. Derived by statically auditing the bundle:
-  //   - script  : its own bundle (opencollection->usebruno CDN 301) + Monaco
-  //               editor from jsDelivr + blob: module workers  -> https: blob:
-  //   - wasm     : QuickJS runtime fetched as a data: URL + eval'd
-  //               -> connect-src data: + script-src 'unsafe-eval'
-  //   - fonts    : Inter from fonts.googleapis/gstatic          -> https: data:
-  //   - media    : HLS/FLV/Mux players (jsDelivr) + blob:        -> media-src
-  //   - iframes  : oEmbed players (YouTube/Vimeo/SoundCloud/...) -> frame-src
-  // The bundle is a trusted first-party renderer on an isolated origin,
-  // embeddable only by the app (frame-ancestors), and the route is gated by
-  // the `user-cookie` auth policy. Beta hardening = pin exact hosts.
+  // The renderer's own origin, taken from the SAME value the page's <script>
+  // and <link> are built from, so a mirror can never be fetchable and
+  // CSP-refused at once.
+  const bundleOrigin = new URL(docs.cdnBaseUrl).origin;
+  // Pinned, not `https:`. The origin list below was produced by downloading
+  // the live bundle and extracting every absolute URL it references, so it is
+  // an audit rather than a guess — and it has to be re-run against whatever
+  // production bundle eventually ships, because a `script-src` that names the
+  // wrong hosts fails closed and silently (the renderer simply never boots).
+  //
+  // Two allowances are NOT tightenable and should not be "cleaned up":
+  //   'unsafe-eval'  the bundle ships a QuickJS WASM runtime and calls
+  //                  `new Function`. 'wasm-unsafe-eval' would cover the first
+  //                  but not the second.
+  //   blob:          it builds module workers with `URL.createObjectURL`,
+  //                  including a PDF.js CDN-wrapper shim.
+  //
+  // Two are deliberately loose:
+  //   img-src / media-src stay scheme-wide because a collection's own
+  //   documentation may reference any image or clip, and pinning those breaks
+  //   real content rather than demo data.
+  //   frame-src lists the oEmbed players the bundle can mount. If in-portal
+  //   video embeds are not a requirement, `frame-src 'none'` drops ten origins
+  //   and costs nothing else.
+  const jsdelivr = 'https://cdn.jsdelivr.net';
+  const cdnjs = 'https://cdnjs.cloudflare.com';
   res.removeHeader('X-Frame-Options');
   res.setHeader(
     'Content-Security-Policy',
     [
-      'default-src \'self\'',
-      'script-src \'self\' \'unsafe-inline\' \'unsafe-eval\' https: blob:',
-      'style-src \'self\' \'unsafe-inline\' https: data:',
-      'font-src \'self\' data: https:',
+      'default-src \'none\'',
+      'script-src \'self\' \'unsafe-inline\' \'unsafe-eval\' blob: '
+      + `${bundleOrigin} ${jsdelivr} ${cdnjs} https://connect.facebook.net`,
+      'worker-src \'self\' blob:',
+      `style-src 'self' 'unsafe-inline' ${bundleOrigin} https://fonts.googleapis.com`,
+      'font-src \'self\' data: https://fonts.gstatic.com',
       'img-src \'self\' data: blob: https:',
       'media-src \'self\' data: blob: https:',
-      'connect-src \'self\' https: data: blob:',
-      'worker-src \'self\' blob: https:',
-      'frame-src \'self\' https:',
-      `frame-ancestors ${frameAncestors}`
+      'connect-src \'self\' data: blob: '
+      + `${bundleOrigin} ${jsdelivr} ${cdnjs} `
+      + 'https://noembed.com https://cdn.embed.ly https://api.dmcdn.net',
+      'frame-src https://www.youtube.com https://www.youtube-nocookie.com '
+      + 'https://player.vimeo.com https://w.soundcloud.com '
+      + 'https://player.twitch.tv https://player-widget.mixcloud.com '
+      + 'https://fast.wistia.com https://play.vidyard.com '
+      + 'https://streamable.com https://videodelivery.net',
+      `frame-ancestors ${frameAncestors}`,
+      'base-uri \'none\'',
+      'form-action \'none\'',
+      'object-src \'none\''
     ].join('; ')
   );
 }

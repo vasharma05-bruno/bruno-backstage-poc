@@ -150,6 +150,16 @@ bruno:
       pathPrefixes:
         - /vasharma05-bruno
 
+  # Where the docs tab fetches the OpenCollection renderer bundle from. The
+  # default is a STAGING host on an unversioned path, so it cannot carry a
+  # Subresource Integrity hash and its one-year cache header cannot be busted.
+  # Point this at a mirror you control for an air-gapped install — the docs
+  # page's Content-Security-Policy is derived from the same value, so the
+  # bundle can never be fetchable and CSP-refused at once.
+  # docs:
+  #   cdnBaseUrl: https://cdn.internal.example/oc-api-docs/1.4.0
+  #   integrity: sha384-...
+
   # The generated OpenCollection YAML is stored inline on each Bruno entity's
   # `spec.definition`, as a kind: API entity stores its OpenAPI document.
   #
