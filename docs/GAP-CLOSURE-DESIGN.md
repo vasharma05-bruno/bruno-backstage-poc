@@ -45,14 +45,14 @@ Severity is the operational consequence of shipping without the fix, not the eff
 | --- | --- | --- | --- | --- |
 | SEC-1 | SSRF and private-repo existence oracle on the probe/create routes | §9 S1, R3 | **Critical** | Yes — *done* |
 | SEC-2 | No authorization model (IDOR on every mutating route) | §9 S2, R2 | **Critical** | Yes — *done* |
-| SEC-3 | Docs CSP allows `https:` broadly; `allow-same-origin` on the app's cookie origin | §9 S3 | High | Partial |
-| SEC-4 | Renderer bundle served from an unpinned staging CDN | §9 S4, R4 | High | Partial |
+| SEC-3 | Docs CSP allows `https:` broadly; `allow-same-origin` on the app's cookie origin | §9 S3 | High | Partial — *CSP pinned; dedicated origin deferred* |
+| SEC-4 | Renderer bundle served from an unpinned staging CDN | §9 S4, R4 | High | Partial — *configurable; versioned CDN is upstream* |
 | SEC-5 | Playground proxy: frontend-hardcoded host map, no server-side secret injection | §9.3, P5 | Medium | Deferred |
 | SEC-6 | `</script` neutralisation misses `<!--`; any ingested repo can break the docs page | *new* | High | Yes — *done* |
 | SEC-7 | Log injection via the raw probe URL | *new* | Medium | Yes — *done* |
 | SEC-8 | `getByName` case-insensitive, `delete` case-sensitive — becomes a security bug under SEC-2 | *new* | Medium | Yes — *done* |
 | SEC-9 | No caps on request-body array lengths | *new* | Low | Yes — *done* |
-| SEC-10 | Docs iframe silently cannot download (`allow-downloads` absent) | *new* | Low | Yes |
+| SEC-10 | Docs iframe silently cannot download (`allow-downloads` absent) | *new* | Low | Yes — *done* |
 
 ### Data correctness and persistence — `DAT`
 
@@ -1917,8 +1917,9 @@ full gate set — `yarn tsc`, `CI=true yarn test --watchAll=false`, `yarn lint` 
 | `2c1a916` | — | Credential-shape corrections |
 | `68de616` | SCM-6 | Six traps pinned; anonymous-read startup warning |
 | `3360ecc` | SEC-2 | Permissions and ownership on every mutating route |
+| `73496be` | SEC-3 *(partial)*, SEC-4 *(partial)*, SEC-10 | Pinned docs CSP; `bruno.docs.cdnBaseUrl`; iframe downloads |
 
-Test baseline over the same span: **113 tests / 12 suites → 244 / 21.**
+Test baseline over the same span: **113 tests / 12 suites → 249 / 21.**
 
 **Both Critical security gaps are closed.** Of the register's five Critical entries, four are done
 (SEC-1, SEC-2, REL-4, REL-5) and one is partial (REL-1 — the router harness and auth matrix exist;
