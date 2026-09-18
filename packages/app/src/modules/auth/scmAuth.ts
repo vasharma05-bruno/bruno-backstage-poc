@@ -17,13 +17,17 @@ import { ScmAuth, scmAuthApiRef } from '@backstage/integration-react';
  * that is server-side, on the host's `integrations.*` credentials, with no
  * per-user path at all (`plugins/bruno-backend/README.md#credential-isolation`).
  *
- * Which makes GitHub the only entry below that anything actually calls: both PR
- * flows are GitHub-gated (`catalogImportApi.submitPullRequest` supports only
- * GitHub and Azure, and the link/unlink dialogs check the integration type).
- * `forGitlab` and `forBitbucket` are registered anyway, deliberately: they cost
- * nothing while unused, and they are what a host app extending the PR flows to
- * another provider would otherwise have to rediscover. Nothing requests their
- * scopes today, so neither OAuth application needs repository access granted.
+ * GitHub and GitLab are both live below. The plugin's pull-request flows go
+ * through its own per-host adapters (`plugins/bruno/src/lib/pr/`), and GitLab
+ * needs no change here because `ScmAuth.forGitlab`'s stock `repoWrite` is
+ * already `['write_repository', 'api']` — `api` being what creating a merge
+ * request requires.
+ *
+ * `forBitbucket` is still registered without being called. That is the entry to
+ * change if the PR flows ever extend there, and it is not a one-line change:
+ * `repoWrite` is empty below, and even `ScmAuth`'s own Bitbucket mapping omits
+ * `repository:write`, so an adopter following the Backstage default would be
+ * able to open a pull request and not to commit the file it is for.
  *
  * It routes by the repository URL's host and owns the per-provider scope
  * mapping, so the plugin never names a provider or a scope:

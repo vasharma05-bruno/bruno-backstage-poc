@@ -77,7 +77,14 @@ export function UnlinkDialog(props: {
   const mayRemoveRuntime = useCanDeleteLink();
   // Undefined once a pull request is actually possible; until then it is both
   // the explanation and the reason no pull request is offered.
-  const advice = useDescriptorAdvice({ location, apiRef, direction: 'unlink' });
+  // `currentPartOf` is what lets the advice show the finished YAML rather than
+  // describe it, on a host no pull request can reach.
+  const advice = useDescriptorAdvice({
+    location,
+    apiRef,
+    direction: 'unlink',
+    currentPartOf: collection.spec?.partOf
+  });
 
   /**
    * Whether the runtime half of a `both` link has already been removed in this

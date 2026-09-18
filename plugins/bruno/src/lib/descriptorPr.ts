@@ -1,5 +1,5 @@
-import { Octokit } from '@octokit/rest';
 import { descriptorPathForCollection, repoRootFromCollectionUrl } from './scmUrl';
+import type { PrAdapter, PrRepo } from './pr/types';
 
 /**
  * Opens the pull request that ADDS a collection's `catalog-info.yaml`, at the
@@ -15,29 +15,30 @@ import { descriptorPathForCollection, repoRootFromCollectionUrl } from './scmUrl
  * the client cannot update a file it did not create. It also pins every import
  * to one fixed branch name, so two collections cannot be in flight at once.
  *
- * The same three limits are why `lib/unlinkPr.ts` talks to GitHub directly, and
- * this module is deliberately its sibling: same credential contract, same
- * plan/submit split, same branch-per-attempt naming. The one real difference is
- * that this CREATES a file, so it commits without a `sha` and treats an
- * existing descriptor as a stop rather than something to overwrite.
+ * The same three limits are why `lib/unlinkPr.ts` talks to the forge directly,
+ * and this module is deliberately its sibling: same credential contract, same
+ * plan/submit split, same branch-per-attempt naming, same {@link PrAdapter}
+ * seam. The one real difference is that this CREATES a file, so it commits with
+ * no `concurrencyToken` and treats an existing descriptor as a stop rather than
+ * something to overwrite.
  *
  * Credentials. The caller resolves an SCM token through
  * `scmAuthApi.getCredentials({ url, additionalScope: { repoWrite: true } })`,
  * so the pull request is authored by the ACTUAL USER — correct attribution, and
- * no server-side write credential. The token is passed in, held in a local,
- * handed to exactly one `new Octokit({ auth })`, and is never logged, stored, or
- * put into a URL.
+ * no server-side write credential. The token never reaches this module: it is
+ * handed to exactly one adapter, which holds it in a closure and never logs,
+ * stores or puts it in a URL.
  *
- * GitHub only. Azure DevOps stays on `catalogImportApi`, root path and all;
- * see `GeneratedYamlDialog`.
+ * Whichever hosts `lib/pr/registry.ts` has an adapter for. Azure DevOps stays on
+ * `catalogImportApi`, root path and all; see `GeneratedYamlDialog`.
  */
 
 /** Everything the dialog needs to describe, and then open, the pull request. */
 export interface DescriptorPlan {
   /** `https://<host>/<owner>/<repo>` — shown in the dialog. */
   repoUrl: string;
-  owner: string;
-  repo: string;
+  /** The repository, in the terms its forge takes. */
+  target: PrRepo;
   /** Repo-relative path the descriptor will be committed at. */
   path: string;
   /** The head branch this attempt will create. Unique per attempt. */
@@ -67,33 +68,6 @@ export class DescriptorPrError extends Error {
     this.name = 'DescriptorPrError';
     this.reason = reason;
   }
-}
-
-/** `https://<host>/<owner>/<repo>/…` → its owner and repo. */
-function parseGitHubRepoUrl(
-  repoUrl: string
-): { owner: string; repo: string } | undefined {
-  let url: URL;
-  try {
-    url = new URL(repoUrl);
-  } catch {
-    return undefined;
-  }
-  const segments = url.pathname.split('/').filter(Boolean);
-  if (segments.length < 2) {
-    return undefined;
-  }
-  return { owner: segments[0], repo: segments[1].replace(/\.git$/, '') };
-}
-
-/** Base64-encodes UTF-8 text for the GitHub contents API. */
-function encodeBase64(text: string): string {
-  const bytes = new TextEncoder().encode(text);
-  let binary = '';
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary);
 }
 
 /** A short random suffix, so two attempts in a row never collide on a branch. */
@@ -141,69 +115,39 @@ export async function planDescriptorPr(opts: {
   content: string;
   title: string;
   body: string;
-  token: string;
-  /**
-   * The matched integration's `apiBaseUrl`, which is what makes this work on
-   * GitHub Enterprise. Backstage fills it in for every configured GitHub
-   * integration — `https://api.github.com` for github.com itself — so it is
-   * normally set and passing it is a no-op on the public host. Undefined only
-   * when no integration matches the descriptor's host, where Octokit's default
-   * is the best guess available. Getting this wrong is not subtle: without it
-   * a GHE flow asks the user for a token against their own host and then sends
-   * every call at the public API, 404ing on a repository that exists.
-   */
-  apiBaseUrl?: string;
+  adapter: PrAdapter;
 }): Promise<DescriptorPlan> {
-  const {
-    collectionUrl,
-    collectionName,
-    filename,
-    content,
-    title,
-    body,
-    token,
-    apiBaseUrl
-  } = opts;
+  const { collectionUrl, collectionName, filename, content, title, body, adapter }
+    = opts;
 
   const repoUrl = repoRootFromCollectionUrl(collectionUrl);
-  const parsed = parseGitHubRepoUrl(repoUrl);
-  if (!parsed) {
+  const target = adapter.parseRepoUrl(repoUrl);
+  if (!target) {
     throw new DescriptorPrError(
       'unparseable-url',
       `Could not work out the repository from ${collectionUrl}.`
     );
   }
-  const { owner, repo } = parsed;
   const path = descriptorPathForCollection(collectionUrl, filename);
 
-  const octokit = new Octokit({ auth: token, ...(apiBaseUrl ? { baseUrl: apiBaseUrl } : {}) });
-  const repoInfo = await octokit.repos.get({ owner, repo });
-  const baseBranch = repoInfo.data.default_branch;
+  const baseBranch = await adapter.defaultBranch(target);
 
-  // A 404 here is the GOOD answer — the path is free. Anything else (403 on a
-  // repository the token cannot read, a network failure) is a real error and is
-  // left to propagate rather than being read as "free".
-  try {
-    await octokit.repos.getContent({ owner, repo, path, ref: baseBranch });
+  // An absent file is the GOOD answer — the path is free. Every other failure
+  // (403 on a repository the token cannot read, a network failure) propagates
+  // out of `readFile` rather than being read as "free".
+  if (await adapter.readFile(target, path, baseBranch)) {
     throw new DescriptorPrError(
       'already-exists',
-      `${path} already exists in ${owner}/${repo}. Download the file and merge `
-      + 'it into the existing descriptor by hand — this flow only adds a new '
-      + 'one, and committing over that file would discard whatever it declares.'
+      `${path} already exists in ${target.project}/${target.repo}. Download the `
+      + 'file and merge it into the existing descriptor by hand — this flow only '
+      + 'adds a new one, and committing over that file would discard whatever it '
+      + 'declares.'
     );
-  } catch (e) {
-    if (e instanceof DescriptorPrError) {
-      throw e;
-    }
-    if ((e as { status?: number }).status !== 404) {
-      throw e;
-    }
   }
 
   return {
     repoUrl,
-    owner,
-    repo,
+    target,
     path,
     branch: `bruno-add-${slugify(collectionName)}-${branchSuffix()}`,
     baseBranch,
@@ -217,48 +161,24 @@ export async function planDescriptorPr(opts: {
  * Creates the branch, commits the descriptor at {@link DescriptorPlan.path} and
  * opens the pull request.
  *
- * `createOrUpdateFileContents` is called WITHOUT `sha`, which is what makes it a
- * create: {@link planDescriptorPr} has already established the path is free, and
- * a `sha`-less call against an existing file is rejected by GitHub rather than
- * clobbering it — so the check and the commit fail the same way if someone lands
- * a descriptor between the two.
+ * The request carries NO `concurrencyToken`, which is what makes it a create:
+ * {@link planDescriptorPr} has already established the path is free, and a
+ * tokenless commit against an existing file is rejected by the forge rather
+ * than clobbering it — so the check and the commit fail the same way if someone
+ * lands a descriptor between the two.
  */
-export async function submitDescriptorPr(
+export function submitDescriptorPr(
   plan: DescriptorPlan,
-  token: string,
-  apiBaseUrl?: string
+  adapter: PrAdapter
 ): Promise<{ link: string }> {
-  const octokit = new Octokit({ auth: token, ...(apiBaseUrl ? { baseUrl: apiBaseUrl } : {}) });
-
-  const baseRef = await octokit.git.getRef({
-    owner: plan.owner,
-    repo: plan.repo,
-    ref: `heads/${plan.baseBranch}`
-  });
-  await octokit.git.createRef({
-    owner: plan.owner,
-    repo: plan.repo,
-    ref: `refs/heads/${plan.branch}`,
-    sha: baseRef.data.object.sha
-  });
-
-  await octokit.repos.createOrUpdateFileContents({
-    owner: plan.owner,
-    repo: plan.repo,
+  return adapter.openPullRequest({
+    repo: plan.target,
     path: plan.path,
     branch: plan.branch,
-    message: plan.title,
-    content: encodeBase64(plan.content)
-  });
-
-  const pr = await octokit.pulls.create({
-    owner: plan.owner,
-    repo: plan.repo,
-    head: plan.branch,
-    base: plan.baseBranch,
+    baseBranch: plan.baseBranch,
+    content: plan.content,
+    commitMessage: plan.title,
     title: plan.title,
     body: plan.body
   });
-
-  return { link: pr.data.html_url };
 }

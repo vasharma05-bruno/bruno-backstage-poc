@@ -128,7 +128,11 @@ export function LinkCollectionDialog(props: {
   const advice = useDescriptorAdvice({
     location,
     apiRef,
-    direction: 'link'
+    direction: 'link',
+    // What lets the advice show the finished YAML rather than describe it, on a
+    // host no pull request can reach. Re-derived with the selection, like
+    // everything else here.
+    currentPartOf: selected?.spec?.partOf
   });
   // Both hooks are called unconditionally and combined afterwards — `&&` on
   // the call expressions would short-circuit the second one, which is a
