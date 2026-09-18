@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { useApiHolder } from '@backstage/core-plugin-api';
-import { scmAuthApiRef } from '@backstage/integration-react';
+import { scmAuthApiRef, scmIntegrationsApiRef } from '@backstage/integration-react';
 import type { PartOfDirection, PartOfPlan } from '../../lib/unlinkPr';
 import { planLink, planUnlink, submitLink, submitUnlink } from '../../lib/unlinkPr';
+import { prAdapterForUrl } from '../../lib/pr/registry';
+import type { PrAdapter } from '../../lib/pr/types';
 
 /**
  * The machinery every `spec.partOf` dialog runs on: the stage a flow is in, the
@@ -45,7 +47,9 @@ export function usePartOfPr(opts: {
   // `useApiHolder` rather than `useApi`: a host app is not obliged to register
   // the SCM auth API, and `useApi` throws at RENDER time for a missing one —
   // which would take the whole card down instead of just blocking this action.
-  const scmAuth = useApiHolder().get(scmAuthApiRef);
+  const apis = useApiHolder();
+  const scmAuth = apis.get(scmAuthApiRef);
+  const integrations = apis.get(scmIntegrationsApiRef);
 
   const [stage, setStage] = useState<PartOfStage>({ status: 'idle' });
 
@@ -58,11 +62,15 @@ export function usePartOfPr(opts: {
   /**
    * The token is read as the FIRST await of the click handler — the browser
    * treats an OAuth popup opened after any other await as unsolicited and blocks
-   * it. It is held in a local for the length of the call and is never stored in
-   * state, logged, or put in a URL.
+   * it. It is held in a local for the length of the call, handed straight to the
+   * adapter, and is never stored in state, logged, or put in a URL.
+   *
+   * The adapter is built per call rather than memoised for exactly that reason:
+   * it closes over the token, so one that outlived the call would keep a
+   * credential alive in component state.
    */
-  const withToken = async (
-    fn: (token: string) => Promise<void>
+  const withAdapter = async (
+    fn: (adapter: PrAdapter) => Promise<void>
   ): Promise<void> => {
     if (!scmAuth || !descriptorUrl) {
       fail(
@@ -81,7 +89,18 @@ export function usePartOfPr(opts: {
       if (!token) {
         throw new Error('The SCM provider returned no access token.');
       }
-      await fn(token);
+      const adapter = prAdapterForUrl({
+        url: descriptorUrl,
+        token,
+        integrations
+      });
+      if (!adapter) {
+        throw new Error(
+          `No pull request can be opened against ${descriptorUrl}: its host `
+          + 'matches no integration this plugin can write to.'
+        );
+      }
+      await fn(adapter);
     } catch (e) {
       fail(e);
     }
@@ -92,12 +111,12 @@ export function usePartOfPr(opts: {
     reset: () => setStage({ status: 'idle' }),
     prepare: ({ apiRefs, collectionName }) => {
       setStage({ status: 'planning' });
-      void withToken(async (token) => {
+      void withAdapter(async (adapter) => {
         const plan = await (direction === 'link' ? planLink : planUnlink)({
           descriptorUrl: descriptorUrl as string,
           apiRefs,
           collectionName,
-          token
+          adapter
         });
         setStage({ status: 'preview', plan });
       });
@@ -106,10 +125,10 @@ export function usePartOfPr(opts: {
     // always sees the selection the click was made against.
     submit: (plan, onSubmitted) => {
       setStage({ status: 'submitting', plan });
-      void withToken(async (token) => {
+      void withAdapter(async (adapter) => {
         const { link } = await (
           direction === 'link' ? submitLink : submitUnlink
-        )(plan, token);
+        )(plan, adapter);
         setStage({ status: 'submitted', link });
         onSubmitted?.(link);
       });

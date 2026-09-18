@@ -3,15 +3,19 @@ import {
   createBackendPlugin
 } from '@backstage/backend-plugin-api';
 import { catalogServiceRef } from '@backstage/plugin-catalog-node';
+import { brunoPermissions } from './permissions';
 import { createRouter } from './service/router';
 import {
   readAllowRuntimeWrites,
   readCacheTtlMs,
-  readDefinitionOptions
+  readDefinitionOptions,
+  readDocsOptions
 } from './service/brunoConfig';
 import { createManifestProbe } from './service/manifestProbe';
 import { readRefreshSeconds } from './service/schedule';
+import { applyDatabaseMigrations } from './store/migrations';
 import { createRuntimeLinkStore } from './store/runtimeLinkStore';
+import { createSweepReportStore } from './store/sweepReportStore';
 import { createUiCollectionStore } from './store/uiCollectionStore';
 
 /**
@@ -30,6 +34,17 @@ export const brunoPlugin = createBackendPlugin({
         logger: coreServices.logger,
         config: coreServices.rootConfig,
         httpAuth: coreServices.httpAuth,
+        // The adopter's `PermissionPolicy`, asked once per mutating route
+        // before anything is read or written, and the ownership half that
+        // follows it. `userInfo` is what turns a credential into the
+        // `ownershipEntityRefs` the `created_by` column is compared against —
+        // `httpAuth` alone cannot answer that, it only carries the principal.
+        permissions: coreServices.permissions,
+        userInfo: coreServices.userInfo,
+        // Publishes the six permissions so `/.well-known/backstage/permissions/
+        // metadata` lists them and an adopter's policy can be written against
+        // names it can discover.
+        permissionsRegistry: coreServices.permissionsRegistry,
         // Stores the collections added from the Bruno dashboard, and the links
         // made in this instance instead of in source control — the two write
         // models the catalog does not have. `BrunoCollectionEntityProvider`
@@ -51,10 +66,15 @@ export const brunoPlugin = createBackendPlugin({
         logger,
         config,
         httpAuth,
+        permissions,
+        userInfo,
+        permissionsRegistry,
         database,
         catalog,
         reader
       }) {
+        permissionsRegistry.addPermissions(brunoPermissions);
+
         // A SECOND probe instance: the catalog module builds its own
         // (module.ts), and the two cannot be shared because they are separate
         // backend features with no wiring between them — and sharing one
@@ -69,8 +89,18 @@ export const brunoPlugin = createBackendPlugin({
           definition: readDefinitionOptions(config, logger)
         });
 
+        // Strictly before the stores, which no longer carry any DDL of their
+        // own and would otherwise query tables that do not yet exist.
+        await applyDatabaseMigrations(database);
+
         const uiCollections = await createUiCollectionStore(database);
         const runtimeLinks = await createRuntimeLinkStore(database);
+        // Not a write model like the other two: the only writer is this
+        // plugin's own provider, over a plugin token, and the next sweep
+        // rewrites whatever is in it. It is here because the provider runs in
+        // `brunoCatalogModule` on ONE replica while the route is served from
+        // all of them, so the database is the only place the two can meet.
+        const sweepReports = await createSweepReportStore(database);
 
         httpRouter.use(
           await createRouter({
@@ -78,11 +108,15 @@ export const brunoPlugin = createBackendPlugin({
             config,
             catalog,
             httpAuth,
+            permissions,
+            userInfo,
             probe,
             uiCollections,
             runtimeLinks,
+            sweepReports,
             refreshSeconds: readRefreshSeconds(config),
-            allowRuntimeWrites: readAllowRuntimeWrites(config)
+            allowRuntimeWrites: readAllowRuntimeWrites(config),
+            docs: readDocsOptions(config, logger)
           })
         );
 

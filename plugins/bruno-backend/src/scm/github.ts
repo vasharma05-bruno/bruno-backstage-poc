@@ -6,7 +6,8 @@ import { Octokit } from '@octokit/rest';
 import {
   composePathStyleCollectionUrl,
   normalizePathStyleUrl,
-  originPlusSegments
+  originPlusSegments,
+  safeHost
 } from './normalize';
 import { conditionalGetJson } from './treeIdentity';
 import type { ParsedRepoUrl, ScmProvider } from './types';
@@ -103,8 +104,37 @@ export function createGithubScmProvider(options: {
 }): ScmProvider {
   const { integrations, githubCredentials } = options;
 
-  const apiBaseUrlFor = (url: string): string =>
-    integrations.github.byUrl(url)?.config.apiBaseUrl ?? 'https://api.github.com';
+  /**
+   * The API origin for `url`'s host — and NEVER a default.
+   *
+   * `?? 'https://api.github.com'` stood here, and it was worse than latent. A
+   * GitHub Enterprise entry may legitimately omit `apiBaseUrl`
+   * (`GithubIntegrationConfig.apiBaseUrl` is optional, and
+   * `readGithubIntegrationConfig` only deduces it for `github.com`), so a
+   * configured GHE host with no `apiBaseUrl` sent its `owner/repo` query — and
+   * its `If-None-Match` — to PUBLIC GitHub, which answers 404 for a private
+   * enterprise repo and turns the whole cheap-revalidation tier into a
+   * permanent miss. The unmatched-host case is the same mistake pointed
+   * outwards: a foreign host's repo path leaking to api.github.com.
+   *
+   * Throwing is safe on both call paths. `checkTreeIdentity`'s caller
+   * (`manifestProbe`'s `checkIdentity`) catches anything this tier throws and
+   * falls back to a full read, so a misconfigured host degrades to the
+   * behaviour it had before the tier existed. `resolveDefaultBranch` propagates
+   * it, which is right: that read was going to fail anyway, and this error
+   * names the missing key instead of reporting someone else's 404.
+   */
+  const apiBaseUrlFor = (url: string): string => {
+    const apiBaseUrl = integrations.github.byUrl(url)?.config.apiBaseUrl;
+    if (!apiBaseUrl) {
+      throw new Error(
+        `No GitHub API base URL is configured for ${safeHost(url)}. Add an `
+        + '`integrations.github` entry for that host with an `apiBaseUrl` '
+        + '(e.g. https://ghe.example.com/api/v3).'
+      );
+    }
+    return apiBaseUrl;
+  };
 
   return {
     type: 'github',

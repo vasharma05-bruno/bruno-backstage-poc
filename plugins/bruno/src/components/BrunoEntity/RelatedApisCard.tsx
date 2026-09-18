@@ -26,9 +26,16 @@ import {
 } from '@backstage/plugin-catalog-react';
 import { BrunoInfoCard } from '../BrunoInfoCard';
 import { useDescriptorAdvice } from '../PartOfPr';
-import { descriptorLocation, linkSource } from '../../lib/brunoEntity';
+import {
+  descriptorLocation,
+  linkSource,
+  unresolvedRefs
+} from '../../lib/brunoEntity';
 import { useRuntimeWritesEnabled } from '../../lib/runtimeWrites';
-import { useEntityRelationRefresh } from '../../lib/entityRefresh';
+import {
+  useEntityRelationRefresh,
+  useRelationsSettled
+} from '../../lib/entityRefresh';
 import { LinkApiDialog } from './LinkApiDialog';
 import { UnlinkDialog } from './UnlinkDialog';
 
@@ -58,10 +65,11 @@ const useStyles = makeStyles((theme) => ({
  * API side of the same relation, so the two ends of a link behave alike.
  */
 function ApiActions(props: {
-  api: Entity;
+  /** What the menu is acting on: an entity name, or a bare reference. */
+  name: string;
   onUnlink: () => void;
 }): JSX.Element {
-  const { api, onUnlink } = props;
+  const { name, onUnlink } = props;
   const classes = useStyles();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
 
@@ -71,7 +79,7 @@ function ApiActions(props: {
     <>
       <IconButton
         size="small"
-        aria-label={`Actions for ${api.metadata.name}`}
+        aria-label={`Actions for ${name}`}
         onClick={(event) => setAnchor(event.currentTarget)}
       >
         <MoreVertIcon fontSize="small" />
@@ -91,16 +99,79 @@ function ApiActions(props: {
   );
 }
 
+/** One row: an API the relation resolved to, or a declared reference that
+ *  produced none. */
+interface ApiRow {
+  /** Normalised entity reference. The row key, and what Unlink acts on. */
+  ref: string;
+  /** The catalog entity, for a reference that resolved. */
+  api?: Entity;
+}
+
+/**
+ * A declared reference the catalog has produced no relation for.
+ *
+ * Rendered in the same table as the rest rather than in a strip beside it: a
+ * reader scanning for "is orders linked?" should find the answer in one place,
+ * and "declared, but the catalog has not honoured it" is an answer to that
+ * question.
+ *
+ * `settled` picks between the two readings, and it is not cosmetic — see
+ * `useRelationsSettled`. The condition is stated in words as well as colour,
+ * and repeated as the row's accessible name, because a chip tinted red is not
+ * a fact a screen reader can relay.
+ */
+function UnresolvedApi(props: {
+  apiRef: string;
+  settled: boolean;
+}): JSX.Element {
+  const { apiRef, settled } = props;
+  const classes = useStyles();
+  const label = settled ? 'Not found in the catalog' : 'Not resolved yet';
+
+  return (
+    <Box component="span" aria-label={`${apiRef}: ${label}`}>
+      <Typography variant="body2" component="span">
+        {apiRef}
+      </Typography>
+      <Tooltip
+        title={
+          settled
+            ? 'This collection declares the reference, but no such entity is '
+            + 'in the catalog. Usually a typo in the reference, or an API '
+            + 'that was never registered.'
+            : 'Declared by this collection. The catalog has not produced the '
+              + 'relation yet, which normally clears within a few seconds of '
+              + 'the descriptor being read.'
+        }
+      >
+        <Chip
+          size="small"
+          variant="outlined"
+          className={
+            settled ? `${classes.chip} ${classes.danger}` : classes.chip
+          }
+          label={label}
+        />
+      </Tooltip>
+    </Box>
+  );
+}
+
 /**
  * Overview card listing the API entities this collection documents.
  *
  * The relation is read, not the spec: `BrunoKindProcessor` emits both directions
- * of the `partOf`/`hasPart` pair, and reading the RELATION means an entity that
- * `spec.partOf` names but that does not exist in the catalog is simply absent
- * here rather than rendered as a dead row — and it means the list covers links
- * made in this instance as well as the ones the descriptor declares, since the
- * processor emits the same relation for both. The per-row chip is where that
- * difference shows, because it decides what Unlink has to do.
+ * of the `partOf`/`hasPart` pair, so the list covers links made in this instance
+ * as well as the ones the descriptor declares, since the processor emits the
+ * same relation for both. The per-row chip is where that difference shows,
+ * because it decides what Unlink has to do.
+ *
+ * What reading the relation loses is a reference that resolved to nothing: it
+ * produces no relation, so it used to render as no row at all, which is
+ * indistinguishable from an edit that never took. `unresolvedRefs` recovers it
+ * by diffing what the entity declares against the relations already in context
+ * — no fetch, and right on the first paint.
  *
  * Built on core-components `Table` rather than `EntityRelationCard`: the latter
  * has no per-row action slot, and its cells must be `@backstage/ui` components,
@@ -155,12 +226,24 @@ export function RelatedApisCard(): JSX.Element {
   const listed = new Set((entities ?? []).map((e) => stringifyEntityRef(e)));
   const pendingLinks = runtimeLinked.filter((ref) => !listed.has(ref));
 
-  const columns: TableColumn<Entity>[] = [
+  // Resolved first, then whatever the entity declares that produced no
+  // relation — so the dead references read as the tail of the same list rather
+  // than as a separate finding.
+  const settled = useRelationsSettled((entities ?? []).length);
+  const rows: ApiRow[] = [
+    ...(entities ?? []).map((api) => ({ ref: stringifyEntityRef(api), api })),
+    ...unresolvedRefs(entity, [...listed]).map((ref) => ({ ref }))
+  ];
+
+  const columns: TableColumn<ApiRow>[] = [
     {
       title: 'Name',
-      field: 'metadata.name',
+      field: 'ref',
       render: (row) => {
-        const ref = stringifyEntityRef(row);
+        const { ref } = row;
+        if (!row.api) {
+          return <UnresolvedApi apiRef={ref} settled={settled} />;
+        }
         // Which of the two places this link is recorded in. Worth a chip
         // because it decides what Unlink will do — one click, or a pull
         // request — and because a link that lives only in this instance is a
@@ -168,7 +251,7 @@ export function RelatedApisCard(): JSX.Element {
         const source = linkSource(entity, ref);
         return (
           <>
-            <EntityRefLink entityRef={row} defaultKind="api" />
+            <EntityRefLink entityRef={row.api} defaultKind="api" />
             {(source === 'runtime' || source === 'both') && (
               <Tooltip
                 title={
@@ -209,28 +292,43 @@ export function RelatedApisCard(): JSX.Element {
     },
     {
       title: 'Type',
-      field: 'spec.type',
-      render: (row) => String(row.spec?.type ?? '—')
+      field: 'api.spec.type',
+      render: (row) => String(row.api?.spec?.type ?? '—')
     },
     {
       title: 'Owner',
-      render: (row) => (
-        <EntityRefLinks
-          entityRefs={getEntityRelations(row, RELATION_OWNED_BY)}
-          defaultKind="group"
-        />
-      )
+      render: (row) =>
+        row.api
+          ? (
+              <EntityRefLinks
+                entityRefs={getEntityRelations(row.api, RELATION_OWNED_BY)}
+                defaultKind="group"
+              />
+            )
+          : '—'
     },
     {
       title: 'Actions',
       width: '1%',
       sorting: false,
-      render: (row) => (
-        <ApiActions
-          api={row}
-          onUnlink={() => setUnlinkTarget(stringifyEntityRef(row))}
-        />
-      )
+      render: (row) => {
+        // An unresolved reference is only actionable when a runtime link
+        // records it: that one is removed by a call, from here. A
+        // descriptor-only one is removed by a pull request against a
+        // `spec.partOf` entry the user can see for themselves, and
+        // `UnlinkDialog` would spend its whole flow explaining a relation that
+        // is not there.
+        const source = linkSource(entity, row.ref);
+        if (!row.api && source !== 'runtime' && source !== 'both') {
+          return undefined;
+        }
+        return (
+          <ApiActions
+            name={row.api?.metadata.name ?? row.ref}
+            onUnlink={() => setUnlinkTarget(row.ref)}
+          />
+        );
+      }
     }
   ];
 
@@ -281,7 +379,7 @@ export function RelatedApisCard(): JSX.Element {
     body = (
       <WarningPanel title="Could not load related APIs" message={error.message} />
     );
-  } else if (!entities || entities.length === 0) {
+  } else if (rows.length === 0) {
     body = (
       <Box className={classes.empty}>
         <Typography variant="body2" color="textSecondary" paragraph>
@@ -295,7 +393,7 @@ export function RelatedApisCard(): JSX.Element {
       <Table
         options={{ search: false, paging: false, toolbar: false, padding: 'dense' }}
         columns={columns}
-        data={entities}
+        data={rows}
       />
     );
   }

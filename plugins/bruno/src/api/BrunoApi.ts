@@ -169,6 +169,47 @@ export interface StoredCollections {
   refreshSeconds: number;
 }
 
+/**
+ * A repository the autodiscovery sweep read successfully and could not read ALL
+ * of.
+ *
+ * GitHub caps a recursive file listing, and a repository past that cap yields
+ * collections the sweep never sees. That is a property of the REPOSITORY, and
+ * the collections it costs do not exist as entities — so there is nothing in
+ * the catalog carrying this, and no annotation could. It travels on its own.
+ *
+ * `found` is the figure that decides whether anybody cares: it is the
+ * difference between missing one collection and missing fifty, and it is the
+ * only number a reader has.
+ */
+export interface IncompleteRepositorySummary {
+  /** `owner/repo`. */
+  repository: string;
+  host: string;
+  /** How many collections the sweep DID find there. */
+  found: number;
+  /** The host would not list any more files. A union of one today, and it stays
+   *  a union: another cause would need its own sentence on screen. */
+  reason: 'listing-limit';
+}
+
+/**
+ * What the last completed autodiscovery sweep could not see.
+ *
+ * Note what the ABSENCE of this value means, because the two are easy to
+ * conflate and the mistake is not recoverable on screen: no report at all means
+ * no sweep has ever been recorded — `bruno.discovery[]` is unconfigured, or the
+ * backend has not finished its first tick — whereas a report with an empty
+ * `incomplete` is a sweep that ran and found everything complete. A caller that
+ * treated the first as the second would describe an instance with discovery
+ * switched off as a healthy one.
+ */
+export interface DiscoverySweepReport {
+  /** ISO timestamp of the sweep this describes. */
+  sweptAt: string;
+  incomplete: IncompleteRepositorySummary[];
+}
+
 /** What the backend confirmed, once a collection has been removed. */
 export interface DeletedCollection {
   name: string;
@@ -357,6 +398,19 @@ export interface BrunoApi {
    * that type for why the list is not readable without the interval.
    */
   listCollections(): Promise<StoredCollections>;
+
+  /**
+   * What the last `bruno.discovery[]` sweep could not see, or `undefined` when
+   * no sweep has ever been recorded.
+   *
+   * The second read here the catalog cannot answer, and for a sharper reason
+   * than {@link listCollections}: this is about collections that do not exist
+   * as entities and never will until somebody acts. Asking the catalog about
+   * them is asking it to list what it was never told.
+   *
+   * `undefined` is not an empty report. See {@link DiscoverySweepReport}.
+   */
+  getDiscoveryReport(): Promise<DiscoverySweepReport | undefined>;
 
   /**
    * Links one or more API entities to a Bruno collection in THIS Backstage

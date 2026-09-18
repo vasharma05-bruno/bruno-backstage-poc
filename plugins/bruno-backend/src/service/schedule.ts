@@ -39,6 +39,12 @@ export function readSchedule(config: Config): SchedulerServiceTaskScheduleDefini
   return {
     frequency: { seconds: frequencySeconds },
     timeout: { seconds: timeoutSeconds },
+    // One replica sweeps, not N. The task re-reads every configured collection
+    // from its SCM host, so `'local'` would multiply that traffic — and the API
+    // rate limit it spends — by the replica count while buying no freshness.
+    // This IS the scheduler's default, stated rather than inherited, because a
+    // silent framework default is not something an adopter can audit.
+    scope: 'global',
     // Give the backend a moment after boot before the first refresh.
     initialDelay: { seconds: 3 }
   };

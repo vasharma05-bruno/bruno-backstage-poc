@@ -45,7 +45,7 @@ export function PartOfPreview(props: { plan: PartOfPlan }): JSX.Element {
       <Typography variant="body2">
         The pull request updates <code>{plan.path}</code> in{' '}
         <Link to={plan.repoUrl}>
-          {plan.owner}/{plan.repo}
+          {plan.target.project}/{plan.target.repo}
         </Link>{' '}
         on a new branch <code>{plan.branch}</code>, based on{' '}
         <code>{plan.baseBranch}</code>.

@@ -137,6 +137,29 @@ bruno:
   
   allowRuntimeWrites: true
 
+  # Which sources a USER may point the add-collection dialog at. Fail-closed:
+  # without this key, `POST /collections/probe` and `POST /collections` refuse
+  # every URL. Host AND path, because a bare `host: github.com` entry — which
+  # every adopter has an integration for — would let any signed-in user use this
+  # backend to probe whether an arbitrary private repo exists.
+  #
+  # `bruno.collections[]` and `bruno.discovery[]` above are NOT gated by this;
+  # those URLs are already the operator's own decision.
+  allowedSources:
+    - host: github.com
+      pathPrefixes:
+        - /vasharma05-bruno
+
+  # Where the docs tab fetches the OpenCollection renderer bundle from. The
+  # default is a STAGING host on an unversioned path, so it cannot carry a
+  # Subresource Integrity hash and its one-year cache header cannot be busted.
+  # Point this at a mirror you control for an air-gapped install — the docs
+  # page's Content-Security-Policy is derived from the same value, so the
+  # bundle can never be fetchable and CSP-refused at once.
+  # docs:
+  #   cdnBaseUrl: https://cdn.internal.example/oc-api-docs/1.4.0
+  #   integrity: sha384-...
+
   # The generated OpenCollection YAML is stored inline on each Bruno entity's
   # `spec.definition`, as a kind: API entity stores its OpenAPI document.
   #

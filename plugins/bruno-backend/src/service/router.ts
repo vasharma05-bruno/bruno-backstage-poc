@@ -1,6 +1,8 @@
 import type {
   HttpAuthService,
-  LoggerService
+  LoggerService,
+  PermissionsService,
+  UserInfoService
 } from '@backstage/backend-plugin-api';
 import { MiddlewareFactory } from '@backstage/backend-defaults/rootHttpRouter';
 import type { Entity } from '@backstage/catalog-model';
@@ -11,19 +13,39 @@ import {
   NotAllowedError,
   NotFoundError
 } from '@backstage/errors';
+import { ScmIntegrations } from '@backstage/integration';
 import type { CatalogService } from '@backstage/plugin-catalog-node';
 import express from 'express';
 import Router from 'express-promise-router';
 import type { ManifestProbe } from './manifestProbe';
+import { assertOwns, isAllowed, requirePermission } from './authorization';
+import {
+  brunoCollectionCreatePermission,
+  brunoCollectionDeleteAnyPermission,
+  brunoCollectionDeletePermission,
+  brunoLinkCreatePermission,
+  brunoLinkDeleteAnyPermission,
+  brunoLinkDeletePermission
+} from '../permissions';
 import {
   DEFINITION_BYTES_ANNOTATION,
   DEFINITION_OMITTED_ANNOTATION
 } from '../processor/BrunoKindProcessor';
 import { collectionNameFromUrl } from '../provider/BrunoCollectionEntityProvider';
 import { readBrunoCollections } from './brunoConfig';
+import type { DocsOptions } from './brunoConfig';
 import { normaliseApiRef, normaliseCollectionRef } from './entityRefs';
+import {
+  assertSourceAllowed,
+  createProbeRateLimiter,
+  readAllowedSources
+} from './sourceAllowlist';
 import type { UiCollectionStore } from '../store/uiCollectionStore';
 import type { RuntimeLinkStore } from '../store/runtimeLinkStore';
+import type {
+  IncompleteRepositoryRow,
+  SweepReportStore
+} from '../store/sweepReportStore';
 import { escapeHtml, generateOcDocsHtml } from './generateOcDocsHtml';
 
 /**
@@ -53,11 +75,34 @@ const MAX_ENTITY_NAME_LENGTH = 63;
  */
 const MAX_TITLE_LENGTH = 255;
 
+/**
+ * Ceiling on the entity refs one request body may carry.
+ *
+ * `POST /links` and `POST /collections` hand their whole ref list to
+ * `catalog.getEntitiesByRefs` in a SINGLE call, so an unbounded array is an
+ * unbounded catalog query bought with one authenticated request. Until now the
+ * only bound was `express.json`'s byte cap, which is incidental: it limits how
+ * much a caller may SEND, not how much work the send asks for, and it moves
+ * whenever that cap is retuned.
+ *
+ * 100 is far above any real body — both lists come from a picker, and the APIs
+ * one collection documents are counted in tens — and far below the point where
+ * a single refused request costs anything. It is deliberately one number for
+ * both routes: they are the same fan-out into the same catalog call.
+ */
+const MAX_PART_OF = 100;
+
 export interface RouterOptions {
   logger: LoggerService;
   config: Config;
   catalog: CatalogService;
   httpAuth: HttpAuthService;
+  /** The adopter's `PermissionPolicy`. Every mutating route asks it before it
+   *  reads or writes anything; see `service/authorization.ts`. */
+  permissions: PermissionsService;
+  /** Resolves a credential's `ownershipEntityRefs`, which is what the two
+   *  delete routes compare `created_by` against. */
+  userInfo: UserInfoService;
   /** Reads a collection folder from source control, using the SERVER's
    *  integration credentials. Backs the add-collection scan. */
   probe: ManifestProbe;
@@ -68,6 +113,11 @@ export interface RouterOptions {
    *  control. Read back service-to-service by `BrunoKindProcessor`, which turns
    *  the rows into the same relations `spec.partOf` produces. */
   runtimeLinks: RuntimeLinkStore;
+  /** The latest `bruno.discovery[]` sweep report, written by
+   *  `BrunoCollectionEntityProvider` over a plugin token and read back by the
+   *  dashboard. A table rather than a field because the sweep's task is
+   *  `scope: 'global'` — one replica writes, all N serve the route. */
+  sweepReports: SweepReportStore;
   /** `bruno.allowRuntimeWrites` — whether this instance may record a
    *  collection or a link in its own database rather than only in source
    *  control. Gates the two POST routes; see `requireRuntimeWrites`. */
@@ -77,25 +127,44 @@ export interface RouterOptions {
    *  Returned on the create and delete responses so the UI can quote the real
    *  number instead of hardcoding the default. */
   refreshSeconds: number;
+  /** `bruno.docs` — where the renderer bundle is fetched from, and what the
+   *  docs page's Content-Security-Policy names as an allowed script and style
+   *  origin. One value, both jobs; see `readDocsOptions`. */
+  docs: DocsOptions;
 }
 
 /**
  * Builds the Express router for `/api/bruno/*`.
  *
  *   GET    /health                          -> { status: 'ok' }
+ *   GET    /discovery/report                -> { report } (auth: user; the last
+ *                                              sweep, or `null` when none has
+ *                                              been recorded)
+ *   PUT    /discovery/report                -> { recorded: true } (auth: service;
+ *                                              written by the catalog module's
+ *                                              provider)
  *   GET    /entities/:namespace/:name/docs  -> text/html (docs for a kind:Bruno entity)
  *   POST   /collections/probe               -> { found, ... } (does this URL hold a collection?)
  *   POST   /collections                     -> 201 (add a collection; auth: user;
- *                                              needs `bruno.allowRuntimeWrites`)
+ *                                              needs `bruno.allowRuntimeWrites`
+ *                                              + `bruno.collection.create`)
  *   GET    /collections                     -> { collections, refreshSeconds }
  *                                              (auth: user | service; a user's
  *                                              rows omit `createdBy`)
- *   DELETE /collections/:name               -> { deleted: true } (auth: user)
+ *   DELETE /collections/:name               -> { deleted: true } (auth: user;
+ *                                              `bruno.collection.delete` + owns
+ *                                              the row, unless
+ *                                              `bruno.collection.delete.any`)
  *   GET    /links                           -> { links } (auth: service)
  *   POST   /links                           -> 201 (link at runtime; auth: user;
- *                                              needs `bruno.allowRuntimeWrites`)
- *                                              takes `apiRefs[]`, all or none
- *   DELETE /links?collection=&api=          -> { unlinked: true } (auth: user)
+ *                                              needs `bruno.allowRuntimeWrites`
+ *                                              + `bruno.link.create`)
+ *                                              takes `apiRefs[]`, all or none,
+ *                                              at most `MAX_PART_OF` entries
+ *   DELETE /links?collection=&api=          -> { unlinked: true } (auth: user;
+ *                                              `bruno.link.delete` + owns the
+ *                                              row, unless
+ *                                              `bruno.link.delete.any`)
  *
  * The first three are read-only and were the whole of this plugin: everything
  * the UI knows about an EXISTING collection travels on the `kind: Bruno` entity
@@ -122,6 +191,15 @@ export interface RouterOptions {
  * see `requireRuntimeWrites` for why a delete has to outlive the permission
  * that created the row.
  *
+ * EVERY MUTATING ROUTE IS PERMISSIONED, and the two deletes additionally check
+ * ownership. The order is fixed and is the security property: authorize first,
+ * then read the row the decision is about, then write. A route that read the
+ * row first would leak its existence to a principal the policy refuses, and one
+ * that deleted before checking ownership would be the IDOR this replaces —
+ * `created_by` was recorded from the first commit and read by nothing. See
+ * `../permissions.ts` for the six permissions and `./authorization.ts` for the
+ * ownership comparison.
+ *
  * The `/links` three are the same argument applied to RELATIONS. A relation is
  * derived output — recomputed and rewritten on every stitch — so there is no
  * relation to insert or delete either, and the only durable place a link can
@@ -138,11 +216,15 @@ export async function createRouter(
     config,
     catalog,
     httpAuth,
+    permissions,
+    userInfo,
     probe,
     uiCollections,
     runtimeLinks,
+    sweepReports,
     refreshSeconds,
-    allowRuntimeWrites
+    allowRuntimeWrites,
+    docs
   } = options;
 
   /**
@@ -173,6 +255,22 @@ export async function createRouter(
       );
     }
   };
+
+  /**
+   * The two-dimensional host-and-path gate in front of every URL that arrives
+   * in a REQUEST BODY. Read once here: `bruno.allowedSources` is a security
+   * control, so a change to it takes a restart rather than taking effect
+   * halfway through a request.
+   *
+   * Applied to `POST /collections/probe` and `POST /collections` and to nothing
+   * else. `bruno.collections[]` and `bruno.discovery[]` are the operator's own
+   * URLs and stay ungated — see `sourceAllowlist.ts` for the whole argument.
+   */
+  const integrations = ScmIntegrations.fromConfig(config);
+  const allowedSources = readAllowedSources(config);
+  const assertAllowedSource = (url: string): string =>
+    assertSourceAllowed({ url, integrations, allowed: allowedSources });
+  const probeLimiter = createProbeRateLimiter();
 
   /**
    * Marks a collection for immediate reprocessing, and says whether it worked.
@@ -209,10 +307,79 @@ export async function createRouter(
   };
 
   const router = Router();
-  router.use(express.json());
+  // Explicit, rather than `express.json()`'s incidental 100 kB default. Every
+  // body this router reads is a handful of short strings plus a ref list capped
+  // at `MAX_PART_OF`, so 64 kB is roomy; what matters is that the number is a
+  // decision rather than whatever a dependency happens to ship.
+  router.use(express.json({ limit: '64kb' }));
 
   router.get('/health', (_req, res) => {
     res.json({ status: 'ok' });
+  });
+
+  // What the last `bruno.discovery[]` sweep could NOT see.
+  //
+  // Beside `/health` rather than folded into `GET /collections` because it
+  // reports on REPOSITORIES, not on entities. GitHub caps a recursive tree
+  // listing, and a repository past that cap yields collections that are never
+  // discovered — so the interesting rows here are precisely the ones that have
+  // no entity, and there is nothing in the collection list to hang them off.
+  // For the same reason an annotation is the wrong channel: the collections
+  // this describes do not exist, and annotating the ones that were found would
+  // mark exactly the wrong thing. (Catalog processing stamping annotations a
+  // cycle late is the second reason, and the lesser one.)
+  //
+  // `report: null` is NOT "everything is fine". It means no sweep has ever been
+  // recorded — `bruno.discovery[]` is unconfigured, or the provider has not
+  // finished its first tick — and it is a different answer from a report with
+  // an empty `incomplete`, which is a sweep that ran and found nothing missing.
+  // A caller that merged the two would report an instance with discovery
+  // switched off as a healthy one.
+  //
+  // `['user']`: it names repositories an operator can act on, which is the
+  // dashboard's business and no service's.
+  router.get('/discovery/report', async (req, res) => {
+    await httpAuth.credentials(req, { allow: ['user'] });
+    res.json({ report: (await sweepReports.get()) ?? null });
+  });
+
+  // The provider's side of that report.
+  //
+  // `['service']` ONLY, exactly like `GET /links`: the sole writer is
+  // `BrunoCollectionEntityProvider`, which runs in `brunoCatalogModule` — a
+  // separate backend feature with no in-process link to this router — and
+  // reaches this plugin with a plugin token, as it already does to read
+  // `GET /collections`. See `provider/sweepReportPublisher.ts` for why an
+  // in-memory field could not work: the sweep's task is `scope: 'global'`, so
+  // it runs on one replica while this route is served from all of them.
+  //
+  // NOT gated on `bruno.allowRuntimeWrites`. That key is about this instance
+  // becoming the source of truth for something the CATALOG shows, in place of a
+  // reviewed file; this row is a diagnostic about a sweep the operator already
+  // configured, it produces no entity and no relation, and gating it would take
+  // the strip away from every instance on the default configuration.
+  //
+  // A PUT rather than a POST because there is one row and this replaces it.
+  // Malformed entries are dropped rather than rejected: a redeployed module
+  // talking to an older plugin should cost the entries it added, not the whole
+  // report.
+  router.put('/discovery/report', async (req, res) => {
+    await httpAuth.credentials(req, { allow: ['service'] });
+    const body = (req.body ?? {}) as {
+      sweptAt?: unknown;
+      incomplete?: unknown;
+    };
+    if (typeof body.sweptAt !== 'string' || !body.sweptAt) {
+      throw new InputError('`sweptAt` must be a non-empty string.');
+    }
+    if (!Array.isArray(body.incomplete)) {
+      throw new InputError('`incomplete` must be an array.');
+    }
+    await sweepReports.save({
+      sweptAt: body.sweptAt,
+      incomplete: readIncomplete(body.incomplete)
+    });
+    res.json({ recorded: true });
   });
 
   // Does this URL hold a Bruno collection? The scan behind the add-collection
@@ -231,13 +398,13 @@ export async function createRouter(
   // dialog renders it as a field-level message rather than a failure. Only an
   // unreadable URL is a 4xx.
   //
-  // POC scope: any authenticated user may ask the backend to read any URL its
-  // integrations can reach, which is both an SSRF surface and a way to confirm
-  // the existence of private repositories. Documented, not fixed, along with
-  // the rest of the Beta hardening — see docs/execution/UI-P6-plan.md
-  // §"Standing constraints".
+  // The URL is the caller's, so `bruno.allowedSources` decides whether the
+  // server will read it at all, and a per-user budget bounds how often. Both
+  // run BEFORE the probe: this route is the plugin's only cold-fetch surface
+  // reachable from a request body, and a check that fires after the read has
+  // already paid for everything it was meant to prevent.
   router.post('/collections/probe', async (req, res) => {
-    await httpAuth.credentials(req, { allow: ['user'] });
+    const credentials = await httpAuth.credentials(req, { allow: ['user'] });
 
     const url = (req.body as { url?: unknown })?.url;
     if (typeof url !== 'string' || !url.trim()) {
@@ -245,6 +412,39 @@ export async function createRouter(
         found: false,
         reason: 'unreadable',
         message: 'A collection URL is required.'
+      });
+      return;
+    }
+
+    // The gate's two outcomes are answered differently on purpose. A refusal is
+    // a 403 carrying the config key, because it is the operator's decision and
+    // the dialog has nothing useful to say about it; an unparseable URL keeps
+    // this route's existing `{ found: false, reason: 'unreadable' }` 400, which
+    // is what the dialog renders as a field-level message.
+    let allowedUrl: string;
+    try {
+      allowedUrl = assertAllowedSource(url);
+    } catch (e) {
+      const message = String((e as Error)?.message ?? e);
+      logger.info('Bruno collection probe failed.', { url, error: message });
+      if (e instanceof NotAllowedError) {
+        throw e;
+      }
+      res.status(400).json({ found: false, reason: 'unreadable', message });
+      return;
+    }
+
+    // Spent only for a URL that passed the gate: a refused URL costs the server
+    // nothing, so it must not cost the caller their budget either.
+    const retryAfter = probeLimiter.spend(credentials.principal.userEntityRef);
+    if (retryAfter !== undefined) {
+      res.setHeader('Retry-After', String(retryAfter));
+      res.status(429).json({
+        found: false,
+        reason: 'rate-limited',
+        message:
+          'Too many collection scans from this account. Try again in '
+          + `${retryAfter} seconds.`
       });
       return;
     }
@@ -257,12 +457,19 @@ export async function createRouter(
       // as a side effect, which is more work than the question needs; reusing
       // the one seam is worth more than a narrower read that would have to be
       // kept in step with it.
-      snapshot = await probe.probe(url);
+      snapshot = await probe.probe(allowedUrl);
     } catch (e) {
       const message = String((e as Error)?.message ?? e);
       // Logged at info: an unreachable URL here is a user typing a repository
       // they cannot see, not a fault in the deployment.
-      logger.info(`Bruno collection probe failed for ${url}: ${message}`);
+      //
+      // The URL travels as STRUCTURED metadata rather than interpolated into
+      // the message. It is the request body's value verbatim — the probe throws
+      // on an unparseable URL before it normalises anything — so it can hold
+      // newlines, and interpolating it would let an authenticated caller forge
+      // whole log lines. The reader's message goes the same way: it can echo
+      // the request it made, and that request can carry a token.
+      logger.info('Bruno collection probe failed.', { url, error: message });
       res.status(400).json({ found: false, reason: 'unreadable', message });
       return;
     }
@@ -309,15 +516,22 @@ export async function createRouter(
   // `created_by` would have to become a spoofable body field to carry anything
   // at all.
   //
-  // POC scope, matching the posture on the probe route above: any authenticated
-  // user may ask the backend to read any URL its integrations can reach (an
-  // SSRF surface and a private-repository existence oracle), and any
-  // authenticated user may add a collection that everyone else then sees.
-  // Documented, not fixed — see docs/execution/UI-P6-plan.md
-  // §"Standing constraints".
+  // The URL is gated by `bruno.allowedSources` exactly as on the probe route,
+  // and for the same reason plus one more: this route is the one that would let
+  // a caller who cannot reach `/collections/probe` reach the same read through
+  // the create instead, so the guard has to sit on both or on neither.
+  //
+  // `bruno.collection.create` is asked BEFORE the allow-list, the name checks
+  // and the probe, so a principal the policy refuses cannot use this route to
+  // ask the server to read anything.
   router.post('/collections', async (req, res) => {
     const credentials = await httpAuth.credentials(req, { allow: ['user'] });
     requireRuntimeWrites('Adding a collection');
+    await requirePermission({
+      permissions,
+      permission: brunoCollectionCreatePermission,
+      credentials
+    });
     const createdBy = credentials.principal.userEntityRef;
 
     const body = (req.body ?? {}) as {
@@ -332,6 +546,9 @@ export async function createRouter(
     if (typeof rawUrl !== 'string' || !rawUrl.trim()) {
       throw new InputError('A collection URL is required.');
     }
+    // Before the name checks and before the catalog fan-out, not just before
+    // the read: a URL this instance will not accept should cost nothing at all.
+    const allowedUrl = assertAllowedSource(rawUrl);
     const name = body.name;
     if (typeof name !== 'string' || !name.trim()) {
       throw new InputError('An entity name is required.');
@@ -374,7 +591,7 @@ export async function createRouter(
     // `normalize` is idempotent, so the two paths converge on one identity.
     let normalized: string;
     try {
-      normalized = probe.normalize(rawUrl);
+      normalized = probe.normalize(allowedUrl);
     } catch (e) {
       throw new InputError(
         `Backstage could not use this URL: ${String((e as Error)?.message ?? e)}`
@@ -393,7 +610,7 @@ export async function createRouter(
     // ingest a few seconds later reads from.
     let snapshot;
     try {
-      snapshot = await probe.probe(rawUrl);
+      snapshot = await probe.probe(allowedUrl);
     } catch (e) {
       throw new InputError(
         `Backstage could not read this URL: ${String((e as Error)?.message ?? e)}`
@@ -558,20 +775,48 @@ export async function createRouter(
   // and cannot be removed from here at all. Silently succeeding would leave the
   // user watching a row that never goes away.
   //
-  // POC scope (IDOR): any authenticated user may delete any UI-created
-  // collection. `created_by` is recorded and NOT enforced. Beta hardening is a
-  // permission plus an ownership check against that column.
+  // Three gates in a fixed order, and the order is the whole point. The policy
+  // decides whether this principal may delete collections AT ALL; only then is
+  // the row read, so a refused principal learns nothing about which names
+  // exist; and only then is ownership decided, against the same row that the
+  // delete below removes — `getByName` and `delete` fold case identically, so
+  // there is no gap between the row that was authorised and the row that goes.
+  //
+  // `bruno.collection.delete.any` is the admin escape hatch: ALLOW on it skips
+  // the ownership check and nothing else. It is asked only when there is a row
+  // to own, because until then there is no decision for it to change.
   router.delete('/collections/:name', async (req, res) => {
-    await httpAuth.credentials(req, { allow: ['user'] });
+    const credentials = await httpAuth.credentials(req, { allow: ['user'] });
+    await requirePermission({
+      permissions,
+      permission: brunoCollectionDeletePermission,
+      credentials
+    });
     const { name } = req.params;
-    const removed = await uiCollections.delete(name);
-    if (!removed) {
+    const existing = await uiCollections.getByName(name);
+    if (!existing) {
       throw new NotFoundError(
         `No collection named "${name}" was added from the Bruno UI. `
         + 'Collections defined in app-config.yaml, or by a catalog-info.yaml in '
         + 'source control, are removed by editing that file.'
       );
     }
+    const mayDeleteAny = await isAllowed({
+      permissions,
+      permission: brunoCollectionDeleteAnyPermission,
+      credentials
+    });
+    if (!mayDeleteAny) {
+      await assertOwns({
+        userInfo,
+        credentials,
+        createdBy: existing.createdBy,
+        what: `The collection "${existing.name}"`
+      });
+    }
+    // The 404 above already proved the row is there, so a false here can only
+    // be a concurrent delete — which is the same outcome the caller wanted.
+    await uiCollections.delete(name);
 
     // The collection's runtime links go with it. They are keyed by entity ref
     // and the entity is about to stop existing, so leaving them would leave
@@ -637,13 +882,19 @@ export async function createRouter(
   // would let any backend plugin mint catalog-visible relations with no user
   // attribution.
   //
-  // POC scope, matching the rest of this router: any authenticated user may
-  // link any collection to any API entity they can read, and any authenticated
-  // user may then remove that link. Documented, not fixed — see
-  // docs/execution/UI-P6-plan.md §"Standing constraints".
+  // `bruno.link.create` is asked before the body is even read, so a refused
+  // principal costs the catalog nothing. WHICH entities may be linked is still
+  // the catalog's decision, not this permission's: both reads below are made as
+  // the requesting user, so the route can never link something the caller could
+  // not see.
   router.post('/links', async (req, res) => {
     const credentials = await httpAuth.credentials(req, { allow: ['user'] });
     requireRuntimeWrites('Linking an API to a collection');
+    await requirePermission({
+      permissions,
+      permission: brunoLinkCreatePermission,
+      credentials
+    });
     const createdBy = credentials.principal.userEntityRef;
 
     const body = (req.body ?? {}) as {
@@ -746,13 +997,25 @@ export async function createRouter(
   // works but is the kind of thing a proxy in front of the backend decodes
   // early and then routes wrong. A DELETE with a body is the other option and
   // is worse — bodies on DELETE are widely dropped in transit.
+  //
+  // Gated in the same three steps as `DELETE /collections/:name`, and for the
+  // same reasons: authorize, then read the row so `created_by` can be compared,
+  // then delete. `bruno.link.delete.any` skips the ownership step. Note the
+  // collection delete above CASCADES to these rows without consulting this
+  // permission — the links belong to the collection, and a user who may remove
+  // the collection may remove what hangs off it.
   router.delete('/links', async (req, res) => {
     const credentials = await httpAuth.credentials(req, { allow: ['user'] });
+    await requirePermission({
+      permissions,
+      permission: brunoLinkDeletePermission,
+      credentials
+    });
     const collectionRef = readCollectionRef(req.query.collection);
     const apiRef = readApiRef(req.query.api);
 
-    const removed = await runtimeLinks.delete(collectionRef, apiRef);
-    if (!removed) {
+    const existing = await runtimeLinks.get(collectionRef, apiRef);
+    if (!existing) {
       throw new NotFoundError(
         `${apiRef} is not linked to ${collectionRef} in this Backstage `
         + 'instance. A link declared by `spec.partOf` in the collection\'s '
@@ -760,6 +1023,22 @@ export async function createRouter(
         + 'editing that file.'
       );
     }
+    const mayDeleteAny = await isAllowed({
+      permissions,
+      permission: brunoLinkDeleteAnyPermission,
+      credentials
+    });
+    if (!mayDeleteAny) {
+      await assertOwns({
+        userInfo,
+        credentials,
+        createdBy: existing.createdBy,
+        what: `The link from ${collectionRef} to ${apiRef}`
+      });
+    }
+    // The 404 above already proved the row is there, so a false here can only
+    // be a concurrent delete — the same outcome the caller asked for.
+    await runtimeLinks.delete(collectionRef, apiRef);
     const refreshRequested = await requestRefresh(collectionRef, credentials);
 
     // `apiRefs` even though this route removes exactly one, so both link
@@ -797,7 +1076,7 @@ export async function createRouter(
     // page below is framable too: the docs are reached as an iframe `src`, and
     // Helmet's default `X-Frame-Options: SAMEORIGIN` would otherwise leave the
     // user with a cryptic "refused to connect" instead of the message.
-    applyDocsEmbeddingHeaders(res, config);
+    applyDocsEmbeddingHeaders(res, config, docs);
     const credentials = await httpAuth.credentials(req, {
       allow: ['user', 'service'],
       allowLimitedAccess: true
@@ -835,7 +1114,7 @@ export async function createRouter(
     }
     const theme = req.query.theme === 'dark' ? 'dark' : 'light';
     const title = entity.metadata.title ?? entity.metadata.name;
-    res.type('text/html').send(generateOcDocsHtml(yaml, title, theme));
+    res.type('text/html').send(generateOcDocsHtml(yaml, title, theme, docs));
   });
 
   // Error handling per current Backstage conventions.
@@ -843,6 +1122,50 @@ export async function createRouter(
   router.use(middleware.error());
 
   return router;
+}
+
+/**
+ * Reads the incomplete-repository entries off a `PUT /discovery/report` body.
+ *
+ * TOLERANT, unlike every other body reader in this file, and the asymmetry is
+ * deliberate. The others read a USER's input, where a rejection is a sentence
+ * the user reads and acts on. This body comes from this plugin's own provider
+ * over a service token, and the two can be different versions of the code in a
+ * rolling deploy — so an entry with a `reason` this build has never heard of is
+ * a newer module talking, and dropping that one entry keeps the report the
+ * older build CAN understand rather than throwing all of it away.
+ *
+ * `found` is clamped to a non-negative integer rather than dropped when it is
+ * odd, because it is rendered into a sentence with a number in it; everything
+ * else is required to be exactly what it claims.
+ */
+function readIncomplete(raw: unknown[]): IncompleteRepositoryRow[] {
+  const rows: IncompleteRepositoryRow[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null) {
+      continue;
+    }
+    const row = entry as Record<string, unknown>;
+    if (
+      typeof row.repository !== 'string'
+      || !row.repository
+      || typeof row.host !== 'string'
+      || !row.host
+      || row.reason !== 'listing-limit'
+    ) {
+      continue;
+    }
+    rows.push({
+      repository: row.repository,
+      host: row.host,
+      found:
+        typeof row.found === 'number' && Number.isFinite(row.found)
+          ? Math.max(0, Math.trunc(row.found))
+          : 0,
+      reason: 'listing-limit'
+    });
+  }
+  return rows;
 }
 
 /**
@@ -895,10 +1218,19 @@ function readApiRef(raw: unknown): string {
  * Deduped AFTER normalising, so a body naming the same API twice under two
  * spellings — which is what a hand-edited `spec.partOf` looks like — is one
  * link rather than a unique violation against itself.
+ *
+ * Counted BEFORE normalising, so the refusal costs one length read rather than
+ * a parse of every entry. See {@link MAX_PART_OF}.
  */
 function readApiRefs(raw: unknown): string[] {
   if (!Array.isArray(raw) || raw.length === 0) {
     throw new InputError('At least one API entity reference is required.');
+  }
+  if (raw.length > MAX_PART_OF) {
+    throw new InputError(
+      `At most ${MAX_PART_OF} API entity references can be linked in one `
+      + `request; this one names ${raw.length}.`
+    );
   }
   return [...new Set(raw.map(readApiRef))];
 }
@@ -923,6 +1255,12 @@ function readOptionalApiRefs(raw: unknown): string[] {
   if (!Array.isArray(raw)) {
     throw new InputError(
       '`partOf` must be a list of API entity references.'
+    );
+  }
+  if (raw.length > MAX_PART_OF) {
+    throw new InputError(
+      `A collection can list at most ${MAX_PART_OF} entries in \`partOf\`; `
+      + `this one names ${raw.length}.`
     );
   }
   return [...new Set(raw.map(readApiRef))];
@@ -1046,37 +1384,61 @@ function missingDefinitionMessage(entity: Entity): string {
  */
 function applyDocsEmbeddingHeaders(
   res: express.Response,
-  config: Config
+  config: Config,
+  docs: DocsOptions
 ): void {
   const appBaseUrl = config.getOptionalString('app.baseUrl');
   const frameAncestors = ['\'self\'', appBaseUrl].filter(Boolean).join(' ');
-  // POC-scope: the OpenCollection renderer (staging bundle) lazy-loads from
-  // several CDNs and embeds arbitrary third-party media, so pinning hosts is
-  // impractical. Derived by statically auditing the bundle:
-  //   - script  : its own bundle (opencollection->usebruno CDN 301) + Monaco
-  //               editor from jsDelivr + blob: module workers  -> https: blob:
-  //   - wasm     : QuickJS runtime fetched as a data: URL + eval'd
-  //               -> connect-src data: + script-src 'unsafe-eval'
-  //   - fonts    : Inter from fonts.googleapis/gstatic          -> https: data:
-  //   - media    : HLS/FLV/Mux players (jsDelivr) + blob:        -> media-src
-  //   - iframes  : oEmbed players (YouTube/Vimeo/SoundCloud/...) -> frame-src
-  // The bundle is a trusted first-party renderer on an isolated origin,
-  // embeddable only by the app (frame-ancestors), and the route is gated by
-  // the `user-cookie` auth policy. Beta hardening = pin exact hosts.
+  // The renderer's own origin, taken from the SAME value the page's <script>
+  // and <link> are built from, so a mirror can never be fetchable and
+  // CSP-refused at once.
+  const bundleOrigin = new URL(docs.cdnBaseUrl).origin;
+  // Pinned, not `https:`. The origin list below was produced by downloading
+  // the live bundle and extracting every absolute URL it references, so it is
+  // an audit rather than a guess — and it has to be re-run against whatever
+  // production bundle eventually ships, because a `script-src` that names the
+  // wrong hosts fails closed and silently (the renderer simply never boots).
+  //
+  // Two allowances are NOT tightenable and should not be "cleaned up":
+  //   'unsafe-eval'  the bundle ships a QuickJS WASM runtime and calls
+  //                  `new Function`. 'wasm-unsafe-eval' would cover the first
+  //                  but not the second.
+  //   blob:          it builds module workers with `URL.createObjectURL`,
+  //                  including a PDF.js CDN-wrapper shim.
+  //
+  // Two are deliberately loose:
+  //   img-src / media-src stay scheme-wide because a collection's own
+  //   documentation may reference any image or clip, and pinning those breaks
+  //   real content rather than demo data.
+  //   frame-src lists the oEmbed players the bundle can mount. If in-portal
+  //   video embeds are not a requirement, `frame-src 'none'` drops ten origins
+  //   and costs nothing else.
+  const jsdelivr = 'https://cdn.jsdelivr.net';
+  const cdnjs = 'https://cdnjs.cloudflare.com';
   res.removeHeader('X-Frame-Options');
   res.setHeader(
     'Content-Security-Policy',
     [
-      'default-src \'self\'',
-      'script-src \'self\' \'unsafe-inline\' \'unsafe-eval\' https: blob:',
-      'style-src \'self\' \'unsafe-inline\' https: data:',
-      'font-src \'self\' data: https:',
+      'default-src \'none\'',
+      'script-src \'self\' \'unsafe-inline\' \'unsafe-eval\' blob: '
+      + `${bundleOrigin} ${jsdelivr} ${cdnjs} https://connect.facebook.net`,
+      'worker-src \'self\' blob:',
+      `style-src 'self' 'unsafe-inline' ${bundleOrigin} https://fonts.googleapis.com`,
+      'font-src \'self\' data: https://fonts.gstatic.com',
       'img-src \'self\' data: blob: https:',
       'media-src \'self\' data: blob: https:',
-      'connect-src \'self\' https: data: blob:',
-      'worker-src \'self\' blob: https:',
-      'frame-src \'self\' https:',
-      `frame-ancestors ${frameAncestors}`
+      'connect-src \'self\' data: blob: '
+      + `${bundleOrigin} ${jsdelivr} ${cdnjs} `
+      + 'https://noembed.com https://cdn.embed.ly https://api.dmcdn.net',
+      'frame-src https://www.youtube.com https://www.youtube-nocookie.com '
+      + 'https://player.vimeo.com https://w.soundcloud.com '
+      + 'https://player.twitch.tv https://player-widget.mixcloud.com '
+      + 'https://fast.wistia.com https://play.vidyard.com '
+      + 'https://streamable.com https://videodelivery.net',
+      `frame-ancestors ${frameAncestors}`,
+      'base-uri \'none\'',
+      'form-action \'none\'',
+      'object-src \'none\''
     ].join('; ')
   );
 }

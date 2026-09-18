@@ -22,6 +22,7 @@ import {
   useRuntimeLink
 } from '../PartOfPr';
 import { descriptorLocation } from '../../lib/brunoEntity';
+import { useCanCreateLink } from '../../lib/permissions';
 import { useRuntimeWritesEnabled } from '../../lib/runtimeWrites';
 import { useBrandStyles } from '../../theme/brandStyles';
 
@@ -104,7 +105,14 @@ export function LinkApiDialog(props: {
   // The collection is fixed here, so this is known before anything is picked —
   // and so it is stated without naming a reference, since there is none yet.
   const advice = useDescriptorAdvice({ location, direction: 'link' });
-  const runtimeAvailable = useRuntimeWritesEnabled();
+  // Both hooks are called unconditionally and combined afterwards — `&&` on
+  // the call expressions would short-circuit the second one, which is a
+  // conditional hook. They answer the same question between them: would
+  // `POST /links` accept this. A method the backend would refuse is not offered
+  // as a choice.
+  const writesEnabled = useRuntimeWritesEnabled();
+  const mayCreateLink = useCanCreateLink();
+  const runtimeAvailable = writesEnabled && mayCreateLink;
   // `advice` is `undefined` exactly when a pull request can be opened, so it is
   // the whole test — no second reading of the location. `method` comes back
   // undefined when neither way of recording the link is open, which is what

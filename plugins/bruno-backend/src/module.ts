@@ -9,10 +9,12 @@ import {
   readCacheTtlMs,
   readDefinitionOptions
 } from './service/brunoConfig';
+import { warnOnAnonymousScmReads } from './service/credentialCheck';
 import { createManifestProbe } from './service/manifestProbe';
 import { readSchedule } from './service/schedule';
 import { BrunoCollectionEntityProvider } from './provider/BrunoCollectionEntityProvider';
 import { createStoredCollectionReader } from './provider/storedCollections';
+import { createSweepReportPublisher } from './provider/sweepReportPublisher';
 import { BrunoKindProcessor } from './processor/BrunoKindProcessor';
 import { createRuntimeLinkReader } from './processor/runtimeLinks';
 
@@ -47,7 +49,10 @@ export const brunoCatalogModule = createBackendModule({
         scheduler: coreServices.scheduler,
         // The `bruno` plugin owns the stores of UI-created collections and of
         // runtime links, and this module cannot reach either in process, so the
-        // provider and the processor read them over HTTP with a plugin token.
+        // provider and the processor read them over HTTP with a plugin token,
+        // and the provider WRITES its sweep report back the same way — a
+        // `scope: 'global'` task on one replica cannot hand anything to a route
+        // served from all of them except through that plugin's database.
         // These two are what mint and address those calls.
         discovery: coreServices.discovery,
         auth: coreServices.auth
@@ -74,6 +79,11 @@ export const brunoCatalogModule = createBackendModule({
           ttlMs: readCacheTtlMs(config),
           definition: readDefinitionOptions(config, logger)
         });
+
+        // Boot-time only, warn-only, and no network: the `integrations.*`
+        // mistakes it looks for cost an anonymous read rather than an error, so
+        // nothing downstream would ever report them.
+        await warnOnAnonymousScmReads({ config, logger });
 
         const storedCollections = createStoredCollectionReader({
           discovery,
@@ -110,7 +120,14 @@ export const brunoCatalogModule = createBackendModule({
             probe,
             taskRunner: scheduler.createScheduledTaskRunner(schedule),
             storedCollections,
-            discovery: collectionDiscovery
+            discovery: collectionDiscovery,
+            // Constructed only alongside the sweeper, and for the mirror-image
+            // reason: with nothing being swept there is nothing to report, and
+            // an empty report published every tick would tell the dashboard
+            // that discovery ran and found nothing wrong.
+            ...(collectionDiscovery
+              ? { sweepReports: createSweepReportPublisher({ discovery, auth }) }
+              : {})
           })
         );
 

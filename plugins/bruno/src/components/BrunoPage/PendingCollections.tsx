@@ -10,6 +10,7 @@ import { catalogApiRef, useEntityList } from '@backstage/plugin-catalog-react';
 import { brunoApiRef } from '../../api';
 import type { StoredCollectionSummary } from '../../api';
 import { onCollectionCreated } from '../../lib/collectionEvents';
+import { useCanDeleteCollection } from '../../lib/permissions';
 import { landingTimeoutSeconds } from '../../lib/landingWindow';
 import { brunoBrand } from '../../theme/brand';
 
@@ -141,20 +142,34 @@ function waitingMessage(name: string): string {
  * Left saying that, the strip is an instruction to keep waiting for something
  * that is not coming.
  *
- * Both causes are named because they are the only two, and the user can act on
- * either — fix the repository, or pick a different name — while the backend log
- * is what says which. The message is deliberately not an error: the row is
- * stored, nothing is broken, and the Remove control beside it is a complete
- * resolution on its own.
+ * THE CAUSES ARE THE PROVIDER'S, NOT THE REPOSITORY'S. This used to offer an
+ * unreadable manifest as the first explanation, which cannot strand a row at
+ * all: `BrunoCollectionEntityProvider`'s emission loop reads no SCM host, so a
+ * row whose URL points nowhere still becomes an entity — a degraded one,
+ * without `spec.definition` and with a processing error against it. Naming that
+ * cause sends a user to fix the one thing that is not the problem.
+ *
+ * What genuinely strands a row is a name a `bruno.collections[]` entry claimed
+ * first — config is swept first and the claim guard is first-wins — or a tick
+ * that never reaches `applyMutation`. The provider returns early when it cannot
+ * read the stored collections (a service-to-service call to this plugin) and
+ * when a `bruno.discovery` sweep throws, because emitting a partial set would
+ * delete by set difference; either bailout holds back every UI-created
+ * collection rather than this one. Which of the three it is lives in the
+ * provider's own log lines, so pointing at a log stays right — it just has to
+ * point at the right one.
+ *
+ * Deliberately not an error: the row is stored, nothing is lost, and the Remove
+ * control beside it is a complete resolution on its own.
  */
 function stalledMessage(name: string): string {
   return (
     `${name} was added but has not appeared in the catalog, and will not `
-    + 'appear on its own. Either its manifest is no longer readable where it '
-    + 'lives in source control, or a collection configured in app-config.yaml '
-    + 'has taken the same name. The backend log says which, under '
-    + 'BrunoCollectionEntityProvider. Fix that and add it again, or remove it '
-    + 'here.'
+    + 'appear on its own. Either a collection configured in app-config.yaml has '
+    + 'taken the same name, or the provider is not finishing its refreshes — it '
+    + 'skips a whole tick when it cannot reach this plugin, or when a '
+    + 'bruno.discovery sweep fails. The backend log says which, under '
+    + 'BrunoCollectionEntityProvider. Fix that, or remove it here.'
   );
 }
 
@@ -214,6 +229,7 @@ export function PendingCollections(): JSX.Element | null {
   const brunoApi = apis.get(brunoApiRef);
   const catalogApi = apis.get(catalogApiRef);
   const alertApi = apis.get(alertApiRef);
+  const mayDelete = useCanDeleteCollection();
   const { backendEntities, refresh } = useEntityList();
 
   const [pending, setPending] = useState<StoredCollectionSummary[]>([]);
@@ -472,9 +488,20 @@ export function PendingCollections(): JSX.Element | null {
                 </Typography>
               )}
             </div>
+            {/*
+              Disabled rather than hidden, unlike the dashboard table's row
+              action: this strip exists to explain a row that has not landed,
+              and a Remove that silently vanished would leave the explanation
+              with no ending at all.
+            */}
             <Button
               size="small"
-              disabled={busy}
+              disabled={busy || !mayDelete}
+              title={
+                mayDelete
+                  ? undefined
+                  : 'You do not have permission to remove Bruno collections.'
+              }
               onClick={() => void remove(row.name)}
             >
               {busy ? 'Removing…' : 'Remove'}

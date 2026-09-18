@@ -25,13 +25,11 @@ import {
   fetchApiRef,
   useApiHolder
 } from '@backstage/core-plugin-api';
-import { useRouteRef } from '@backstage/frontend-plugin-api';
 import { scmAuthApiRef, scmIntegrationsApiRef } from '@backstage/integration-react';
 import { catalogApiRef } from '@backstage/plugin-catalog-react';
 import {
   CatalogImportClient,
-  catalogImportApiRef,
-  catalogImportPlugin
+  catalogImportApiRef
 } from '@backstage/plugin-catalog-import';
 import type { CatalogImportApi } from '@backstage/plugin-catalog-import';
 import {
@@ -40,6 +38,7 @@ import {
 } from '../../lib/scmUrl';
 import { useRuntimeWritesEnabled } from '../../lib/runtimeWrites';
 import { planDescriptorPr, submitDescriptorPr } from '../../lib/descriptorPr';
+import { prAdapterForUrl, prSupported } from '../../lib/pr/registry';
 import { useBrandStyles } from '../../theme/brandStyles';
 
 const useStyles = makeStyles((theme) => ({
@@ -70,11 +69,12 @@ type Stage
     | { status: 'error'; message: string };
 
 /**
- * The SCM types this dialog can open a pull request against: GitHub through
- * `lib/descriptorPr.ts`, Azure DevOps through `catalogImportApi` — which is the
- * only other provider that client can write to.
+ * The one SCM type this dialog can open a pull request against that
+ * `lib/pr/registry.ts` has no adapter for. `catalogImportApi` is the only route
+ * to Azure DevOps, and Azure is the only other provider that client can write
+ * to — so this list is that client's whole remaining reason to exist here.
  */
-const PR_CAPABLE_TYPES = ['github', 'azure'];
+const IMPORT_API_TYPES = ['azure'];
 
 /**
  * Resolves a {@link CatalogImportApi}, constructing one if the app has not
@@ -225,9 +225,35 @@ export function GeneratedYamlDialog(props: {
    * carries either way.
    */
   title?: string;
+  /**
+   * Concrete path of the catalog's own "Register an existing component" page,
+   * which is where the step AFTER this dialog happens: that page calls
+   * `catalogApi.addLocation` for a `catalog-info.yaml` URL, which is the only
+   * thing that turns the merged file into an entity.
+   *
+   * A resolved path rather than a `useRouteRef` call here, because the route ref
+   * belongs to `plugin-catalog-import` and the hook that resolves it differs
+   * between the two frontend systems — the mounting layer knows which one it is
+   * in and this dialog does not need to. Omitted when that page is not mounted
+   * (a host app that excluded the package), which is what the prose fallback
+   * below is for.
+   *
+   * The path is overridable from `app-config.yaml` (`app.extensions`, exactly as
+   * this app already remounts `page:catalog` at `/`), so it is never hardcoded
+   * as `/catalog-import`: a link to the default path in an app that moved it is
+   * a 404 that looks like our bug.
+   */
+  catalogImportPath?: string;
 }): JSX.Element {
-  const { open, onClose, collectionUrl, yaml, name, title: entityTitle }
-    = props;
+  const {
+    open,
+    onClose,
+    collectionUrl,
+    yaml,
+    name,
+    title: entityTitle,
+    catalogImportPath
+  } = props;
   const classes = useStyles();
   const brandClasses = useBrandStyles();
   const catalogImportApi = useCatalogImportApi();
@@ -238,26 +264,6 @@ export function GeneratedYamlDialog(props: {
   // Only so the limits panel does not point at an ending this instance does
   // not offer; nothing on this screen is gated by it.
   const runtimeAvailable = useRuntimeWritesEnabled();
-
-  /**
-   * Path of the catalog's own "Register an existing component" page, which is
-   * where the step AFTER this dialog happens: it calls `catalogApi.addLocation`
-   * for a `catalog-info.yaml` URL, which is the only thing that turns the merged
-   * file into an entity.
-   *
-   * Resolved through `useRouteRef` rather than hardcoded as `/catalog-import`,
-   * because the path is overridable from `app-config.yaml` (`app.extensions`,
-   * exactly as this app already remounts `page:catalog` at `/`), and a link to
-   * the default path in an app that moved it is a 404 that looks like our bug.
-   *
-   * The ref comes off the OLD-system plugin export because the new-system
-   * `/alpha` entry point does not re-export it, and they are the same object:
-   * `alpha.esm.js` imports `rootRouteRef` from `plugin.esm.js` and declares it as
-   * `routes.importPage`. `useRouteRef` returns undefined when the page is not
-   * mounted — a host app that excluded the package — which is what the prose
-   * fallback below is for.
-   */
-  const importRoute = useRouteRef(catalogImportPlugin.routes.importPage);
 
   const [stage, setStage] = useState<Stage>({ status: 'review' });
   const [title, setTitle] = useState('');
@@ -273,16 +279,17 @@ export function GeneratedYamlDialog(props: {
    */
   const repoUrl = repoRootFromCollectionUrl(collectionUrl);
   const scmType = scmIntegrations?.byUrl(repoUrl)?.type;
-  const prSupported = !!scmType && PR_CAPABLE_TYPES.includes(scmType);
   /**
    * Whether we can commit the descriptor where it belongs.
    *
-   * GitHub goes through `lib/descriptorPr.ts`, which writes to an arbitrary
-   * path; everything else falls back to `catalogImportApi`, which can only
-   * write to the repository ROOT. That is the whole reason for the branch, and
-   * the limits panel says which one the user is about to get.
+   * A host with an adapter goes through `lib/descriptorPr.ts`, which writes to
+   * an arbitrary path; Azure DevOps falls back to `catalogImportApi`, which can
+   * only write to the repository ROOT. That is the whole reason for the branch,
+   * and the limits panel says which one the user is about to get.
    */
-  const pathAware = scmType === 'github';
+  const pathAware = prSupported(repoUrl, scmIntegrations);
+  const canOpenPr
+    = pathAware || (!!scmType && IMPORT_API_TYPES.includes(scmType));
   // Both are read from config exactly as `plugin-catalog-import` reads them,
   // so the warnings below name the real filename and branch for THIS app rather
   // than repeating the upstream defaults.
@@ -315,16 +322,6 @@ export function GeneratedYamlDialog(props: {
    * asserting one of the two and being wrong half the time.
    */
   const prPath = pathAware ? descriptorPath : catalogFilename;
-
-  /**
-   * The GitHub API to talk to, for a GitHub Enterprise host.
-   *
-   * Left undefined for github.com, where the integration config omits it and
-   * Octokit's own default is right. Passing something wrong here would send
-   * every call at the public API and 404 on a repository that exists.
-   */
-  const githubApiBaseUrl = scmIntegrations?.github.byUrl(repoUrl)?.config
-    .apiBaseUrl;
 
   /**
    * Seeds the editable title and body from the app's own wording, falling back
@@ -381,10 +378,10 @@ export function GeneratedYamlDialog(props: {
    *
    * Two paths, because only one of them can put the file in the right place:
    *
-   *  - **GitHub** goes through `lib/descriptorPr.ts`, which commits to
-   *    `descriptorPath` — the collection's own folder — on a branch named per
-   *    attempt, and refuses rather than overwriting a descriptor that is
-   *    already there.
+   *  - **A host with a `lib/pr/` adapter** (GitHub, GitLab) goes through
+   *    `lib/descriptorPr.ts`, which commits to `descriptorPath` — the
+   *    collection's own folder — on a branch named per attempt, and refuses
+   *    rather than overwriting a descriptor that is already there.
    *  - **Azure DevOps** goes through `catalogImportApi`, which can only write
    *    `catalogFilename` at the repository root on one fixed branch. Kept
    *    rather than dropped: it is the only thing an Azure user has, and the
@@ -412,6 +409,17 @@ export function GeneratedYamlDialog(props: {
           if (!token) {
             throw new Error('The SCM provider returned no access token.');
           }
+          const adapter = prAdapterForUrl({
+            url: repoUrl,
+            token,
+            integrations: scmIntegrations
+          });
+          if (!adapter) {
+            throw new Error(
+              `No pull request can be opened against ${repoUrl}: its host `
+              + 'matches no integration this plugin can write to.'
+            );
+          }
           const plan = await planDescriptorPr({
             collectionUrl,
             collectionName: name,
@@ -419,14 +427,9 @@ export function GeneratedYamlDialog(props: {
             content: yaml,
             title,
             body,
-            token,
-            apiBaseUrl: githubApiBaseUrl
+            adapter
           });
-          const { link } = await submitDescriptorPr(
-            plan,
-            token,
-            githubApiBaseUrl
-          );
+          const { link } = await submitDescriptorPr(plan, adapter);
           setStage({ status: 'submitted', link });
           return;
         }
@@ -457,11 +460,11 @@ export function GeneratedYamlDialog(props: {
    * the operator-level one (a `catalog.locations` entry, or a discovery provider)
    * and pointing at a route that is not mounted would be worse than saying so.
    */
-  const registerStep = importRoute
+  const registerStep = catalogImportPath
     ? (
         <>
           register it on the{' '}
-          <Link to={importRoute()}>Register an existing component</Link> page
+          <Link to={catalogImportPath}>Register an existing component</Link> page
         </>
       )
     : (
@@ -475,7 +478,7 @@ export function GeneratedYamlDialog(props: {
    * Everything `catalogImportApi.submitPullRequest` will do that the user would
    * otherwise only find out about afterwards, plus the one thing THIS path
    * requires of them. Stated up front, with the one that is checkable checked
-   * (`prSupported`) and the button pre-disabled.
+   * (`canOpenPr`) and the button pre-disabled.
    *
    * The last item replaces the entity-name conflict this list used to warn
    * about. That warning existed because the collection was already registered
@@ -507,8 +510,9 @@ export function GeneratedYamlDialog(props: {
               The pull request adds <code>{prPath}</code> at the{' '}
               <strong>repository root</strong>, not at{' '}
               <code>{descriptorPath}</code> beside the collection — only the
-              GitHub path can commit to a collection folder. Download the file
-              instead if it needs to live there.
+              Azure DevOps fallback is confined to the root, and it is the one
+              this URL gets. Download the file instead if it needs to live
+              there.
             </li>
           )}
       <li>
@@ -518,7 +522,7 @@ export function GeneratedYamlDialog(props: {
         existing one by hand.
       </li>
       <li>
-        Only GitHub and Azure DevOps are supported.
+        Only GitHub, GitLab and Azure DevOps are supported.
         {scmType
           ? ` This URL resolves to a ${scmType} integration.`
           : ' This URL matches no configured integration.'}
@@ -654,7 +658,7 @@ export function GeneratedYamlDialog(props: {
             variant="outlined"
             label="Pull request title"
             value={title}
-            disabled={submitting || !prSupported}
+            disabled={submitting || !canOpenPr}
             onChange={(event) => setTitle(event.target.value)}
           />
         </Box>
@@ -666,7 +670,7 @@ export function GeneratedYamlDialog(props: {
             variant="outlined"
             label="Pull request body"
             value={body}
-            disabled={submitting || !prSupported}
+            disabled={submitting || !canOpenPr}
             onChange={(event) => setBody(event.target.value)}
           />
         </Box>
@@ -705,7 +709,7 @@ export function GeneratedYamlDialog(props: {
           // `catalogImportApi` only gates the Azure path; the GitHub one talks
           // to the repository itself and needs nothing from that plugin.
           disabled={
-            submitting || !prSupported || (!pathAware && !catalogImportApi)
+            submitting || !canOpenPr || (!pathAware && !catalogImportApi)
           }
           startIcon={submitting ? <CircularProgress size={16} /> : undefined}
           onClick={submit}

@@ -171,6 +171,49 @@ export function linkSource(collection: Entity, apiRef: string): LinkSource {
   return inRuntime ? 'runtime' : 'none';
 }
 
+/**
+ * The links this collection DECLARES that the catalog has not turned into a
+ * relation, normalised.
+ *
+ * Every card that lists linked APIs reads the RELATION, which is right — it
+ * covers descriptor and runtime links alike, and it is what the rest of
+ * Backstage agrees the link is. But it also means a reference naming an entity
+ * that does not exist produces no relation and therefore no row, and a row that
+ * silently is not there is indistinguishable from an edit that did not take.
+ * This is the difference, so the caller can render it.
+ *
+ * A diff of what is declared against what resolved, rather than a catalog
+ * lookup: "does this entity exist" is a different question from "did this
+ * reference produce a relation", and only the second one decides whether a row
+ * appears. A reference can name a real entity and still be missing here because
+ * the stitch has not run — see `useRelationsSettled` for why that case must not
+ * be reported as a dead link.
+ *
+ * BOTH sides are normalised because {@link partOfRefs} is hand-written and
+ * `stringifyEntityRef` lower-cases what it emits: comparing a raw `spec.partOf`
+ * entry against a stringified relation ref would report every mixed-case
+ * reference as dead. An entry neither side can parse is dropped, exactly as
+ * {@link linkSource} drops it — the backend emits no relation for it either, so
+ * calling it unresolved would be accusing the catalog of a failure the
+ * descriptor caused.
+ */
+export function unresolvedRefs(
+  collection: Entity,
+  resolvedRefs: string[]
+): string[] {
+  const normalised = (refs: string[]): string[] =>
+    refs
+      .map(tryNormaliseApiRef)
+      .filter((ref): ref is string => ref !== undefined);
+
+  const resolved = new Set(normalised(resolvedRefs));
+  return [
+    ...new Set(
+      normalised([...partOfRefs(collection), ...runtimePartOfRefs(collection)])
+    )
+  ].filter((ref) => !resolved.has(ref));
+}
+
 /** `spec.environments` — the collection's environment names. */
 export function environments(entity: Entity): string[] {
   const envs = brunoSpec(entity).environments;

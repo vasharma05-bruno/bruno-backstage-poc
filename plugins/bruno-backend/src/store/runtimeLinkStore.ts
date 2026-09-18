@@ -33,7 +33,9 @@ export interface RuntimeLinkRow {
   collectionRef: string;
   /** Canonical ref of the API entity, e.g. `api:default/github-rest-api`. */
   apiRef: string;
-  /** Entity ref of the user who made the link. Recorded, not enforced (POC). */
+  /** Entity ref of the user who made the link. Read back by `DELETE /links`,
+   *  which refuses to remove a link the caller did not make unless the policy
+   *  ALLOWs `bruno.link.delete.any`. */
   createdBy: string;
   createdAt: string;
 }
@@ -48,6 +50,14 @@ export interface RuntimeLinkStore {
    * {@link ConflictError} when any pair is already linked.
    */
   insert(rows: Omit<RuntimeLinkRow, 'createdAt'>[]): Promise<void>;
+  /**
+   * One link by its primary key, or undefined.
+   *
+   * Exists for `DELETE /links`, which has to read `created_by` BEFORE it
+   * removes the row — an ownership decision and the write it authorises have to
+   * be about the same row, and the delete itself reports only a count.
+   */
+  get(collectionRef: string, apiRef: string): Promise<RuntimeLinkRow | undefined>;
   /** True when a row was removed, false when there was none. */
   delete(collectionRef: string, apiRef: string): Promise<boolean>;
   /** Drops every link for one collection. Returns how many went. */
@@ -76,15 +86,13 @@ function rowToModel(row: RawRow): RuntimeLinkRow {
 /**
  * The store behind `GET`/`POST`/`DELETE /api/bruno/links`.
  *
- * Create-table-if-not-exists rather than a formal migration, matching
- * `uiCollectionStore` beside it: the table has one shape and a POC that has to
- * be re-pointed at a fresh database on every schema change is a worse trade
- * than the knex migration machinery.
+ * Pure data access, like `uiCollectionStore` beside it: the table is owned by
+ * `store/migrations.ts`, which `plugin.ts` runs before this factory is called.
  *
  * The primary key is the PAIR, which is the whole integrity model: a link
  * either exists or it does not, there is nothing to update, and a second
  * `POST /links` for the same pair is a conflict rather than a duplicate row.
- * Both columns are `text` for the reason `parsePartOf` gives next door — it is
+ * Both columns are `text` for the reason the baseline migration gives — it is
  * the one column type whose read-back value is byte-identical on
  * better-sqlite3 and on postgres.
  */
@@ -92,28 +100,6 @@ export async function createRuntimeLinkStore(
   database: DatabaseService
 ): Promise<RuntimeLinkStore> {
   const client = await database.getClient();
-
-  if (!(await client.schema.hasTable(TABLE))) {
-    try {
-      await client.schema.createTable(TABLE, (table) => {
-        table.text('collection_ref').notNullable();
-        table.text('api_ref').notNullable();
-        table.text('created_by').notNullable();
-        table.text('created_at').notNullable();
-        table.primary(['collection_ref', 'api_ref']);
-        // The processor reads the whole table and groups by collection, but the
-        // routes look one collection up at a time, and `deleteForCollection`
-        // runs on every UI-collection delete.
-        table.index(['collection_ref']);
-      });
-    } catch (error) {
-      // Tolerate a concurrent creator (a second backend replica) that won the
-      // race; only rethrow if the table genuinely still does not exist.
-      if (!(await client.schema.hasTable(TABLE))) {
-        throw error;
-      }
-    }
-  }
 
   return {
     async insert(rows): Promise<void> {
@@ -151,6 +137,17 @@ export async function createRuntimeLinkStore(
         }
         throw error;
       }
+    },
+    async get(collectionRef, apiRef): Promise<RuntimeLinkRow | undefined> {
+      // Keyed exactly as `delete` below is, on both columns raw. Unlike
+      // `uiCollectionStore`, no case folding is involved or wanted: both halves
+      // are stored as `stringifyEntityRef` output and the routes normalise
+      // every ref through `service/entityRefs.ts` before it reaches the store,
+      // so the two comparisons are already over one spelling.
+      const row = await client(TABLE)
+        .where({ collection_ref: collectionRef, api_ref: apiRef })
+        .first();
+      return row ? rowToModel(row as RawRow) : undefined;
     },
     async delete(collectionRef, apiRef): Promise<boolean> {
       // The count is the point: the route turns "no row" into a 404 that

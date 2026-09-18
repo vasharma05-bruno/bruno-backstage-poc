@@ -45,7 +45,9 @@ import type {
   CollectionDiscovery,
   DiscoveredCollection,
   DiscoveryRepo,
-  GithubDiscoveryClient
+  GithubDiscoveryClient,
+  IncompleteRepository,
+  SweepReport
 } from './types';
 
 /** What a completed repository sweep is remembered by. */
@@ -55,6 +57,16 @@ type RepoCacheEntry = {
   /** The ref that was swept, so a default-branch rename re-sweeps. */
   ref: string;
   collections: DiscoveredCollection[];
+  /**
+   * Whether the listing that produced `collections` was capped.
+   *
+   * Cached alongside them BECAUSE the report is rebuilt from scratch on every
+   * tick: a repository nobody has pushed to is served from this entry and never
+   * re-listed, so without remembering the cap the condition would be reported
+   * on the tick that discovered it and then silently vanish — while the
+   * collections it cost stay missing.
+   */
+  truncated: boolean;
 };
 
 export function createGithubCollectionDiscovery(options: {
@@ -93,7 +105,8 @@ export function createGithubCollectionDiscovery(options: {
   const sweptEntries = new Set<string>();
 
   /**
-   * A repository's collections, from its tree.
+   * A repository's collections, from its tree, and whether that tree was all of
+   * it.
    *
    * Throws on a read failure. The caller decides what that means — a
    * transient failure must not shrink the emitted set.
@@ -101,7 +114,7 @@ export function createGithubCollectionDiscovery(options: {
   async function sweepRepo(
     entry: BrunoDiscoveryConfig,
     repo: DiscoveryRepo
-  ): Promise<DiscoveredCollection[]> {
+  ): Promise<{ collections: DiscoveredCollection[]; truncated: boolean }> {
     const repoUrl = providers.byUrl(repo.htmlUrl).normalizeUrl(repo.htmlUrl);
     const provider = providers.byUrl(repoUrl);
 
@@ -115,6 +128,11 @@ export function createGithubCollectionDiscovery(options: {
       // Not recoverable by paging — the recursive tree API offers no cursor —
       // so this is a warning about collections that CANNOT be discovered here,
       // and the fix is a `bruno.collections[]` entry naming them directly.
+      //
+      // Kept alongside the report the caller assembles from the returned flag,
+      // rather than replaced by it: an operator with log aggregation already
+      // alerts on this line, and the report is a second channel for the ones
+      // who only ever look at the dashboard.
       logger.warn(
         `Bruno discovery: the file listing for ${repo.fullName} was truncated `
         + `by GitHub, so any collection past the truncation point is not `
@@ -179,7 +197,7 @@ export function createGithubCollectionDiscovery(options: {
       });
     }
 
-    return collections;
+    return { collections, truncated };
   }
 
   /**
@@ -225,9 +243,30 @@ export function createGithubCollectionDiscovery(options: {
   }
 
   return {
-    async discover(): Promise<DiscoveredCollection[]> {
+    async discover(): Promise<SweepReport> {
       const nextCache = new Map<string, RepoCacheEntry>();
       const discovered: DiscoveredCollection[] = [];
+      /**
+       * Rebuilt from scratch every tick, from the cache as much as from the
+       * fresh reads — so a repository whose cap was found three ticks ago and
+       * has not been pushed to since is still named here. The condition is
+       * permanent until somebody splits the repository or names its collections
+       * in config, and a report that quietly stopped mentioning it would read
+       * as the problem having gone away.
+       */
+      const incomplete: IncompleteRepository[] = [];
+      const noteIncomplete = (
+        entry: BrunoDiscoveryConfig,
+        repo: DiscoveryRepo,
+        found: number
+      ): void => {
+        incomplete.push({
+          repository: repo.fullName,
+          host: entry.host,
+          found,
+          reason: 'listing-limit'
+        });
+      };
 
       for (const entry of entries) {
         const key = entryKey(entry);
@@ -283,12 +322,15 @@ export function createGithubCollectionDiscovery(options: {
             discovered.push(...cached.collections);
             found += cached.collections.length;
             reused += 1;
+            if (cached.truncated) {
+              noteIncomplete(entry, repo, cached.collections.length);
+            }
             continue;
           }
 
-          let collections: DiscoveredCollection[];
+          let swept: { collections: DiscoveredCollection[]; truncated: boolean };
           try {
-            collections = await sweepRepo(entry, repo);
+            swept = await sweepRepo(entry, repo);
           } catch (e) {
             const message = String((e as Error)?.message ?? e);
             if (cached) {
@@ -299,6 +341,13 @@ export function createGithubCollectionDiscovery(options: {
               nextCache.set(cacheKey, cached);
               discovered.push(...cached.collections);
               found += cached.collections.length;
+              // Reported off the CACHED answer, which is the one being emitted.
+              // A failed re-read says nothing new about the cap either way, and
+              // dropping the note here would make an unrelated blip look like
+              // the repository had healed.
+              if (cached.truncated) {
+                noteIncomplete(entry, repo, cached.collections.length);
+              }
               continue;
             }
             if (sweptEntries.has(key)) {
@@ -326,10 +375,14 @@ export function createGithubCollectionDiscovery(options: {
           nextCache.set(cacheKey, {
             pushedAt: repo.pushedAt,
             ref: repo.defaultBranch,
-            collections
+            collections: swept.collections,
+            truncated: swept.truncated
           });
-          discovered.push(...collections);
-          found += collections.length;
+          discovered.push(...swept.collections);
+          found += swept.collections.length;
+          if (swept.truncated) {
+            noteIncomplete(entry, repo, swept.collections.length);
+          }
         }
 
         sweptEntries.add(key);
@@ -343,7 +396,11 @@ export function createGithubCollectionDiscovery(options: {
       // Swapped only on a fully successful sweep, which is also what prunes
       // repositories that were renamed, archived, deleted or filtered out.
       repoCache = nextCache;
-      return discovered;
+      return {
+        collections: discovered,
+        incomplete,
+        sweptAt: new Date().toISOString()
+      };
     }
   };
 }

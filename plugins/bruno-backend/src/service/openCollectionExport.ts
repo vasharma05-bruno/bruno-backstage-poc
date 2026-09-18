@@ -52,12 +52,20 @@ import yaml from 'js-yaml';
 
 /** Options for {@link toOpenCollectionYaml}. */
 export interface OpenCollectionExportOptions {
-  /** ISO timestamp for `extensions.bruno.exportedAt`. `null` OMITS the key —
-   *  required for the catalog-stored variant, and so what every in-tree caller
-   *  passes: a per-call timestamp changes `resultHash` every reprocess cycle and
-   *  rewrites the entity. Default: `new Date().toISOString()`, for a one-off
-   *  export that wants to record when it was taken. */
-  exportedAt?: string | null;
+  /** ISO timestamp for `extensions.bruno.exportedAt`. OMITTED unless a caller
+   *  asks for it, which is the safe default rather than the convenient one:
+   *  this document is stored on a `kind: Bruno` entity's `spec.definition`, and
+   *  the catalog decides whether to write the entity by hashing the processed
+   *  result. A stamp that moves on every call makes that hash miss every time,
+   *  so every Bruno entity in every adopter's catalog is rewritten and
+   *  re-stitched every reprocess cycle, forever and invisibly (R8).
+   *
+   *  It defaulted ON when a one-off export route passed it deliberately; that
+   *  route went with the connection-store backend, leaving a default aimed
+   *  squarely at the catalog that a future caller could re-arm by forgetting a
+   *  parameter. A caller that genuinely wants to record when an export was
+   *  taken now says so. */
+  exportedAt?: string;
 }
 
 interface BrunoCollectionLike {
@@ -212,11 +220,12 @@ function normalizedToBrunoCollection(
  * Serializes a {@link NormalizedCollection} as an OpenCollection `1.0.0` YAML
  * document.
  *
- * With no options the output carries an `exportedAt` timestamp.
- * `exportedAt: null` makes it byte-STABLE instead, which is what the entity path
- * needs — and is what every caller now passes: per BE-P2 F11 the catalog hashes
- * the processed entity, so a per-call timestamp would rewrite and re-stitch
- * every Bruno entity on every reprocess cycle.
+ * A pure function of the collection: the same input yields byte-identical
+ * output, on any run and any host. That is a load-bearing property rather than
+ * a nicety — the result is stored on a `kind: Bruno` entity, and the catalog
+ * skips the write only while the bytes are unchanged. The one thing that could
+ * move on its own is {@link OpenCollectionExportOptions.exportedAt}, which is
+ * why it is opt-in.
  *
  * @public
  */
@@ -226,17 +235,15 @@ export function toOpenCollectionYaml(
 ): string {
   const bruno = normalizedToBrunoCollection(collection);
   const oc = brunoToOpenCollection(bruno);
-  const exportedAt
-    = options?.exportedAt === undefined
-      ? new Date().toISOString()
-      : options.exportedAt;
   oc.extensions = {
     ...(oc.extensions ?? {}),
     bruno: {
       ...(oc.extensions?.bruno ?? {}),
-      // Omitted entirely — not written as null — when the caller asked for a
-      // stable document; a `null` key would still be a key in the YAML.
-      ...(typeof exportedAt === 'string' && { exportedAt }),
+      // Spread away entirely rather than written as `undefined`: js-yaml would
+      // still emit the key.
+      ...(options?.exportedAt !== undefined && {
+        exportedAt: options.exportedAt
+      }),
       exportedUsing: 'bruno-for-backstage'
     }
   };

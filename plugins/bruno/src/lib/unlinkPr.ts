@@ -1,7 +1,7 @@
-import { Octokit } from '@octokit/rest';
 import type { Document } from 'yaml';
 import { parseDocument, parseAllDocuments, isMap, isSeq } from 'yaml';
 import { normaliseApiRef } from './apiRef';
+import type { PrAdapter, PrRepo } from './pr/types';
 
 /**
  * Composes and submits the pull requests that add an API reference to, or remove
@@ -16,8 +16,14 @@ import { normaliseApiRef } from './apiRef';
  * editing that file — and source control stays the single source of truth.
  *
  * Both directions live here because they are the same operation with a different
- * sign: same descriptor resolution, same GitHub read/branch/commit/PR sequence,
- * same failure modes. Only the YAML edit and the wording differ.
+ * sign: same descriptor resolution, same read/branch/commit/PR sequence, same
+ * failure modes. Only the YAML edit and the wording differ.
+ *
+ * WHICH FORGE is no longer this module's business. Everything host-specific
+ * lives behind {@link PrAdapter} in `lib/pr/`, and what is left here is the
+ * YAML edit, the plan/submit split and the wording — which is all that was ever
+ * provider-independent. `lib/pr/types.ts` records why these writes cannot move
+ * to the backend.
  *
  * Why not `catalogImportApi.submitPullRequest`. Three independent blockers, all
  * properties of `plugin-catalog-import/dist/api/GitHub.esm.js`: it writes to
@@ -30,9 +36,9 @@ import { normaliseApiRef } from './apiRef';
  * `scmAuthApi.getCredentials({ url, additionalScope: { repoWrite: true } })` —
  * the same path Backstage's own importer uses — so the pull request is authored
  * by the ACTUAL USER: correct attribution, correct audit trail, and no
- * server-side write credential. The token is passed in, held in a local, handed
- * to exactly one `new Octokit({ auth })`, and is never logged, stored, or put
- * into a URL.
+ * server-side write credential. The token never reaches this module at all: it
+ * is handed to exactly one adapter, which holds it in a closure and never logs,
+ * stores or puts it in a URL.
  *
  * Comment preservation is why this uses `yaml`'s `parseDocument` rather than
  * `js-yaml` (which the backend uses): a round-trip through `js-yaml` strips
@@ -50,18 +56,18 @@ export interface PartOfPlan {
   direction: PartOfDirection;
   /** The `catalog-info.yaml` URL, as taken from `backstage.io/managed-by-location`. */
   descriptorUrl: string;
-  /** `https://github.com/<owner>/<repo>` — shown in the dialog. */
+  /** `https://<host>/<owner>/<repo>` — shown in the dialog. */
   repoUrl: string;
-  owner: string;
-  repo: string;
+  /** The repository, in the terms its forge takes. */
+  target: PrRepo;
   /** Repo-relative path of the descriptor. */
   path: string;
   /** The head branch this attempt will create. Unique per attempt. */
   branch: string;
   /** The repository's default branch: what we read, and the PR base. */
   baseBranch: string;
-  /** Blob sha of the descriptor as read. Required to UPDATE rather than create. */
-  fileSha: string;
+  /** What the descriptor was when it was read, so the commit fails if it moved. */
+  concurrencyToken: string;
   /** The descriptor exactly as it is today. */
   before: string;
   /** The descriptor with the reference removed. */
@@ -269,47 +275,6 @@ function removePartOf(yamlText: string, apiRefs: string[]): string {
   return doc.toString();
 }
 
-/** `https://github.com/<owner>/<repo>/blob/<ref>/<path>` → its parts. */
-function parseGitHubDescriptorUrl(
-  descriptorUrl: string
-): { owner: string; repo: string; path: string } | undefined {
-  let url: URL;
-  try {
-    url = new URL(descriptorUrl);
-  } catch {
-    return undefined;
-  }
-  // `<owner>/<repo>/(blob|raw|tree)/<ref>/<path…>` — the catalog stores GitHub
-  // locations in the browser `blob` form, and `raw` shows up in hand-written
-  // ones.
-  const segments = url.pathname.split('/').filter(Boolean);
-  if (segments.length < 5 || !['blob', 'raw', 'tree'].includes(segments[2])) {
-    return undefined;
-  }
-  return {
-    owner: segments[0],
-    repo: segments[1],
-    path: segments.slice(4).join('/')
-  };
-}
-
-/** Base64-decodes GitHub's file content, which is UTF-8 and newline-wrapped. */
-function decodeBase64(content: string): string {
-  const binary = atob(content.replace(/\s/g, ''));
-  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
-}
-
-/** Base64-encodes UTF-8 text for the GitHub contents API. */
-function encodeBase64(text: string): string {
-  const bytes = new TextEncoder().encode(text);
-  let binary = '';
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary);
-}
-
 /** A short random suffix, so two edits in a row never collide on a branch name. */
 function branchSuffix(): string {
   const bytes = new Uint8Array(4);
@@ -365,6 +330,73 @@ const DIRECTIONS: Record<
 };
 
 /**
+ * The outcome of {@link partOfSnippet}. Three shapes rather than two, because
+ * an unlink that empties the list is not a block to paste — it is a key to
+ * delete, and a snippet reading `spec: {}` would invite someone to paste it
+ * over a `spec` that also carries `url` and `type`.
+ */
+export type PartOfSnippet
+  = | { outcome: 'replace'; yaml: string }
+    | { outcome: 'remove-key' }
+    | { outcome: 'none'; message: string };
+
+/**
+ * What `spec.partOf` should read after the edit, for a descriptor on a host no
+ * {@link PrAdapter} serves.
+ *
+ * This is the PERMANENT FLOOR of the whole flow, not a consolation prize.
+ * {@link addPartOf} and {@link removePartOf} are pure string functions over
+ * YAML — no token, no network, no forge — so the finished block can always be
+ * shown, on GitLab, Bitbucket, Gerrit, Harness or a host nobody has heard of.
+ * Every adapter is then a strict upgrade on this rather than a gate in front of
+ * it, which is what stops the unsupported-host copy drifting back into "go and
+ * work out the edit yourself".
+ *
+ * It edits a SYNTHESISED document holding only `spec.partOf` rather than the
+ * real descriptor, because the real descriptor cannot be read: the token that
+ * would read it is exactly the one this host has no adapter to spend. So the
+ * output is a block to merge INTO the file, never a replacement for it —
+ * rendering a whole reconstructed `catalog-info.yaml` here would invite a paste
+ * that drops the file's comments and everything else it declares.
+ *
+ * Totality is the point: the only caller is a React render, so the typed edit
+ * failures come back as `none` rather than throwing.
+ */
+export function partOfSnippet(opts: {
+  direction: PartOfDirection;
+  /** `spec.partOf` as the catalog entity carries it today. */
+  current: unknown;
+  apiRefs: string[];
+}): PartOfSnippet {
+  const { direction, current, apiRefs } = opts;
+  const listed = Array.isArray(current)
+    ? current.filter((ref): ref is string => typeof ref === 'string')
+    : [];
+  const before
+    = listed.length > 0
+      ? `spec:\n  partOf:\n${listed.map((ref) => `    - ${ref}\n`).join('')}`
+      // An EMPTY seed, not `spec: {}` and not a null `spec:`. The first makes
+      // `yaml` render the result in flow style (`spec: { partOf: [ … ] }`),
+      // which is not what anyone wants to paste into a descriptor; the second
+      // is a null scalar that `setIn` refuses to build a map under.
+      : '';
+  let after: string;
+  try {
+    after = DIRECTIONS[direction].edit(before, apiRefs);
+  } catch (e) {
+    if (e instanceof PartOfEditError) {
+      return { outcome: 'none', message: e.message };
+    }
+    throw e;
+  }
+  // `removePartOf` drops the key when the sequence empties, which is the one
+  // result that is an instruction rather than a block.
+  return after.includes('partOf')
+    ? { outcome: 'replace', yaml: after }
+    : { outcome: 'remove-key' };
+}
+
+/**
  * Reads the descriptor and composes the edit, WITHOUT writing anything.
  *
  * Split from {@link submitPartOfEdit} so the dialog can show a real before/after
@@ -377,55 +409,41 @@ async function planPartOfEdit(opts: {
   descriptorUrl: string;
   apiRefs: string[];
   collectionName: string;
-  token: string;
+  adapter: PrAdapter;
 }): Promise<PartOfPlan> {
-  const { direction, descriptorUrl, apiRefs, collectionName, token } = opts;
-  const parsed = parseGitHubDescriptorUrl(descriptorUrl);
-  if (!parsed) {
+  const { direction, descriptorUrl, apiRefs, collectionName, adapter } = opts;
+  const target = adapter.parseDescriptorUrl(descriptorUrl);
+  if (!target) {
     throw new PartOfEditError(
       'unparseable',
       `Could not work out the repository and path from ${descriptorUrl}.`
     );
   }
-  const { owner, repo, path } = parsed;
+  const { path } = target;
 
-  const octokit = new Octokit({ auth: token });
-  const repoInfo = await octokit.repos.get({ owner, repo });
-  const baseBranch = repoInfo.data.default_branch;
-
-  const file = await octokit.repos.getContent({
-    owner,
-    repo,
-    path,
-    ref: baseBranch
-  });
-  // `getContent` returns a directory listing for a folder path and a submodule
-  // / symlink shape for those; only the file shape carries `content`.
-  const data = file.data;
-  if (Array.isArray(data) || data.type !== 'file' || !('content' in data)) {
+  const baseBranch = await adapter.defaultBranch(target);
+  const file = await adapter.readFile(target, path, baseBranch);
+  if (!file) {
     throw new PartOfEditError(
       'unparseable',
-      `${path} is not a file in ${owner}/${repo}.`
+      `${path} could not be read as a file in ${target.project}/${target.repo} `
+      + `on ${baseBranch}.`
     );
   }
 
-  const before = decodeBase64(data.content);
   const spec = DIRECTIONS[direction];
-  const after = spec.edit(before, apiRefs);
-
   return {
     direction,
     descriptorUrl,
-    repoUrl: `https://github.com/${owner}/${repo}`,
-    owner,
-    repo,
+    repoUrl: adapter.repoUrl(target),
+    target,
     path,
     branch:
       `${spec.branchPrefix}-${slugify(collectionName)}-${branchSuffix()}`,
     baseBranch,
-    fileSha: data.sha,
-    before,
-    after,
+    concurrencyToken: file.concurrencyToken,
+    before: file.content,
+    after: spec.edit(file.content, apiRefs),
     apiRefs: apiRefs.map(normaliseApiRef)
   };
 }
@@ -433,49 +451,27 @@ async function planPartOfEdit(opts: {
 /**
  * Creates the branch, commits the edited descriptor and opens the pull request.
  *
- * `createOrUpdateFileContents` is called WITH `sha`, which is what makes it an
- * update rather than a create — the distinction `catalogImportApi` gets wrong
- * and the reason this module exists.
+ * `concurrencyToken` is passed, which is what makes this an update rather than
+ * a create — the distinction `catalogImportApi` gets wrong and the reason this
+ * module exists — and what makes the commit fail rather than clobber if someone
+ * else edited the descriptor while the preview was on screen.
  */
-async function submitPartOfEdit(
+function submitPartOfEdit(
   plan: PartOfPlan,
-  token: string
+  adapter: PrAdapter
 ): Promise<{ link: string }> {
-  const octokit = new Octokit({ auth: token });
-
-  const baseRef = await octokit.git.getRef({
-    owner: plan.owner,
-    repo: plan.repo,
-    ref: `heads/${plan.baseBranch}`
-  });
-  await octokit.git.createRef({
-    owner: plan.owner,
-    repo: plan.repo,
-    ref: `refs/heads/${plan.branch}`,
-    sha: baseRef.data.object.sha
-  });
-
   const message = DIRECTIONS[plan.direction].title(plan.apiRefs);
-  await octokit.repos.createOrUpdateFileContents({
-    owner: plan.owner,
-    repo: plan.repo,
+  return adapter.openPullRequest({
+    repo: plan.target,
     path: plan.path,
     branch: plan.branch,
-    sha: plan.fileSha,
-    message,
-    content: encodeBase64(plan.after)
-  });
-
-  const pr = await octokit.pulls.create({
-    owner: plan.owner,
-    repo: plan.repo,
-    head: plan.branch,
-    base: plan.baseBranch,
+    baseBranch: plan.baseBranch,
+    content: plan.after,
+    concurrencyToken: plan.concurrencyToken,
+    commitMessage: message,
     title: message,
     body: DIRECTIONS[plan.direction].body(plan.apiRefs, plan.path)
   });
-
-  return { link: pr.data.html_url };
 }
 
 /**
@@ -489,30 +485,30 @@ export function planUnlink(opts: {
   descriptorUrl: string;
   apiRefs: string[];
   collectionName: string;
-  token: string;
+  adapter: PrAdapter;
 }): Promise<UnlinkPlan> {
   return planPartOfEdit({ ...opts, direction: 'unlink' });
 }
 
 export function submitUnlink(
   plan: UnlinkPlan,
-  token: string
+  adapter: PrAdapter
 ): Promise<{ link: string }> {
-  return submitPartOfEdit(plan, token);
+  return submitPartOfEdit(plan, adapter);
 }
 
 export function planLink(opts: {
   descriptorUrl: string;
   apiRefs: string[];
   collectionName: string;
-  token: string;
+  adapter: PrAdapter;
 }): Promise<PartOfPlan> {
   return planPartOfEdit({ ...opts, direction: 'link' });
 }
 
 export function submitLink(
   plan: PartOfPlan,
-  token: string
+  adapter: PrAdapter
 ): Promise<{ link: string }> {
-  return submitPartOfEdit(plan, token);
+  return submitPartOfEdit(plan, adapter);
 }

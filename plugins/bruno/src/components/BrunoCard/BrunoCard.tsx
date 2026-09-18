@@ -25,7 +25,11 @@ import { linkSource, sourceUrl, version } from '../../lib/brunoEntity';
 import { useEntityRelationRefresh } from '../../lib/entityRefresh';
 import { useRuntimeWritesEnabled } from '../../lib/runtimeWrites';
 import { BrunoInfoCard } from '../BrunoInfoCard';
-import { UnlinkDialog } from '../BrunoEntity';
+// Straight at the module, not at `../BrunoEntity`: that barrel also re-exports
+// `BrunoEntityHeader`, whose `EntityHeaderLayoutProps` contract only exists in
+// the new frontend system. This card is reachable from the `./legacy` entry
+// point, and the barrel would drag that contract in behind it.
+import { UnlinkDialog } from '../BrunoEntity/UnlinkDialog';
 import { OpenInBrunoSnackbar, useOpenInBruno } from '../OpenInBruno';
 import { elideCollectionUrl } from '../../lib/scmUrl';
 import { LinkCollectionDialog } from './LinkCollectionDialog';
@@ -159,7 +163,18 @@ function CollectionActions(props: {
  * cells must be `@backstage/ui` components, which would put a second design
  * system inside a Material-UI v4 card.
  */
-export function BrunoCard(): JSX.Element {
+export function BrunoCard(props: {
+  /**
+   * Concrete path of the Bruno dashboard, passed straight through to
+   * {@link LinkCollectionDialog}'s "Add a new Bruno Collection" button.
+   *
+   * Prop rather than a `useRouteRef` call here, so that nothing reachable from
+   * the `./legacy` entry point has to know which frontend system it is running
+   * under — the mounting layer resolves the route and hands down the answer.
+   */
+  brunoPagePath?: string;
+}): JSX.Element {
+  const { brunoPagePath } = props;
   const classes = useStyles();
   const { entity } = useEntity();
   const { entities, loading, error } = useRelatedEntities(entity, {
@@ -401,6 +416,7 @@ export function BrunoCard(): JSX.Element {
         open={linkOpen}
         onClose={() => setLinkOpen(false)}
         apiEntity={entity}
+        brunoPagePath={brunoPagePath}
         linkedRefs={(entities ?? []).map((e) => stringifyEntityRef(e))}
         onPrOpened={(collectionRef, link) =>
           setLinkPrs((prs) => [...prs, { label: collectionRef, link }])}

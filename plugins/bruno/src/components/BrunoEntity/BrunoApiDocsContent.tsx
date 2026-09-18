@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { makeStyles } from '@material-ui/core/styles';
 import Typography from '@material-ui/core/Typography';
-import { ContentHeader, Progress } from '@backstage/core-components';
+import { Progress } from '@backstage/core-components';
 import { useEntity } from '@backstage/plugin-catalog-react';
 import {
   definition,
@@ -51,19 +51,21 @@ const useStyles = makeStyles({
  * The backend serves its own version of these messages as a backstop for anyone
  * opening the docs URL directly.
  *
- * `ContentHeader` renders a `<Helmet title>` as well as the visible title.
- * Mounting deeper than the entity layout's own title Helmet, it wins the
- * document title and slots into that layout's template — so the browser tab
- * reads `<entity> | <collection> | <app>` even though the tab STRIP carries the
- * static "Bruno API Docs" label that `EntityContentBlueprint` requires (its
- * `title` is a plain string resolved at registration time, with no entity in
- * hand).
+ * The tab STRIP carries the static "Bruno API Docs" label that
+ * `EntityContentBlueprint` requires — its `title` is a plain string resolved at
+ * registration time, with no entity in hand, so it cannot name the collection.
+ *
+ * NOTE: this content previously rendered a `ContentHeader`, whose `<Helmet
+ * title>` mounted deeper than the entity layout's own and so won the document
+ * title, giving a browser tab reading `<entity> | <collection> | <app>`. That
+ * render was dropped in `3417d19`; the tab now falls back to the entity
+ * layout's title. Restore the header (or a bare `Helmet`) if that tab title is
+ * wanted back.
  */
 export function BrunoApiDocsContent(): JSX.Element {
   const classes = useStyles();
   const { entity } = useEntity();
 
-  const title = entity.metadata.title ?? entity.metadata.name;
   const definitionYaml = definition(entity);
   // Only open a docs session when there is a document to render — otherwise the
   // empty states below stand in for the frame, and minting a cookie for a frame
@@ -114,7 +116,14 @@ export function BrunoApiDocsContent(): JSX.Element {
               title="API Documentation"
               className={classes.frame}
               style={{ height: frameHeight }}
-              sandbox="allow-scripts allow-same-origin"
+              // `allow-downloads` is not decoration: the renderer offers "save
+              // this collection" and attachment downloads, both built on
+              // `URL.createObjectURL` plus a synthetic `<a download>` click,
+              // which a sandboxed frame blocks outright without it. Those
+              // controls were visible and silently inert. Independent of
+              // `allow-same-origin`, which is what the frame's cookie auth and
+              // its blob workers need.
+              sandbox="allow-scripts allow-same-origin allow-downloads"
               src={src}
             />
           )

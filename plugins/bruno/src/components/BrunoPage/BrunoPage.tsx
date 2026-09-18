@@ -25,8 +25,10 @@ import {
   sourceUrl,
   version
 } from '../../lib/brunoEntity';
+import { useCanDeleteCollection } from '../../lib/permissions';
 import { elideCollectionUrl } from '../../lib/scmUrl';
 import { DeleteCollectionDialog } from './DeleteCollectionDialog';
+import { IncompleteDiscovery } from './IncompleteDiscovery';
 import { PendingCollections } from './PendingCollections';
 import { StatTiles } from './StatTiles';
 import type { StatTile } from './StatTiles';
@@ -228,22 +230,31 @@ function BrunoStatTiles(): JSX.Element {
  */
 function BrunoCollectionsTable(): JSX.Element {
   const [pending, setPending] = useState<Entity | undefined>();
+  const mayDelete = useCanDeleteCollection();
 
   // Memoised for the same reason `columns` is a module constant: `CatalogTable`
   // hands this array to material-table, which treats a new `actions` identity
   // as a reason to rebuild the actions column on every render — and this
   // component re-renders on every entity-list change underneath it. `setPending`
-  // is a stable setter, so there is nothing for the array to depend on.
+  // is a stable setter, so `mayDelete` is the only real dependency.
+  //
+  // HIDDEN rather than disabled when the policy refuses. A row action is an
+  // icon with no room for a reason, so a disabled one is a puzzle; and the
+  // permission is about the user, not about this row, so it cannot come back
+  // differently for the row below. Ownership is the other half of the backend's
+  // decision and this app cannot see it — `createdBy` is stripped from the
+  // rows a user is served — so a visible Remove can still be refused, and
+  // `DeleteCollectionDialog` shows that message.
   const actions = useMemo<TableProps<CatalogTableRow>['actions']>(
     () => [
       (row) => ({
         icon: () => <DeleteOutlineIcon fontSize="small" />,
         tooltip: 'Remove this collection',
-        hidden: collectionOrigin(row.entity) !== 'ui',
+        hidden: !mayDelete || collectionOrigin(row.entity) !== 'ui',
         onClick: () => setPending(row.entity)
       })
     ],
-    []
+    [mayDelete]
   );
 
   return (
@@ -323,6 +334,16 @@ export function BrunoPage(): JSX.Element {
               renders nothing at all when there is nothing outstanding.
             */}
             <PendingCollections />
+            {/*
+              Beside the pending strip, and reporting the mirror-image gap: that
+              one names collections that are stored and not catalogued YET, this
+              one names REPOSITORIES whose collections were never found and will
+              not be. Both render nothing at all in the normal case. It is
+              outside the pending strip rather than merged into it because its
+              rows are repositories, not collections, and nothing on screen
+              corresponds to them.
+            */}
+            <IncompleteDiscovery />
             <BrunoCollectionsTable />
           </CatalogFilterLayout.Content>
         </CatalogFilterLayout>

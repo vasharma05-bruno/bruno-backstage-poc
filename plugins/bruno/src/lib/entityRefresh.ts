@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAsyncEntity } from '@backstage/plugin-catalog-react';
 
 /**
@@ -62,4 +62,39 @@ export function useEntityRelationRefresh(): (
     },
     [refresh]
   );
+}
+
+/**
+ * How long to wait before a declared link that has produced no relation is
+ * called dead rather than merely late, in milliseconds.
+ *
+ * Longer than the last of {@link REFRESH_DELAYS_MS} on purpose: those reads are
+ * what makes a late relation appear, so escalating before they have all fired
+ * and found nothing would accuse a reference the next one is about to resolve.
+ */
+const SETTLE_GRACE_MS = 20000;
+
+/**
+ * Whether the catalog has been given long enough that an unresolved reference
+ * can be reported as broken.
+ *
+ * On a freshly-registered collection NOTHING is stitched yet: the entity is in
+ * the catalog before its descriptor has been processed, so every `spec.partOf`
+ * entry is transiently unresolved, and rendering them all as "not found" is a
+ * worse lie than the silent omission it replaces. Two things settle it — one
+ * relation resolving proves the stitch ran, and failing that the grace period
+ * above expires — and until one of them does, the caller shows a neutral state.
+ *
+ * Takes the COUNT rather than the list so a caller re-deriving its array every
+ * render does not restart the timer.
+ */
+export function useRelationsSettled(resolvedCount: number): boolean {
+  const [graceExpired, setGraceExpired] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setGraceExpired(true), SETTLE_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, []);
+
+  return resolvedCount > 0 || graceExpired;
 }

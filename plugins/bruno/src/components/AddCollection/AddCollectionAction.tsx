@@ -5,6 +5,7 @@ import AddIcon from '@material-ui/icons/Add';
 import { useApi } from '@backstage/core-plugin-api';
 import { brunoApiRef } from '../../api';
 import { announceCollectionCreated } from '../../lib/collectionEvents';
+import { useCanCreateCollection } from '../../lib/permissions';
 import { useRuntimeWritesEnabled } from '../../lib/runtimeWrites';
 import { useBrandStyles } from '../../theme/brandStyles';
 import { AddCollectionDialog } from './AddCollectionDialog';
@@ -86,10 +87,23 @@ type Flow
  * browser reload, or a back-navigation after the flow finished, does not
  * silently reopen the dialog over the dashboard.
  */
-export function AddCollectionAction(): JSX.Element {
+export function AddCollectionAction(props: {
+  /**
+   * Concrete path of the catalog's "Register an existing component" page,
+   * passed straight through to {@link GeneratedYamlDialog}, which names it as
+   * the step after the pull request.
+   *
+   * Resolved by whoever mounts this action rather than here, so the whole
+   * component tree below stays free of a frontend-system-specific route hook —
+   * see `src/extensions.tsx`.
+   */
+  catalogImportPath?: string;
+}): JSX.Element {
+  const { catalogImportPath } = props;
   const brandClasses = useBrandStyles();
   const brunoApi = useApi(brunoApiRef);
   const runtimeAvailable = useRuntimeWritesEnabled();
+  const mayCreate = useCanCreateCollection();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [flow, setFlow] = useState<Flow>({ status: 'closed' });
@@ -218,7 +232,11 @@ export function AddCollectionAction(): JSX.Element {
         // store collections: the dialog renders its second ending only if it
         // has somewhere to send it, so one condition decides both the button
         // and the copy that describes it.
-        onAdd={runtimeAvailable ? onAdd : undefined}
+        // Two conditions, one withholding. `allowRuntimeWrites` is the
+        // operator's decision for the whole instance and `bruno.collection.create`
+        // is the policy's for this user; either one refusing means the backend
+        // would answer 403, so the dialog is not offered the ending at all.
+        onAdd={runtimeAvailable && mayCreate ? onAdd : undefined}
         onCreatePullRequest={onCreatePullRequest}
       />
 
@@ -229,6 +247,7 @@ export function AddCollectionAction(): JSX.Element {
           name={flow.input.name}
           title={flow.input.title}
           yaml={flow.yaml}
+          catalogImportPath={catalogImportPath}
           onClose={() => setFlow({ status: 'closed' })}
         />
       )}
