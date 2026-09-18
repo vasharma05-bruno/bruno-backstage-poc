@@ -75,7 +75,7 @@ Severity is the operational consequence of shipping without the fix, not the eff
 | SCM-2 | Pull-request (descriptor write) flows are GitHub-only | §14.6, R12 | High | Yes |
 | SCM-3 | Tier-1 zero-quota revalidation is GitHub-only | §5 | Medium | Yes |
 | SCM-4 | Support-matrix holes: Bitbucket Server/DC, Azure, Gitea, Gerrit, Harness | §5 | Medium | Partial |
-| SCM-5 | Large-repo tree truncation is logged, never surfaced | §14.7 | Low | Yes |
+| SCM-5 | Large-repo tree truncation is logged, never surfaced | §14.7 | Low | Yes — *done* |
 | SCM-6 | Credential-shape traps are documented in prose only, so nothing stops a regression | §5 | Medium | Yes — *done* |
 | SCM-7 | Link/unlink pull request is broken on GitHub Enterprise — every call goes to `api.github.com` | *new* | **High** | Yes — *done* |
 
@@ -88,7 +88,7 @@ Severity is the operational consequence of shipping without the fix, not the eff
 | FE-3 | No broken-link detection for dead `spec.partOf` refs | §7.2 | Medium | Yes — *done* |
 | FE-4 | Stranded UI-created collection whose name config claimed | §7.2 | Low | Partial — *copy corrected* |
 | FE-5 | `bruno://` deep link absent; only the repo root is sent, not the subpath | §14.5, R13 | Medium | Partial — *clone path done* |
-| FE-6 | Tree truncation never reaches a user-visible surface — *merged into SCM-5* | §14.7 | Low | Yes |
+| FE-6 | Tree truncation never reaches a user-visible surface — *merged into SCM-5* | §14.7 | Low | Yes — *done* |
 
 ### Release engineering — `REL`
 
@@ -1968,3 +1968,34 @@ workflow. Verified by pointing the variable at a dead port and confirming all si
 
 One residual: the test's `pg_indexes` assertion branch is exercised only under Postgres, so it stays
 unverified until that nightly job has run once.
+
+---
+
+## SCM-5's channel, decided in implementation
+
+The section above left the transport open. It is worth recording what it turned out to be, because
+the obvious answer is wrong for a reason that is easy to miss.
+
+A field on the router cannot work. The sweep runs in `brunoCatalogModule` and the route that reports
+it lives in the `bruno` plugin — two separate backend features with no in-process link — and the
+sweep's scheduled task is `scope: 'global'`, so it runs on **one** replica while the route is served
+from **all N**. An in-memory field would answer "nothing to report" from every replica but one, at
+random, for a strip whose entire job is to say when something is missing.
+
+So the report crosses the same way the provider already reads the stores: over HTTP with a plugin
+token, into a table. `PUT /discovery/report` is `['service']`-only, matching `GET /links`;
+`GET /discovery/report` is `['user']`. Neither is gated on `bruno.allowRuntimeWrites`, because that
+key is about this instance becoming the source of truth for something the **catalog** shows, and
+this row produces no entity and no relation.
+
+Two details that fell out of building it:
+
+- **The provider publishes every tick, unconditionally and outside the sweep's `try`.** Always
+  writing keeps `sweptAt` honest, which is what lets the route distinguish "swept a minute ago, all
+  clean" from "never swept at all" — a distinction the strip needs and a field-on-first-failure
+  design cannot make. One upsert per `frequencySeconds` is nothing beside the full catalog mutation
+  the same tick already applies.
+- **The existing migration test would have silently broken.** Its rollback case used
+  `knex.migrate.down({ directory })`, which unwinds exactly one step; with a second migration in the
+  directory it would have rolled back only the new table and then asserted the baseline's tables
+  were gone. It now uses `rollback({ directory }, true)`. Worth knowing before migration #3.
