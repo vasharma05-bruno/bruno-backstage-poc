@@ -7,9 +7,13 @@ import {
 import {
   PageBlueprint,
   PluginHeaderActionBlueprint,
-  createRouteRef
+  createRouteRef,
+  useRouteRef
 } from '@backstage/frontend-plugin-api';
+import type { catalogImportPlugin } from '@backstage/plugin-catalog-import';
 import { BrunoIcon } from './components/BrunoLogo';
+import type { AddCollectionAction } from './components/AddCollection';
+import type { BrunoCard } from './components/BrunoCard';
 
 /**
  * Filter selecting any API entity — the surface `BrunoCard` hangs off.
@@ -29,6 +33,62 @@ const isApiEntity = (entity: Entity): boolean =>
   entity.kind.toLocaleLowerCase('en-US') === 'api';
 
 /**
+ * Route ref for the standalone Bruno page. Setting `routeRef` + `title` + `icon`
+ * on the PageBlueprint below is what makes the nav item appear: the custom
+ * Sidebar renders `nav.rest({ sortBy: 'title' })`, which auto-discovers pages
+ * carrying all three. No NavItemBlueprint (absent in 1.53) and no
+ * `packages/app` edit are needed.
+ *
+ * Module-local. It is also what `RoutedBrunoCard` below resolves so the link
+ * dialog's "Add a new Bruno Collection" button can navigate to the dashboard
+ * rather than hardcode `/bruno`, which the app is free to mount elsewhere.
+ */
+const brunoPageRouteRef = createRouteRef();
+
+/**
+ * Route resolution for the two components that need a concrete path, done HERE
+ * rather than inside them.
+ *
+ * `useRouteRef` is the one thing that differs irreconcilably between the two
+ * frontend systems, and this file is the only part of the plugin that is
+ * new-system-only. Keeping the hook here is what lets `src/legacy.ts` hand the
+ * same components to a legacy app — see the module-graph guard in
+ * `src/legacy.test.ts`, which is what stops this creeping back down the tree.
+ *
+ * Each wrapper takes the loaded component as a prop so the blueprint loaders
+ * below stay dynamic `import()`s; a static import of the component here would
+ * fold it into the plugin's eager chunk. The component types are pulled in with
+ * `import type`, which is erased.
+ */
+function RoutedBrunoCard(props: {
+  component: typeof BrunoCard;
+}): JSX.Element {
+  const Card = props.component;
+  const dashboardRoute = useRouteRef(brunoPageRouteRef);
+  return <Card brunoPagePath={dashboardRoute?.()} />;
+}
+
+/**
+ * The catalog-import route ref is loaded alongside the action rather than
+ * imported at the top of this file, so `@backstage/plugin-catalog-import` stays
+ * out of the eager chunk — it was only ever reached from inside the lazily
+ * loaded `GeneratedYamlDialog`.
+ *
+ * The ref comes off the OLD-system plugin export because the new-system
+ * `/alpha` entry point does not re-export it, and they are the same object:
+ * `alpha.esm.js` imports `rootRouteRef` from `plugin.esm.js` and declares it as
+ * `routes.importPage`.
+ */
+function RoutedAddCollectionAction(props: {
+  component: typeof AddCollectionAction;
+  importPageRouteRef: (typeof catalogImportPlugin)['routes']['importPage'];
+}): JSX.Element {
+  const Action = props.component;
+  const importRoute = useRouteRef(props.importPageRouteRef);
+  return <Action catalogImportPath={importRoute?.()} />;
+}
+
+/**
  * Entity card. Signature verified against
  * @backstage/plugin-catalog-react@3.2.0 (mirrors `apiDocsDefinitionEntityCard`
  * in node_modules/@backstage/plugin-api-docs/dist/alpha.esm.js):
@@ -40,22 +100,11 @@ export const brunoCard = EntityCardBlueprint.make({
   params: {
     filter: isApiEntity,
     loader: () =>
-      import('./components/BrunoCard').then((m) => <m.BrunoCard />)
+      import('./components/BrunoCard').then((m) => (
+        <RoutedBrunoCard component={m.BrunoCard} />
+      ))
   }
 });
-
-/**
- * Route ref for the standalone Bruno page. Setting `routeRef` + `title` + `icon`
- * on the PageBlueprint below is what makes the nav item appear: the custom
- * Sidebar renders `nav.rest({ sortBy: 'title' })`, which auto-discovers pages
- * carrying all three. No NavItemBlueprint (absent in 1.53) and no
- * `packages/app` edit are needed.
- *
- * Exported so components can resolve the dashboard's path through `useRouteRef`
- * — the "Add a new Bruno Collection" button in the link dialog — rather than
- * hardcoding `/bruno`, which the app is free to mount elsewhere.
- */
-export const brunoPageRouteRef = createRouteRef();
 
 /**
  * Standalone Bruno page at `/bruno`. The component renders content only (the
@@ -94,8 +143,20 @@ export const brunoPage = PageBlueprint.make({
 export const brunoAddCollectionAction = PluginHeaderActionBlueprint.make({
   name: 'add-collection',
   params: {
-    loader: () =>
-      import('./components/AddCollection').then((m) => <m.AddCollectionAction />)
+    loader: async () => {
+      const [action, catalogImport] = await Promise.all([
+        import('./components/AddCollection'),
+        import('@backstage/plugin-catalog-import')
+      ]);
+      return (
+        <RoutedAddCollectionAction
+          component={action.AddCollectionAction}
+          importPageRouteRef={
+            catalogImport.catalogImportPlugin.routes.importPage
+          }
+        />
+      );
+    }
   }
 });
 

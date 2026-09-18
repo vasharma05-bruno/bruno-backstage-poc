@@ -498,6 +498,86 @@ The package also exports `BrunoIcon`, so the app can register it as the
 `kind:bruno` catalog icon (`packages/app/src/modules/icons`) without reaching
 into the plugin's source tree.
 
+### Legacy frontend system — [`src/legacy.ts`](src/legacy.ts)
+
+An app still on the **legacy** frontend system — where surfaces are composed by
+hand in `packages/app/src/components/catalog/EntityPage.tsx` rather than
+discovered — imports from the `@usebruno/bruno-plugin-poc/legacy` subpath
+instead. It is a separate build entry point, so nothing a legacy app imports can
+reach [`src/plugin.ts`](src/plugin.ts) or
+[`src/extensions.tsx`](src/extensions.tsx) and pull the new system's extension
+runtime in behind it; [`src/legacy.test.ts`](src/legacy.test.ts) walks the module
+graph and fails if that ever stops being true. In the other direction `./legacy`
+is invisible to the CLI's package detection, which auto-discovers the hardcoded
+`./alpha` subpath alone.
+
+```tsx
+// packages/app/src/App.tsx
+import { brunoPlugin, BrunoPage } from '@usebruno/bruno-plugin-poc/legacy';
+// …
+<Route path="/bruno" element={<BrunoPage />} />;
+```
+
+```tsx
+// packages/app/src/components/catalog/EntityPage.tsx
+import { EntityLayout, EntitySwitch, isKind } from '@backstage/plugin-catalog';
+import {
+  BrunoApiDocsContent,
+  BrunoCard,
+  CollectionDocsCard,
+  EnvironmentsCard,
+  RelatedApisCard,
+} from '@usebruno/bruno-plugin-poc/legacy';
+
+const brunoEntityPage = (
+  <EntityLayout>
+    <EntityLayout.Route path="/" title="Overview">
+      <Grid container spacing={3}>
+        <Grid item md={12}>
+          <CollectionDocsCard />
+        </Grid>
+        <Grid item md={12}>
+          <RelatedApisCard />
+        </Grid>
+        <Grid item md={12}>
+          <EnvironmentsCard />
+        </Grid>
+      </Grid>
+    </EntityLayout.Route>
+    <EntityLayout.Route path="/api-docs" title="Bruno API Docs">
+      <BrunoApiDocsContent />
+    </EntityLayout.Route>
+  </EntityLayout>
+);
+
+// …and on API entity pages, inside the existing apiPage Overview grid:
+//   <Grid item md={12}><BrunoCard /></Grid>
+
+export const entityPage = (
+  <EntitySwitch>
+    <EntitySwitch.Case if={isKind('bruno')} children={brunoEntityPage} />
+    {/* … */}
+  </EntitySwitch>
+);
+```
+
+Two differences from the new system, both deliberate:
+
+- **Legacy adopters get the stock entity header.** `BrunoEntityHeader` is
+  *not* exported from `./legacy`. It is typed on `EntityHeaderLayoutProps`, a
+  contract that exists only because the new system hands a replacement header
+  its own tab model; legacy `EntityLayout` renders its own header and has no
+  equivalent slot. The version, source URL and collection actions that header
+  carries are reachable from the Overview cards instead.
+- **The `Add Bruno Collection` button is not part of `BrunoPage`.** In the new
+  system it is a plugin-scoped header action in the `PageLayout` header, which
+  the legacy page has no slot for.
+
+`BrunoCard` takes an optional `brunoPagePath`, which is what its "Add a new
+Bruno Collection" escape hatch navigates to. Pass
+`useRouteRef(brunoPlugin.routes.root)()` once `BrunoPage` is mounted; leaving it
+out disables that one button and nothing else.
+
 ### Permissions, and what they hide
 
 The backend permissions every mutating route now carries

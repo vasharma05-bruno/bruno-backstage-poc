@@ -12,10 +12,8 @@ import Typography from '@material-ui/core/Typography';
 import { makeStyles } from '@material-ui/core/styles';
 import AddIcon from '@material-ui/icons/Add';
 import { CopyTextButton, Link } from '@backstage/core-components';
-import { useRouteRef } from '@backstage/frontend-plugin-api';
 import { stringifyEntityRef } from '@backstage/catalog-model';
 import type { Entity } from '@backstage/catalog-model';
-import { brunoPageRouteRef } from '../../extensions';
 import {
   EntityPicker,
   LinkMethodChoice,
@@ -86,6 +84,18 @@ export function LinkCollectionDialog(props: {
    * be anything to find.
    */
   onRuntimeLinked?: (collectionRef: string, refreshRequested: boolean) => void;
+  /**
+   * Concrete path of the Bruno dashboard, for the "Add a new Bruno Collection"
+   * escape hatch; omitted when the page is not mounted in this app, which
+   * disables that button.
+   *
+   * A resolved path rather than a `useRouteRef` call of our own, because the two
+   * frontend systems resolve routes through different hooks and this dialog has
+   * to render under either. Whoever mounts the component knows which system it
+   * is in and passes the answer down; see `src/extensions.tsx` and
+   * `src/legacy.ts`.
+   */
+  brunoPagePath?: string;
 }): JSX.Element {
   const {
     open,
@@ -93,13 +103,13 @@ export function LinkCollectionDialog(props: {
     apiEntity,
     linkedRefs,
     onPrOpened,
-    onRuntimeLinked
+    onRuntimeLinked,
+    brunoPagePath
   } = props;
   const classes = useStyles();
   const partOfClasses = usePartOfStyles();
   const brandClasses = useBrandStyles();
   const navigate = useNavigate();
-  const dashboardRoute = useRouteRef(brunoPageRouteRef);
 
   const options = useEntityOptions('Bruno', open);
   const [selected, setSelected] = useState<Entity | null>(null);
@@ -155,17 +165,17 @@ export function LinkCollectionDialog(props: {
       variant="outlined"
       className={brandClasses.accentOutlinedButton}
       startIcon={<AddIcon />}
-      // `useRouteRef` returns undefined when the page is not mounted in this
-      // app, and a dead button is worse than a disabled one.
-      disabled={!dashboardRoute}
+      // The path is absent when the page is not mounted in this app, and a dead
+      // button is worse than a disabled one.
+      disabled={!brunoPagePath}
       onClick={() => {
-        if (dashboardRoute) {
+        if (brunoPagePath) {
           close();
           // The add-collection flow lives on the dashboard, so this API has to
           // travel with the navigation rather than as a prop. `AddCollectionAction`
           // reads both parameters and strips them from the URL.
           navigate(
-            `${dashboardRoute()}?add=1&partOf=${encodeURIComponent(apiRef)}`
+            `${brunoPagePath}?add=1&partOf=${encodeURIComponent(apiRef)}`
           );
         }
       }}

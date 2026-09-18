@@ -25,13 +25,11 @@ import {
   fetchApiRef,
   useApiHolder
 } from '@backstage/core-plugin-api';
-import { useRouteRef } from '@backstage/frontend-plugin-api';
 import { scmAuthApiRef, scmIntegrationsApiRef } from '@backstage/integration-react';
 import { catalogApiRef } from '@backstage/plugin-catalog-react';
 import {
   CatalogImportClient,
-  catalogImportApiRef,
-  catalogImportPlugin
+  catalogImportApiRef
 } from '@backstage/plugin-catalog-import';
 import type { CatalogImportApi } from '@backstage/plugin-catalog-import';
 import {
@@ -225,9 +223,35 @@ export function GeneratedYamlDialog(props: {
    * carries either way.
    */
   title?: string;
+  /**
+   * Concrete path of the catalog's own "Register an existing component" page,
+   * which is where the step AFTER this dialog happens: that page calls
+   * `catalogApi.addLocation` for a `catalog-info.yaml` URL, which is the only
+   * thing that turns the merged file into an entity.
+   *
+   * A resolved path rather than a `useRouteRef` call here, because the route ref
+   * belongs to `plugin-catalog-import` and the hook that resolves it differs
+   * between the two frontend systems — the mounting layer knows which one it is
+   * in and this dialog does not need to. Omitted when that page is not mounted
+   * (a host app that excluded the package), which is what the prose fallback
+   * below is for.
+   *
+   * The path is overridable from `app-config.yaml` (`app.extensions`, exactly as
+   * this app already remounts `page:catalog` at `/`), so it is never hardcoded
+   * as `/catalog-import`: a link to the default path in an app that moved it is
+   * a 404 that looks like our bug.
+   */
+  catalogImportPath?: string;
 }): JSX.Element {
-  const { open, onClose, collectionUrl, yaml, name, title: entityTitle }
-    = props;
+  const {
+    open,
+    onClose,
+    collectionUrl,
+    yaml,
+    name,
+    title: entityTitle,
+    catalogImportPath
+  } = props;
   const classes = useStyles();
   const brandClasses = useBrandStyles();
   const catalogImportApi = useCatalogImportApi();
@@ -238,26 +262,6 @@ export function GeneratedYamlDialog(props: {
   // Only so the limits panel does not point at an ending this instance does
   // not offer; nothing on this screen is gated by it.
   const runtimeAvailable = useRuntimeWritesEnabled();
-
-  /**
-   * Path of the catalog's own "Register an existing component" page, which is
-   * where the step AFTER this dialog happens: it calls `catalogApi.addLocation`
-   * for a `catalog-info.yaml` URL, which is the only thing that turns the merged
-   * file into an entity.
-   *
-   * Resolved through `useRouteRef` rather than hardcoded as `/catalog-import`,
-   * because the path is overridable from `app-config.yaml` (`app.extensions`,
-   * exactly as this app already remounts `page:catalog` at `/`), and a link to
-   * the default path in an app that moved it is a 404 that looks like our bug.
-   *
-   * The ref comes off the OLD-system plugin export because the new-system
-   * `/alpha` entry point does not re-export it, and they are the same object:
-   * `alpha.esm.js` imports `rootRouteRef` from `plugin.esm.js` and declares it as
-   * `routes.importPage`. `useRouteRef` returns undefined when the page is not
-   * mounted — a host app that excluded the package — which is what the prose
-   * fallback below is for.
-   */
-  const importRoute = useRouteRef(catalogImportPlugin.routes.importPage);
 
   const [stage, setStage] = useState<Stage>({ status: 'review' });
   const [title, setTitle] = useState('');
@@ -457,11 +461,11 @@ export function GeneratedYamlDialog(props: {
    * the operator-level one (a `catalog.locations` entry, or a discovery provider)
    * and pointing at a route that is not mounted would be worse than saying so.
    */
-  const registerStep = importRoute
+  const registerStep = catalogImportPath
     ? (
         <>
           register it on the{' '}
-          <Link to={importRoute()}>Register an existing component</Link> page
+          <Link to={catalogImportPath}>Register an existing component</Link> page
         </>
       )
     : (
