@@ -83,7 +83,7 @@ Severity is the operational consequence of shipping without the fix, not the eff
 
 | ID | Gap | Source | Severity | Closable here |
 | --- | --- | --- | --- | --- |
-| FE-1 | Legacy frontend system unsupported | §8, R6, P2 | High | Yes |
+| FE-1 | Legacy frontend system unsupported | §8, R6, P2 | High | Yes — *done* |
 | FE-2 | Docs frame does not match a customised host theme | §10, P3 | Medium | Partial |
 | FE-3 | No broken-link detection for dead `spec.partOf` refs | §7.2 | Medium | Yes — *done* |
 | FE-4 | Stranded UI-created collection whose name config claimed | §7.2 | Low | Partial — *copy corrected* |
@@ -1918,8 +1918,10 @@ full gate set — `yarn tsc`, `CI=true yarn test --watchAll=false`, `yarn lint` 
 | `68de616` | SCM-6 | Six traps pinned; anonymous-read startup warning |
 | `3360ecc` | SEC-2 | Permissions and ownership on every mutating route |
 | `73496be` | SEC-3 *(partial)*, SEC-4 *(partial)*, SEC-10 | Pinned docs CSP; `bruno.docs.cdnBaseUrl`; iframe downloads |
+| `15dab92` | DAT-3, DAT-4 | Knex migrations; cross-dialect harness + nightly Postgres job |
+| `8c87c6f` | FE-1 | Legacy entry point, and the bundle guard that found a live leak |
 
-Test baseline over the same span: **113 tests / 12 suites → 249 / 21.**
+Test baseline over the same span: **113 tests / 12 suites → 259 / 23.**
 
 **Both Critical security gaps are closed.** Of the register's five Critical entries, four are done
 (SEC-1, SEC-2, REL-4, REL-5) and one is partial (REL-1 — the router harness and auth matrix exist;
